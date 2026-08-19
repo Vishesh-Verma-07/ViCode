@@ -55,4 +55,15 @@ describe("bash tool", () => {
     expect(result).toContain("out")
     expect(result).toContain("err")
   })
+
+  it("times out a long-running command", async () => {
+    const result = await bashTool.execute({ command: "sleep 10", timeout: 1 }, ctx)
+    expect(result).toContain("timed out")
+    expect(result).toContain("1s")
+  })
+
+  it("returns no output message for commands with no output", async () => {
+    const result = await bashTool.execute({ command: "true" }, ctx)
+    expect(result).toBe("(no output)")
+  })
 })
