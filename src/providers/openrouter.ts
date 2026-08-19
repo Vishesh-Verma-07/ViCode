@@ -19,6 +19,7 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): Prov
       messages: Message[],
       tools: ToolDefinition[],
       systemPrompt: string,
+      abortSignal?: AbortSignal,
     ): AsyncIterable<StreamEvent> {
       const sdkMessages = convertMessages(messages)
       const sdkTools = convertTools(tools)
@@ -28,6 +29,7 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): Prov
         messages: sdkMessages,
         system: systemPrompt,
         tools: sdkTools,
+        abortSignal,
         providerOptions: {
           openrouter: {
             usage: { include: true },
@@ -40,6 +42,20 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): Prov
           case "text-delta":
             yield { type: "text-delta", text: event.text }
             break
+          case "tool-input-start":
+            yield {
+              type: "tool-call-start",
+              toolCallId: event.id,
+              toolName: event.toolName,
+            }
+            break
+          case "tool-input-delta":
+            yield {
+              type: "tool-call-delta",
+              toolCallId: event.id,
+              argsDelta: event.delta,
+            }
+            break
           case "tool-call":
             yield {
               type: "tool-call-end",
@@ -47,8 +63,6 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): Prov
               toolName: event.toolName,
               args: event.input as Record<string, unknown>,
             }
-            break
-          case "tool-result":
             break
           case "finish-step": {
             const usage = extractUsage(event.usage, modelId)

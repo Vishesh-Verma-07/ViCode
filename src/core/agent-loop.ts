@@ -75,7 +75,7 @@ export async function runAgentLoop(
     let stepUsage: TokenUsage | undefined
 
     try {
-      for await (const event of provider.streamChat(allMessages, tools, systemPrompt)) {
+      for await (const event of provider.streamChat(allMessages, tools, systemPrompt, abortSignal)) {
         if (abortSignal?.aborted) break
 
         switch (event.type) {

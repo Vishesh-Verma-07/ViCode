@@ -28,6 +28,7 @@ export interface Provider {
     messages: Message[],
     tools: ToolDefinition[],
     systemPrompt: string,
+    abortSignal?: AbortSignal,
   ): AsyncIterable<StreamEvent>
   getModelInfo(): ModelInfo
 }
