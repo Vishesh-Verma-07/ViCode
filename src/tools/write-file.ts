@@ -1,6 +1,8 @@
 import { z } from "zod"
-import { writeFileSync, mkdirSync } from "fs"
+import { writeFileSync, mkdirSync, readFileSync } from "fs"
 import { resolve, dirname } from "path"
+import { createTwoFilesPatch } from "diff"
+import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import type { ToolDefinition, ToolContext } from "../core/types"
 
 export const writeFileTool: ToolDefinition = {
@@ -21,8 +23,18 @@ export const writeFileTool: ToolDefinition = {
     }
 
     try {
+      let oldContent = ""
+      try {
+        oldContent = readFileSync(absPath, "utf-8")
+      } catch {
+        // File doesn't exist yet
+      }
       mkdirSync(dirname(absPath), { recursive: true })
       writeFileSync(absPath, content, "utf-8")
+      if (oldContent) {
+        const diff = createTwoFilesPatch(filePath, filePath, oldContent, content)
+        return `File written successfully: ${filePath}\n${DIFF_START_MARKER}\n${diff}${DIFF_END_MARKER}`
+      }
       return `File written successfully: ${filePath}`
     } catch (error) {
       return `Error: ${error instanceof Error ? error.message : String(error)}`

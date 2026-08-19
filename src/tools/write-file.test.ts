@@ -68,4 +68,26 @@ describe("write_file tool", () => {
     )
     expect(result).toContain("Error")
   })
+
+  it("includes diff when overwriting existing file", async () => {
+    const { writeFileSync } = await import("fs")
+    writeFileSync(join(tmpDir, "existing.txt"), "old content")
+    const result = await writeFileTool.execute(
+      { path: "existing.txt", content: "new content" },
+      ctx,
+    )
+    expect(result).toContain("__DIFF_START__")
+    expect(result).toContain("__DIFF_END__")
+    expect(result).toContain("--- existing.txt")
+    expect(result).toContain("+++ existing.txt")
+  })
+
+  it("does not include diff for new files", async () => {
+    const result = await writeFileTool.execute(
+      { path: "brand-new.txt", content: "fresh content" },
+      ctx,
+    )
+    expect(result).not.toContain("__DIFF_START__")
+    expect(result).not.toContain("__DIFF_END__")
+  })
 })

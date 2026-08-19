@@ -3,6 +3,7 @@ import { Box, Text, useInput, useApp, useWindowSize } from "ink"
 import { TextInput } from "@inkjs/ui"
 import type { Message, ToolDefinition, ToolContext } from "../core/types"
 import type { Provider, TokenUsage } from "../core/provider"
+import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import { runAgentLoop } from "../core/agent-loop"
 
 interface ToolCallEntry {
@@ -11,6 +12,15 @@ interface ToolCallEntry {
   args: Record<string, unknown>
   result?: string
 }
+
+interface DiffEntry {
+  id: string
+  filePath: string
+  diff: string
+  timestamp: number
+}
+
+type SidebarTab = "tools" | "diffs"
 
 interface PendingApproval {
   toolName: string
@@ -25,11 +35,24 @@ interface AppProps {
   context: ToolContext
 }
 
+export function extractDiff(result: string): { message: string; diff: string | null } {
+  const startIdx = result.indexOf(DIFF_START_MARKER)
+  const endIdx = result.indexOf(DIFF_END_MARKER)
+  if (startIdx === -1 || endIdx === -1) {
+    return { message: result, diff: null }
+  }
+  const message = result.slice(0, startIdx).trimEnd()
+  const diff = result.slice(startIdx + DIFF_START_MARKER.length, endIdx).replace(/^\n/, "")
+  return { message, diff }
+}
+
 export function App({ provider, tools, systemPrompt, context }: AppProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
+  const [diffs, setDiffs] = useState<DiffEntry[]>([])
+  const [activeTab, setActiveTab] = useState<SidebarTab>("tools")
   const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0 })
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -50,6 +73,7 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
       setMessages((prev) => [...prev, userMsg])
       setCurrentText("")
       setToolCalls([])
+      setDiffs([])
       setIsStreaming(true)
 
       const controller = new AbortController()
@@ -81,11 +105,20 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
               )
             },
             onToolResult: (id, _name, result) => {
+              const { message, diff } = extractDiff(result)
               setToolCalls((prev) =>
                 prev.map((tc) =>
-                  tc.id === id ? { ...tc, result } : tc,
+                  tc.id === id ? { ...tc, result: message } : tc,
                 ),
               )
+              if (diff) {
+                const toolCall = toolCalls.find((tc) => tc.id === id)
+                const filePath = toolCall?.args?.path as string ?? "unknown"
+                setDiffs((prev) => [
+                  ...prev,
+                  { id, filePath, diff, timestamp: Date.now() },
+                ])
+              }
             },
             onError: (error) => {
               console.error("Agent error:", error)
@@ -111,7 +144,7 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
         abortRef.current = null
       }
     },
-    [messages, provider, tools, systemPrompt, context, isStreaming],
+    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls],
   )
 
   useInput(
@@ -122,6 +155,11 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
           pendingApproval.resolve(lower === "y")
           setPendingApproval(null)
         }
+        return
+      }
+
+      if (key.tab) {
+        setActiveTab((prev) => (prev === "tools" ? "diffs" : "tools"))
         return
       }
 
@@ -148,7 +186,12 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
           isStreaming={isStreaming}
           onSend={handleSend}
         />
-        <Sidebar width={sidebarWidth} toolCalls={toolCalls} />
+        <Sidebar
+          width={sidebarWidth}
+          activeTab={activeTab}
+          toolCalls={toolCalls}
+          diffs={diffs}
+        />
       </Box>
       <StatusBar usage={usage} model={provider.getModelInfo().name} />
       {pendingApproval && (
@@ -246,10 +289,12 @@ function MessageBubble({ message }: MessageBubbleProps) {
 
 interface SidebarProps {
   width: number
+  activeTab: SidebarTab
   toolCalls: ToolCallEntry[]
+  diffs: DiffEntry[]
 }
 
-function Sidebar({ width, toolCalls }: SidebarProps) {
+function Sidebar({ width, activeTab, toolCalls, diffs }: SidebarProps) {
   return (
     <Box
       width={width}
@@ -258,14 +303,41 @@ function Sidebar({ width, toolCalls }: SidebarProps) {
       borderColor="gray"
       paddingX={1}
     >
-      <Text color="cyan" bold>
-        Tools
-      </Text>
-      {toolCalls.length === 0 && (
-        <Text color="gray" italic>
-          No tool calls yet
+      <Box>
+        <Text
+          color={activeTab === "tools" ? "cyan" : "gray"}
+          bold={activeTab === "tools"}
+        >
+          Tools
         </Text>
+        <Text color="gray"> | </Text>
+        <Text
+          color={activeTab === "diffs" ? "cyan" : "gray"}
+          bold={activeTab === "diffs"}
+        >
+          Diffs{diffs.length > 0 ? ` (${diffs.length})` : ""}
+        </Text>
+      </Box>
+      {activeTab === "tools" && (
+        <ToolsTab toolCalls={toolCalls} />
       )}
+      {activeTab === "diffs" && (
+        <DiffsTab diffs={diffs} />
+      )}
+    </Box>
+  )
+}
+
+function ToolsTab({ toolCalls }: { toolCalls: ToolCallEntry[] }) {
+  if (toolCalls.length === 0) {
+    return (
+      <Text color="gray" italic>
+        No tool calls yet
+      </Text>
+    )
+  }
+  return (
+    <Box flexDirection="column">
       {toolCalls.map((tc) => {
         const argsStr = Object.keys(tc.args).length > 0
           ? JSON.stringify(tc.args)
@@ -291,6 +363,46 @@ function Sidebar({ width, toolCalls }: SidebarProps) {
             )}
           </Box>
         )
+      })}
+    </Box>
+  )
+}
+
+function DiffsTab({ diffs }: { diffs: DiffEntry[] }) {
+  if (diffs.length === 0) {
+    return (
+      <Text color="gray" italic>
+        No diffs yet
+      </Text>
+    )
+  }
+  return (
+    <Box flexDirection="column">
+      {diffs.map((entry) => (
+        <DiffView key={entry.id} filePath={entry.filePath} diff={entry.diff} />
+      ))}
+    </Box>
+  )
+}
+
+function DiffView({ filePath, diff }: { filePath: string; diff: string }) {
+  const lines = diff.split("\n")
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text color="blue" bold>
+        {filePath}
+      </Text>
+      {lines.map((line, i) => {
+        if (line.startsWith("+") && !line.startsWith("+++")) {
+          return <Text key={i} color="green">{line}</Text>
+        }
+        if (line.startsWith("-") && !line.startsWith("---")) {
+          return <Text key={i} color="red">{line}</Text>
+        }
+        if (line.startsWith("@@")) {
+          return <Text key={i} color="cyan">{line}</Text>
+        }
+        return <Text key={i}>{line}</Text>
       })}
     </Box>
   )

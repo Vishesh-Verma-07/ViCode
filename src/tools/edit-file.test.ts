@@ -82,4 +82,18 @@ describe("edit_file tool", () => {
     const content = readFileSync(join(tmpDir, "multi.ts"), "utf-8")
     expect(content).toBe("new1\nnew2\nnew3\nline3")
   })
+
+  it("includes diff markers in result", async () => {
+    writeFileSync(join(tmpDir, "diff.ts"), "hello\nworld")
+    const result = await editFileTool.execute(
+      { path: "diff.ts", oldText: "world", newText: "universe" },
+      ctx,
+    )
+    expect(result).toContain("__DIFF_START__")
+    expect(result).toContain("__DIFF_END__")
+    expect(result).toContain("--- diff.ts")
+    expect(result).toContain("+++ diff.ts")
+    expect(result).toContain("-world")
+    expect(result).toContain("+universe")
+  })
 })

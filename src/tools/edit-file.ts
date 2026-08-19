@@ -1,6 +1,8 @@
 import { z } from "zod"
 import { readFileSync, writeFileSync } from "fs"
 import { resolve } from "path"
+import { createTwoFilesPatch } from "diff"
+import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import type { ToolDefinition, ToolContext } from "../core/types"
 
 export const editFileTool: ToolDefinition = {
@@ -29,7 +31,8 @@ export const editFileTool: ToolDefinition = {
       }
       const updated = content.split(oldText).join(newText)
       writeFileSync(absPath, updated, "utf-8")
-      return `File edited successfully: ${filePath}`
+      const diff = createTwoFilesPatch(filePath, filePath, content, updated)
+      return `File edited successfully: ${filePath}\n${DIFF_START_MARKER}\n${diff}${DIFF_END_MARKER}`
     } catch (error) {
       return `Error: ${error instanceof Error ? error.message : String(error)}`
     }
