@@ -1,11 +1,14 @@
 #!/usr/bin/env bun
 
+import React from "react"
+import { render } from "ink"
 import { parseArgs, formatHelp } from "./config/cli"
 import { loadConfig } from "./config/config"
 import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
 import { assembleSystemPrompt } from "./core/system-prompt"
+import { App } from "./ui/app"
 
 const args = parseArgs(process.argv.slice(2))
 
@@ -55,9 +58,11 @@ const systemPrompt = assembleSystemPrompt({
   cliPrompt: cliSystemPrompt && config.systemPrompt !== cliSystemPrompt ? cliSystemPrompt : undefined,
 })
 
-const modelInfo = provider.getModelInfo()
-
-console.log("ViCode Agent")
-console.log("Project:", projectPath)
-console.log("Model:", modelInfo.name)
-console.log("System prompt:", systemPrompt.length, "chars")
+render(
+  React.createElement(App, {
+    provider,
+    tools: [],
+    systemPrompt,
+    context: { projectPath },
+  }),
+)
