@@ -3,6 +3,9 @@
 import { parseArgs, formatHelp } from "./config/cli"
 import { loadConfig } from "./config/config"
 import { resolve } from "path"
+import { readFileSync, existsSync } from "fs"
+import { createOpenRouterProvider } from "./providers/openrouter"
+import { assembleSystemPrompt } from "./core/system-prompt"
 
 const args = parseArgs(process.argv.slice(2))
 
@@ -13,11 +16,17 @@ if (args.help) {
 
 const projectPath = args.directory ? resolve(args.directory) : process.cwd()
 
+const cliSystemPrompt = args.system
+  ? existsSync(args.system)
+    ? readFileSync(args.system, "utf-8")
+    : args.system
+  : undefined
+
 const config = loadConfig({
   projectPath,
   cliArgs: {
     model: args.model,
-    systemPrompt: args.system,
+    systemPrompt: cliSystemPrompt,
   },
 })
 
@@ -33,7 +42,22 @@ if (!config.apiKey) {
   process.exit(1)
 }
 
+const model = config.model ?? "anthropic/claude-sonnet-4"
+
+const provider = createOpenRouterProvider({
+  apiKey: config.apiKey,
+  model,
+})
+
+const systemPrompt = assembleSystemPrompt({
+  projectPath,
+  projectPrompt: config.systemPrompt,
+  cliPrompt: cliSystemPrompt && config.systemPrompt !== cliSystemPrompt ? cliSystemPrompt : undefined,
+})
+
+const modelInfo = provider.getModelInfo()
+
 console.log("ViCode Agent")
 console.log("Project:", projectPath)
-console.log("Model:", config.model ?? "(not configured)")
-console.log("API Key: ***" + config.apiKey.slice(-4))
+console.log("Model:", modelInfo.name)
+console.log("System prompt:", systemPrompt.length, "chars")
