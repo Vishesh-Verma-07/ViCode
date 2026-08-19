@@ -12,6 +12,12 @@ interface ToolCallEntry {
   result?: string
 }
 
+interface PendingApproval {
+  toolName: string
+  args: Record<string, unknown>
+  resolve: (approved: boolean) => void
+}
+
 interface AppProps {
   provider: Provider
   tools: ToolDefinition[]
@@ -25,6 +31,7 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
   const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0 })
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -83,7 +90,11 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
             onError: (error) => {
               console.error("Agent error:", error)
             },
-            requestApproval: async () => true,
+            requestApproval: (toolName, args) => {
+              return new Promise<boolean>((resolve) => {
+                setPendingApproval({ toolName, args, resolve })
+              })
+            },
           },
           controller.signal,
         )
@@ -105,6 +116,15 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
 
   useInput(
     (input, key) => {
+      if (pendingApproval) {
+        const lower = input.toLowerCase()
+        if (lower === "y" || lower === "n") {
+          pendingApproval.resolve(lower === "y")
+          setPendingApproval(null)
+        }
+        return
+      }
+
       if (key.escape && isStreaming && abortRef.current) {
         abortRef.current.abort()
       }
@@ -131,6 +151,12 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
         <Sidebar width={sidebarWidth} toolCalls={toolCalls} />
       </Box>
       <StatusBar usage={usage} model={provider.getModelInfo().name} />
+      {pendingApproval && (
+        <ApprovalPrompt
+          toolName={pendingApproval.toolName}
+          args={pendingApproval.args}
+        />
+      )}
     </Box>
   )
 }
@@ -296,6 +322,51 @@ function StatusBar({ usage, model }: StatusBarProps) {
       <Text color="gray">
         Tokens: {usage.totalTokens}
       </Text>
+    </Box>
+  )
+}
+
+interface ApprovalPromptProps {
+  toolName: string
+  args: Record<string, unknown>
+}
+
+function ApprovalPrompt({ toolName, args }: ApprovalPromptProps) {
+  const argsStr = Object.keys(args).length > 0
+    ? JSON.stringify(args, null, 2)
+    : ""
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor="yellow"
+      paddingX={1}
+      paddingY={1}
+    >
+      <Text color="yellow" bold>
+        ⚠ Tool Approval Required
+      </Text>
+      <Box marginTop={1}>
+        <Text color="white" bold>
+          Tool:{" "}
+        </Text>
+        <Text color="cyan">{toolName}</Text>
+      </Box>
+      {argsStr && (
+        <Box marginTop={1}>
+          <Text color="white" bold>
+            Args:{" "}
+          </Text>
+          <Text color="gray" wrap="wrap">{argsStr}</Text>
+        </Box>
+      )}
+      <Box marginTop={1}>
+        <Text color="green">[y]</Text>
+        <Text color="gray"> Approve </Text>
+        <Text color="red">[n]</Text>
+        <Text color="gray"> Reject</Text>
+      </Box>
     </Box>
   )
 }
