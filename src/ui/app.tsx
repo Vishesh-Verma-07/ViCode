@@ -2,9 +2,11 @@ import React, { useState, useCallback, useRef } from "react"
 import { Box, Text, useInput, useApp, useWindowSize } from "ink"
 import { TextInput } from "@inkjs/ui"
 import type { Message, ToolDefinition, ToolContext } from "../core/types"
+import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import { runAgentLoop } from "../core/agent-loop"
+import { createSession, saveSession } from "../core/session"
 
 interface ToolCallEntry {
   id: string
@@ -33,6 +35,8 @@ interface AppProps {
   tools: ToolDefinition[]
   systemPrompt: string
   context: ToolContext
+  initialSession?: Session
+  sessionsDir?: string
 }
 
 export function extractDiff(result: string): { message: string; diff: string | null } {
@@ -46,8 +50,9 @@ export function extractDiff(result: string): { message: string; diff: string | n
   return { message, diff }
 }
 
-export function App({ provider, tools, systemPrompt, context }: AppProps) {
-  const [messages, setMessages] = useState<Message[]>([])
+export function App({ provider, tools, systemPrompt, context, initialSession, sessionsDir }: AppProps) {
+  const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
+  const [session, setSession] = useState<Session | null>(initialSession ?? null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
@@ -134,6 +139,23 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
 
         setMessages(result.messages)
         setUsage(result.totalUsage)
+
+        if (sessionsDir) {
+          const activeSession = session ?? createSession({
+            projectPath: context.projectPath,
+            model: provider.getModelInfo().name,
+            messages: result.messages,
+          })
+          const savedSession: Session = {
+            ...activeSession,
+            messages: result.messages,
+            updatedAt: new Date().toISOString(),
+            totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
+            totalCost: activeSession.totalCost,
+          }
+          saveSession(savedSession, sessionsDir)
+          setSession(savedSession)
+        }
       } catch (error) {
         if (error instanceof Error && error.name !== "AbortError") {
           console.error("Loop error:", error)
@@ -144,7 +166,7 @@ export function App({ provider, tools, systemPrompt, context }: AppProps) {
         abortRef.current = null
       }
     },
-    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls],
+    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir],
   )
 
   useInput(
