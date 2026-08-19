@@ -49,7 +49,7 @@ describe("agent-loop", () => {
       [
         { type: "text-delta", text: "Hello" },
         { type: "text-delta", text: " world" },
-        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0 } },
       ],
     ])
 
@@ -73,7 +73,7 @@ describe("agent-loop", () => {
       [
         { type: "text-delta", text: "A" },
         { type: "text-delta", text: "B" },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, cost: 0 } },
       ],
     ])
 
@@ -102,11 +102,11 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "call_1", toolName: "echo" },
         { type: "tool-call-end", toolCallId: "call_1", toolName: "echo", args: { input: "hi" } },
-        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0 } },
       ],
       [
         { type: "text-delta", text: "Done" },
-        { type: "finish", usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 } },
+        { type: "finish", usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8, cost: 0 } },
       ],
     ])
 
@@ -133,7 +133,7 @@ describe("agent-loop", () => {
     const provider = createMockProvider([
       [
         { type: "text-delta", text: "Final answer" },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
     ])
 
@@ -162,17 +162,17 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "c1", toolName: "fail" },
         { type: "tool-call-end", toolCallId: "c1", toolName: "fail", args: { x: 1 } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "tool-call-start", toolCallId: "c2", toolName: "fail" },
         { type: "tool-call-end", toolCallId: "c2", toolName: "fail", args: { x: 1 } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "tool-call-start", toolCallId: "c3", toolName: "fail" },
         { type: "tool-call-end", toolCallId: "c3", toolName: "fail", args: { x: 1 } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
     ])
 
@@ -207,21 +207,21 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "c1", toolName: "echo" },
         { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: { input: "a" } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "tool-call-start", toolCallId: "c2", toolName: "echo" },
         { type: "tool-call-end", toolCallId: "c2", toolName: "echo", args: { input: "b" } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "tool-call-start", toolCallId: "c3", toolName: "echo" },
         { type: "tool-call-end", toolCallId: "c3", toolName: "echo", args: { input: "c" } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "text-delta", text: "done" },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
     ])
 
@@ -288,11 +288,11 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "c1", toolName: "nonexistent" },
         { type: "tool-call-end", toolCallId: "c1", toolName: "nonexistent", args: {} },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "text-delta", text: "done" },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
     ])
 
@@ -325,11 +325,11 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "c1", toolName: "bash" },
         { type: "tool-call-end", toolCallId: "c1", toolName: "bash", args: { command: "ls" } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "text-delta", text: "done" },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
     ])
 
@@ -363,11 +363,11 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "c1", toolName: "bash" },
         { type: "tool-call-end", toolCallId: "c1", toolName: "bash", args: { command: "rm -rf /" } },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "text-delta", text: "Ok, I won't do that" },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
     ])
 
@@ -406,11 +406,11 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "c1", toolName: "broken" },
         { type: "tool-call-end", toolCallId: "c1", toolName: "broken", args: {} },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
       [
         { type: "text-delta", text: "recovered" },
-        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } },
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
       ],
     ])
 
@@ -442,16 +442,16 @@ describe("agent-loop", () => {
       [
         { type: "tool-call-start", toolCallId: "c1", toolName: "echo" },
         { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: { x: "1" } },
-        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0 } },
       ],
       [
         { type: "tool-call-start", toolCallId: "c2", toolName: "echo" },
         { type: "tool-call-end", toolCallId: "c2", toolName: "echo", args: { x: "2" } },
-        { type: "finish", usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12 } },
+        { type: "finish", usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12, cost: 0 } },
       ],
       [
         { type: "text-delta", text: "done" },
-        { type: "finish", usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 } },
+        { type: "finish", usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, cost: 0 } },
       ],
     ])
 
@@ -468,6 +468,45 @@ describe("agent-loop", () => {
       inputTokens: 23,
       outputTokens: 11,
       totalTokens: 34,
+      cost: 0,
     })
+  })
+
+  it("accumulates cost across multiple loop iterations", async () => {
+    const echoTool: ToolDefinition = {
+      name: "echo",
+      description: "Echo",
+      parameters: z.object({ x: z.string() }),
+      execute: async (args) => String(args.x),
+      dangerous: false,
+    }
+
+    const provider = createMockProvider([
+      [
+        { type: "tool-call-start", toolCallId: "c1", toolName: "echo" },
+        { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: { x: "1" } },
+        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0.01 } },
+      ],
+      [
+        { type: "tool-call-start", toolCallId: "c2", toolName: "echo" },
+        { type: "tool-call-end", toolCallId: "c2", toolName: "echo", args: { x: "2" } },
+        { type: "finish", usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12, cost: 0.02 } },
+      ],
+      [
+        { type: "text-delta", text: "done" },
+        { type: "finish", usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, cost: 0.03 } },
+      ],
+    ])
+
+    const result = await runAgentLoop(
+      [userMessage("echo")],
+      provider,
+      [echoTool],
+      "system",
+      mockContext,
+      createMockCallbacks(),
+    )
+
+    expect(result.totalUsage.cost).toBeCloseTo(0.06, 4)
   })
 })

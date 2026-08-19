@@ -15,7 +15,7 @@ export interface TokenUsage {
   inputTokens: number
   outputTokens: number
   totalTokens: number
-  cost?: number
+  cost: number
 }
 
 export interface ModelInfo {

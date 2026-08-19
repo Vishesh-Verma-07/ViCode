@@ -3,6 +3,7 @@ import type { Message, ToolDefinition } from "../core/types"
 import type { ModelMessage, ToolSet } from "ai"
 import { streamText, tool, zodSchema } from "ai"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
+import { getModelPricing, calculateCost } from "../core/cost-calculator"
 
 export interface OpenRouterProviderConfig {
   apiKey: string
@@ -50,7 +51,7 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): Prov
           case "tool-result":
             break
           case "finish-step": {
-            const usage = extractUsage(event.usage)
+            const usage = extractUsage(event.usage, modelId)
             yield { type: "finish", usage }
             break
           }
@@ -135,10 +136,11 @@ export function convertTools(tools: ToolDefinition[]): ToolSet {
   return result
 }
 
-function extractUsage(raw: { inputTokens?: number; outputTokens?: number; totalTokens?: number }): TokenUsage {
-  return {
-    inputTokens: raw.inputTokens ?? 0,
-    outputTokens: raw.outputTokens ?? 0,
-    totalTokens: raw.totalTokens ?? 0,
-  }
+function extractUsage(raw: { inputTokens?: number; outputTokens?: number; totalTokens?: number }, modelId: string): TokenUsage {
+  const inputTokens = raw.inputTokens ?? 0
+  const outputTokens = raw.outputTokens ?? 0
+  const totalTokens = raw.totalTokens ?? 0
+  const pricing = getModelPricing(modelId)
+  const cost = calculateCost(inputTokens, outputTokens, pricing)
+  return { inputTokens, outputTokens, totalTokens, cost }
 }

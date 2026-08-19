@@ -7,6 +7,7 @@ import type { Provider, TokenUsage } from "../core/provider"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import { runAgentLoop } from "../core/agent-loop"
 import { createSession, saveSession } from "../core/session"
+import { formatCost, formatTokens } from "../core/cost-calculator"
 
 interface ToolCallEntry {
   id: string
@@ -58,8 +59,9 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
   const [diffs, setDiffs] = useState<DiffEntry[]>([])
   const [activeTab, setActiveTab] = useState<SidebarTab>("tools")
-  const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0 })
+  const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
+  const [showExitSummary, setShowExitSummary] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -151,7 +153,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
             messages: result.messages,
             updatedAt: new Date().toISOString(),
             totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
-            totalCost: activeSession.totalCost,
+            totalCost: activeSession.totalCost + result.totalUsage.cost,
           }
           saveSession(savedSession, sessionsDir)
           setSession(savedSession)
@@ -180,6 +182,11 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         return
       }
 
+      if (showExitSummary) {
+        exit()
+        return
+      }
+
       if (key.tab) {
         setActiveTab((prev) => (prev === "tools" ? "diffs" : "tools"))
         return
@@ -189,7 +196,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         abortRef.current.abort()
       }
       if (key.ctrl && input === "c") {
-        exit()
+        setShowExitSummary(true)
       }
     },
     { isActive: true },
@@ -221,6 +228,9 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           toolName={pendingApproval.toolName}
           args={pendingApproval.args}
         />
+      )}
+      {showExitSummary && (
+        <ExitSummary usage={usage} model={provider.getModelInfo().name} />
       )}
     </Box>
   )
@@ -454,7 +464,7 @@ function StatusBar({ usage, model }: StatusBarProps) {
         {model}
       </Text>
       <Text color="gray">
-        Tokens: {usage.totalTokens}
+        Tokens: {formatTokens(usage.totalTokens)} | Cost: {formatCost(usage.cost)}
       </Text>
     </Box>
   )
@@ -500,6 +510,52 @@ function ApprovalPrompt({ toolName, args }: ApprovalPromptProps) {
         <Text color="gray"> Approve </Text>
         <Text color="red">[n]</Text>
         <Text color="gray"> Reject</Text>
+      </Box>
+    </Box>
+  )
+}
+
+interface ExitSummaryProps {
+  usage: TokenUsage
+  model: string
+}
+
+function ExitSummary({ usage, model }: ExitSummaryProps) {
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor="cyan"
+      paddingX={1}
+      paddingY={1}
+    >
+      <Text color="cyan" bold>
+        Session Summary
+      </Text>
+      <Box marginTop={1}>
+        <Text color="white" bold>
+          Model:{" "}
+        </Text>
+        <Text color="gray">{model}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color="white" bold>
+          Tokens:{" "}
+        </Text>
+        <Text color="gray">
+          {formatTokens(usage.totalTokens)} total ({formatTokens(usage.inputTokens)} in / {formatTokens(usage.outputTokens)} out)
+        </Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color="white" bold>
+          Cost:{" "}
+        </Text>
+        <Text color="green">{formatCost(usage.cost)}</Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color="gray" italic>
+          Press any key to exit
+        </Text>
       </Box>
     </Box>
   )

@@ -58,7 +58,7 @@ export async function runAgentLoop(
 ): Promise<AgentLoopResult> {
   const allMessages = [...messages]
   const toolCallHistory: string[] = []
-  let totalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+  let totalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
   let doomLoopDetected = false
 
   const registry = new ToolRegistry()
@@ -122,6 +122,7 @@ export async function runAgentLoop(
         inputTokens: totalUsage.inputTokens + stepUsage.inputTokens,
         outputTokens: totalUsage.outputTokens + stepUsage.outputTokens,
         totalTokens: totalUsage.totalTokens + stepUsage.totalTokens,
+        cost: (totalUsage.cost ?? 0) + (stepUsage.cost ?? 0),
       }
     }
 
