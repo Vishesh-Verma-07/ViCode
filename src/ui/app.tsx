@@ -240,22 +240,41 @@ function Sidebar({ width, toolCalls }: SidebarProps) {
           No tool calls yet
         </Text>
       )}
-      {toolCalls.map((tc) => (
-        <Box key={tc.id} flexDirection="column" marginBottom={1}>
-          <Text color="yellow">
-            {tc.name}
-          </Text>
-          {tc.result && (
-            <Text color="gray" wrap="wrap">
-              {tc.result.length > 200
-                ? tc.result.slice(0, 200) + "..."
-                : tc.result}
+      {toolCalls.map((tc) => {
+        const argsStr = Object.keys(tc.args).length > 0
+          ? JSON.stringify(tc.args)
+          : ""
+        const maxLines = 500
+        const resultDisplay = tc.result
+          ? truncateLines(tc.result, maxLines)
+          : ""
+        return (
+          <Box key={tc.id} flexDirection="column" marginBottom={1}>
+            <Text color="yellow">
+              {tc.name}
             </Text>
-          )}
-        </Box>
-      ))}
+            {argsStr && (
+              <Text color="gray" wrap="wrap">
+                {argsStr}
+              </Text>
+            )}
+            {resultDisplay && (
+              <Text color="gray" wrap="wrap">
+                {resultDisplay}
+              </Text>
+            )}
+          </Box>
+        )
+      })}
     </Box>
   )
+}
+
+function truncateLines(text: string, maxLines: number): string {
+  const lines = text.split("\n")
+  if (lines.length <= maxLines) return text
+  const truncated = lines.slice(0, maxLines).join("\n")
+  return truncated + `\n... (${lines.length - maxLines} more lines)`
 }
 
 interface StatusBarProps {

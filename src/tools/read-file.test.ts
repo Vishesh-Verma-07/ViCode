@@ -1,0 +1,55 @@
+import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { readFileTool } from "./read-file"
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs"
+import { join } from "path"
+import type { ToolContext } from "../core/types"
+
+const tmpDir = join(import.meta.dir, "__tmp_read_file_test")
+
+beforeEach(() => {
+  if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
+  mkdirSync(tmpDir, { recursive: true })
+})
+
+afterEach(() => {
+  if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
+})
+
+const ctx: ToolContext = { projectPath: tmpDir }
+
+describe("read_file tool", () => {
+  it("has correct metadata", () => {
+    expect(readFileTool.name).toBe("read_file")
+    expect(readFileTool.dangerous).toBe(false)
+    expect(readFileTool.description).toContain("file")
+  })
+
+  it("reads file contents", async () => {
+    writeFileSync(join(tmpDir, "hello.txt"), "hello world")
+    const result = await readFileTool.execute({ path: "hello.txt" }, ctx)
+    expect(result).toBe("hello world")
+  })
+
+  it("returns error for missing file", async () => {
+    const result = await readFileTool.execute({ path: "nope.txt" }, ctx)
+    expect(result).toContain("Error")
+  })
+
+  it("resolves path relative to projectPath", async () => {
+    mkdirSync(join(tmpDir, "sub"))
+    writeFileSync(join(tmpDir, "sub", "file.ts"), "const x = 1")
+    const result = await readFileTool.execute({ path: "sub/file.ts" }, ctx)
+    expect(result).toBe("const x = 1")
+  })
+
+  it("rejects absolute paths outside project", async () => {
+    const result = await readFileTool.execute({ path: "/etc/passwd" }, ctx)
+    expect(result).toContain("Error")
+  })
+
+  it("reads empty file", async () => {
+    writeFileSync(join(tmpDir, "empty.txt"), "")
+    const result = await readFileTool.execute({ path: "empty.txt" }, ctx)
+    expect(result).toBe("")
+  })
+})

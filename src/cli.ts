@@ -8,6 +8,7 @@ import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
 import { assembleSystemPrompt } from "./core/system-prompt"
+import { readOnlyTools } from "./tools"
 import { App } from "./ui/app"
 
 const args = parseArgs(process.argv.slice(2))
@@ -61,7 +62,7 @@ const systemPrompt = assembleSystemPrompt({
 render(
   React.createElement(App, {
     provider,
-    tools: [],
+    tools: readOnlyTools,
     systemPrompt,
     context: { projectPath },
   }),
