@@ -1,6 +1,7 @@
 import type { Message, ToolDefinition, ToolContext } from "./types"
 import type { Provider, StreamEvent, TokenUsage } from "./provider"
 import { ToolRegistry } from "./tool-registry"
+import { log } from "../utils/logger"
 
 const DOOM_LOOP_THRESHOLD = 3
 
@@ -78,6 +79,9 @@ export async function runAgentLoop(
       for await (const event of provider.streamChat(allMessages, tools, systemPrompt, abortSignal)) {
         if (abortSignal?.aborted) break
 
+        //@ts-ignore
+        log("this is event", event.responseBody)
+
         switch (event.type) {
           case "text-delta":
             assistantText += event.text ?? ""
@@ -113,6 +117,7 @@ export async function runAgentLoop(
         }
       }
     } catch (error) {
+      log(error)
       callbacks.onError(error)
       break
     }

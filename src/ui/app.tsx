@@ -8,6 +8,7 @@ import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import { runAgentLoop } from "../core/agent-loop"
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
+import { log } from "../utils/logger"
 
 interface ToolCallEntry {
   id: string
@@ -138,6 +139,8 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           },
           controller.signal,
         )
+
+        log(result)
 
         setMessages(result.messages)
         setUsage(result.totalUsage)
