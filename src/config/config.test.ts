@@ -5,12 +5,18 @@ import { join } from "path"
 
 const tmpDir = join(import.meta.dir, "__tmp_config_test")
 
+let savedApiKey: string | undefined
+
 beforeEach(() => {
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
   mkdirSync(tmpDir, { recursive: true })
+  savedApiKey = process.env.OPENROUTER_API_KEY
+  delete process.env.OPENROUTER_API_KEY
 })
 
 afterEach(() => {
+  if (savedApiKey === undefined) delete process.env.OPENROUTER_API_KEY
+  else process.env.OPENROUTER_API_KEY = savedApiKey
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
 })
 
