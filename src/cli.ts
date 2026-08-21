@@ -9,6 +9,8 @@ import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
 import { assembleSystemPrompt } from "./core/system-prompt"
 import { readOnlyTools } from "./tools"
+import { CommandRegistry } from "./core/command-registry"
+import { createBuiltinCommands } from "./commands"
 import { App } from "./ui/app"
 import {
   getSessionsDir,
@@ -114,6 +116,9 @@ const systemPrompt = assembleSystemPrompt({
   cliPrompt: cliSystemPrompt && config.systemPrompt !== cliSystemPrompt ? cliSystemPrompt : undefined,
 })
 
+const commandRegistry = new CommandRegistry()
+commandRegistry.registerAll(createBuiltinCommands(commandRegistry))
+
 render(
   React.createElement(App, {
     provider,
@@ -122,5 +127,6 @@ render(
     context: { projectPath },
     initialSession: initialSession ?? undefined,
     sessionsDir,
+    commands: commandRegistry.getAll(),
   }),
 )

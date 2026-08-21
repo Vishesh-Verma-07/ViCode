@@ -43,6 +43,16 @@ export interface ToolContext {
   projectPath: string
 }
 
+export interface Command {
+  name: string
+  description: string
+  execute: (args: string[], context: CommandContext) => Promise<string>
+}
+
+export interface CommandContext {
+  projectPath: string
+}
+
 export interface Session {
   id: string
   projectPath: string

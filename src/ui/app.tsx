@@ -1,11 +1,13 @@
-import React, { useState, useCallback, useRef } from "react"
+import React, { useState, useCallback, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize } from "ink"
 import { TextInput } from "@inkjs/ui"
-import type { Message, ToolDefinition, ToolContext } from "../core/types"
+import type { Message, ToolDefinition, ToolContext, Command, CommandContext } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import { runAgentLoop } from "../core/agent-loop"
+import { CommandRegistry } from "../core/command-registry"
+import { dispatchCommand } from "../core/command-dispatcher"
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import { log } from "../utils/logger"
@@ -26,6 +28,14 @@ interface DiffEntry {
 
 type SidebarTab = "tools" | "diffs"
 
+export type FeedbackTone = "info" | "error"
+
+export interface FeedbackEntry {
+  id: string
+  text: string
+  tone: FeedbackTone
+}
+
 interface PendingApproval {
   toolName: string
   args: Record<string, unknown>
@@ -39,6 +49,7 @@ interface AppProps {
   context: ToolContext
   initialSession?: Session
   sessionsDir?: string
+  commands?: Command[]
 }
 
 export function extractDiff(result: string): { message: string; diff: string | null } {
@@ -52,7 +63,7 @@ export function extractDiff(result: string): { message: string; diff: string | n
   return { message, diff }
 }
 
-export function App({ provider, tools, systemPrompt, context, initialSession, sessionsDir }: AppProps) {
+export function App({ provider, tools, systemPrompt, context, initialSession, sessionsDir, commands }: AppProps) {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
   const [isStreaming, setIsStreaming] = useState(false)
@@ -63,13 +74,43 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
   const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [showExitSummary, setShowExitSummary] = useState(false)
+  const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
+  const [inputKey, setInputKey] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
 
+  const commandRegistry = useMemo(() => {
+    const registry = new CommandRegistry()
+    if (commands) registry.registerAll(commands)
+    return registry
+  }, [commands])
+
+  const appendFeedback = useCallback((text: string, tone: FeedbackTone) => {
+    setFeedbackEntries((prev) => [
+      ...prev,
+      { id: `feedback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, text, tone },
+    ])
+  }, [])
+
   const handleSend = useCallback(
     async (input: string) => {
       if (!input.trim() || isStreaming) return
+
+      setCurrentText("")
+      setInputKey((prev) => prev + 1)
+
+      const commandContext: CommandContext = { projectPath: context.projectPath }
+      const dispatch = await dispatchCommand(input, commandRegistry, commandContext)
+
+      if (dispatch.kind !== "pass-through") {
+        if (dispatch.kind === "executed") {
+          if (dispatch.output) appendFeedback(dispatch.output, "info")
+        } else {
+          appendFeedback(dispatch.error, "error")
+        }
+        return
+      }
 
       const userMsg: Message = {
         id: `user_${Date.now()}`,
@@ -79,7 +120,6 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
       }
 
       setMessages((prev) => [...prev, userMsg])
-      setCurrentText("")
       setToolCalls([])
       setDiffs([])
       setIsStreaming(true)
@@ -171,7 +211,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         abortRef.current = null
       }
     },
-    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir],
+    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback],
   )
 
   useInput(
@@ -217,6 +257,8 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           currentText={currentText}
           isStreaming={isStreaming}
           onSend={handleSend}
+          feedbackEntries={feedbackEntries}
+          inputKey={inputKey}
         />
         <Sidebar
           width={sidebarWidth}
@@ -245,9 +287,11 @@ interface ChatPanelProps {
   currentText: string
   isStreaming: boolean
   onSend: (input: string) => void
+  feedbackEntries: FeedbackEntry[]
+  inputKey: number
 }
 
-function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPanelProps) {
+function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey }: ChatPanelProps) {
   return (
     <Box
       width={width}
@@ -257,13 +301,16 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPa
       paddingX={1}
     >
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {messages.length === 0 && (
+        {messages.length === 0 && feedbackEntries.length === 0 && (
           <Text color="gray" italic>
             Type a message to start chatting...
           </Text>
         )}
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
+        ))}
+        {feedbackEntries.map((entry) => (
+          <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />
         ))}
         {isStreaming && currentText && (
           <Text>{currentText}</Text>
@@ -274,6 +321,7 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPa
       </Box>
       <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
         <TextInput
+          key={inputKey}
           placeholder={isStreaming ? "Waiting for response..." : "Type your message..."}
           isDisabled={isStreaming}
           onSubmit={onSend}
@@ -285,6 +333,16 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPa
 
 interface MessageBubbleProps {
   message: Message
+}
+
+export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone }) {
+  return (
+    <Box marginBottom={1}>
+      <Text color={tone === "error" ? "red" : "cyan"} wrap="wrap">
+        {text}
+      </Text>
+    </Box>
+  )
 }
 
 function MessageBubble({ message }: MessageBubbleProps) {
