@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize } from "ink"
 import { TextInput } from "@inkjs/ui"
-import type { Message, ToolDefinition, ToolContext, Command, CommandContext } from "../core/types"
+import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
@@ -10,6 +10,7 @@ import { CommandRegistry } from "../core/command-registry"
 import { dispatchCommand } from "../core/command-dispatcher"
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
+import { Picker } from "./picker"
 import { log } from "../utils/logger"
 
 interface ToolCallEntry {
@@ -40,6 +41,11 @@ interface PendingApproval {
   toolName: string
   args: Record<string, unknown>
   resolve: (approved: boolean) => void
+}
+
+interface PickerState {
+  request: PickerRequest
+  resolve: (index: number | null) => void
 }
 
 interface AppProps {
@@ -76,6 +82,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
   const [showExitSummary, setShowExitSummary] = useState(false)
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
   const [inputKey, setInputKey] = useState(0)
+  const [pickerState, setPickerState] = useState<PickerState | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -93,6 +100,22 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
     ])
   }, [])
 
+  const openPicker = useCallback((request: PickerRequest) => {
+    return new Promise<number | null>((resolve) => {
+      setPickerState({ request, resolve })
+    })
+  }, [])
+
+  const closePicker = useCallback(
+    (index: number | null) => {
+      setPickerState((prev) => {
+        prev?.resolve(index)
+        return null
+      })
+    },
+    [],
+  )
+
   const handleSend = useCallback(
     async (input: string) => {
       if (!input.trim() || isStreaming) return
@@ -100,7 +123,20 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
       setCurrentText("")
       setInputKey((prev) => prev + 1)
 
-      const commandContext: CommandContext = { projectPath: context.projectPath }
+      const commandContext: CommandContext = {
+        projectPath: context.projectPath,
+        openPicker,
+        sessions: sessionsDir
+          ? {
+              dir: sessionsDir,
+              getActiveSession: () => session,
+              switchTo: (loaded) => {
+                setSession(loaded)
+                setMessages(loaded.messages)
+              },
+            }
+          : undefined,
+      }
       const dispatch = await dispatchCommand(input, commandRegistry, commandContext)
 
       if (dispatch.kind !== "pass-through") {
@@ -211,11 +247,13 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         abortRef.current = null
       }
     },
-    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback],
+    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker],
   )
 
   useInput(
     (input, key) => {
+      if (pickerState) return
+
       if (pendingApproval) {
         const lower = input.toLowerCase()
         if (lower === "y" || lower === "n") {
@@ -259,6 +297,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           onSend={handleSend}
           feedbackEntries={feedbackEntries}
           inputKey={inputKey}
+          inputDisabled={pickerState !== null}
         />
         <Sidebar
           width={sidebarWidth}
@@ -268,6 +307,14 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         />
       </Box>
       <StatusBar usage={usage} model={provider.getModelInfo().name} />
+      {pickerState && (
+        <Picker
+          title={pickerState.request.title}
+          items={pickerState.request.items}
+          onSelect={(index) => closePicker(index)}
+          onCancel={() => closePicker(null)}
+        />
+      )}
       {pendingApproval && (
         <ApprovalPrompt
           toolName={pendingApproval.toolName}
@@ -289,9 +336,10 @@ interface ChatPanelProps {
   onSend: (input: string) => void
   feedbackEntries: FeedbackEntry[]
   inputKey: number
+  inputDisabled?: boolean
 }
 
-function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey }: ChatPanelProps) {
+function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled }: ChatPanelProps) {
   return (
     <Box
       width={width}
@@ -323,7 +371,7 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedback
         <TextInput
           key={inputKey}
           placeholder={isStreaming ? "Waiting for response..." : "Type your message..."}
-          isDisabled={isStreaming}
+          isDisabled={isStreaming || inputDisabled}
           onSubmit={onSend}
         />
       </Box>

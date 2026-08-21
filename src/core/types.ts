@@ -49,8 +49,28 @@ export interface Command {
   execute: (args: string[], context: CommandContext) => Promise<string>
 }
 
+export interface PickerItem {
+  label: string
+  metadata?: string
+}
+
+export interface PickerRequest {
+  title: string
+  items: PickerItem[]
+}
+
+export type OpenPicker = (request: PickerRequest) => Promise<number | null>
+
+export interface SessionsCapability {
+  dir: string
+  getActiveSession(): Session | null
+  switchTo(session: Session): void
+}
+
 export interface CommandContext {
   projectPath: string
+  openPicker?: OpenPicker
+  sessions?: SessionsCapability
 }
 
 export interface Session {
