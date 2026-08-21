@@ -16,5 +16,8 @@
 | **TUI** | Terminal User Interface. A text-based UI rendered in the terminal using Ink (React for CLIs). |
 | **Sidebar** | The right panel of the two-panel layout, showing tool call logs and file diffs in tabbed view. |
 | **Status Bar** | Bottom bar showing model name, token count, and estimated cost. |
-| **Config Layering** | Configuration priority: CLI flags > project config (.vicode.json) > global config (~/.vicode/config.json). |
+| **Command** | A user-invoked application action typed as a slash command (e.g., `/new`, `/model`) in the chat input. Distinct from a Tool, which is invoked by the LLM. An input is treated as a Command attempt only if its first word starts with `/`. |
+| **Skill** | A markdown instruction file whose full content is injected as a System Prompt layer when activated via `/skill`, shaping agent behavior until the session ends. Discovered from project `.vicode/skills/` and global `~/.vicode/skills/`; project wins on name collision. Multiple active Skills stack. |
+| **Command Suggestion** | The dropdown rendered above the chat input listing matching Commands as the user types after `/`. Shows a "no commands match" state when nothing matches. |
+| **Config Layering** | Configuration priority: project config (.vicode.json) > global config (~/.vicode/config.json). Runtime changes (model, skills) happen via Commands, not CLI flags. |
 | **Project Hash** | A truncated SHA-256 hash of the project directory's absolute path, used to namespace session storage. |
