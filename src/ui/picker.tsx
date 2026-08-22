@@ -1,6 +1,7 @@
 import React, { useState } from "react"
 import { Box, Text, useInput } from "ink"
 import type { PickerRequest } from "../core/types"
+import { moveHighlight } from "./command-suggestion"
 
 interface PickerProps extends PickerRequest {
   onSelect: (index: number) => void
@@ -16,9 +17,9 @@ export function Picker({ title, items, onSelect, onCancel }: PickerProps) {
       return
     }
     if (key.upArrow) {
-      setHighlighted((prev) => Math.max(0, prev - 1))
+      setHighlighted((prev) => moveHighlight(prev, items.length, -1))
     } else if (key.downArrow) {
-      setHighlighted((prev) => Math.min(items.length - 1, prev + 1))
+      setHighlighted((prev) => moveHighlight(prev, items.length, 1))
     } else if (key.return) {
       onSelect(highlighted)
     } else if (key.escape) {

@@ -52,6 +52,11 @@ function createTestCommands(): Command[] {
     description: "Does nothing",
     execute: async () => "noop done",
   })
+  registry.register({
+    name: "echo",
+    description: "Echoes its arguments",
+    execute: async (args) => args.join(" "),
+  })
   return registry.getAll()
 }
 
@@ -225,6 +230,172 @@ describe("App command interception", () => {
     } finally {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("App command suggestion dropdown", () => {
+  function setup() {
+    const capturedMessages: Message[][] = []
+    const provider = createStubProvider(capturedMessages)
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/suggestion-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeText(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+    }
+
+    async function pressKey(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { ...instance, capturedMessages, typeText, pressKey }
+  }
+
+  it("opens the dropdown listing every registered command when / is typed", async () => {
+    const { lastFrame, typeText, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      await typeText("/")
+      await until(() => (lastFrame() ?? "").includes("> /help"))
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("/help")
+      expect(frame).toContain("List available commands")
+      expect(frame).toContain("/noop")
+      expect(frame).toContain("Does nothing")
+
+      const hintIndex = frame.indexOf("Type a message to start chatting")
+      const dropdownLineIndex = frame.indexOf("> /help")
+      const statusBarIndex = frame.indexOf("Tokens:")
+      expect(hintIndex).toBeGreaterThanOrEqual(0)
+      expect(dropdownLineIndex).toBeGreaterThan(hintIndex)
+      expect(dropdownLineIndex).toBeLessThan(statusBarIndex)
+    } finally {
+      unmount()
+    }
+  })
+
+  it("does not show the dropdown for non-command input", async () => {
+    const { lastFrame, typeText, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      await typeText("hello /world")
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(lastFrame() ?? "").not.toContain("> /help")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("filters case-insensitively as you type", async () => {
+    const { lastFrame, typeText, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      await typeText("/NO")
+      await until(() => (lastFrame() ?? "").includes("> /noop"))
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("/noop")
+      expect(frame).not.toContain("/help")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("shows the no-commands-match message instead of vanishing", async () => {
+    const { lastFrame, typeText, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      await typeText("/frobnicate")
+      await until(() => (lastFrame() ?? "").includes("no commands match"))
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("no commands match")
+      expect(frame).not.toContain("> /help")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("moves the highlight with arrow keys and executes on Enter without hitting the LLM", async () => {
+    const { lastFrame, capturedMessages, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      await typeText("/")
+      await until(() => (lastFrame() ?? "").includes("> /help"))
+      expect(lastFrame() ?? "").not.toContain("> /noop")
+
+      await pressKey("\u001B[B")
+      await until(() => (lastFrame() ?? "").includes("> /noop"))
+
+      await pressKey("\r")
+      await until(() => (lastFrame() ?? "").includes("noop done"))
+
+      expect(capturedMessages).toHaveLength(0)
+      expect(lastFrame() ?? "").not.toContain("You:")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("executes the highlighted command under its canonical name while preserving typed arguments", async () => {
+    const { lastFrame, capturedMessages, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      await typeText("/EC hello")
+      await until(() => (lastFrame() ?? "").includes("> /echo"))
+
+      await pressKey("\r")
+      await until(() => (lastFrame() ?? "").includes("hello"))
+
+      expect(lastFrame() ?? "").toContain("hello")
+      expect(capturedMessages).toHaveLength(0)
+      expect(lastFrame() ?? "").not.toContain("You:")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("dismisses on Escape, reopens on the next change, and normal chat still works", async () => {
+    const { lastFrame, capturedMessages, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      await typeText("/h")
+      await until(() => (lastFrame() ?? "").includes("- List available commands"))
+
+      await pressKey("\u001B")
+      await until(() => !(lastFrame() ?? "").includes("- List available commands"))
+
+      await typeText("x")
+      await until(() => (lastFrame() ?? "").includes("no commands match"))
+
+      for (let i = 0; i < 3; i++) {
+        await pressKey("\u007F")
+      }
+      await until(() => !(lastFrame() ?? "").includes("no commands match"))
+
+      await typeText("hello world")
+      await pressKey("\r")
+      await until(() => (lastFrame() ?? "").includes("You:"))
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("hello world")
+      expect(frame).not.toContain("List available commands")
+      expect(capturedMessages.length).toBeGreaterThan(0)
+    } finally {
+      unmount()
     }
   })
 })

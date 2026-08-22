@@ -11,6 +11,7 @@ import { dispatchCommand } from "../core/command-dispatcher"
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import { Picker } from "./picker"
+import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
 import { log } from "../utils/logger"
 
 interface ToolCallEntry {
@@ -78,6 +79,9 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
   const [inputKey, setInputKey] = useState(0)
   const [pickerRequest, setPickerRequest] = useState<PickerRequest | null>(null)
+  const [inputValue, setInputValue] = useState("")
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
+  const [suggestionHighlight, setSuggestionHighlight] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -93,6 +97,24 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
       ...prev,
       { id: `feedback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, text, tone },
     ])
+  }, [])
+
+  const allCommands = commandRegistry.getAll()
+  const firstWord = inputValue.trim().split(/\s+/)[0] ?? ""
+  const suggestedCommands = firstWord.startsWith("/") ? filterCommands(allCommands, firstWord) : []
+  const suggestionVisible =
+    !isStreaming &&
+    !pickerRequest &&
+    !pendingApproval &&
+    !showExitSummary &&
+    firstWord.startsWith("/") &&
+    !suggestionDismissed
+  const clampedSuggestionHighlight = Math.min(suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
+
+  const handleInputChange = useCallback((value: string) => {
+    setInputValue(value)
+    setSuggestionDismissed(false)
+    setSuggestionHighlight(0)
   }, [])
 
   const pickerResolveRef = useRef<((index: number | null) => void) | null>(null)
@@ -123,6 +145,9 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
 
       setCurrentText("")
       setInputKey((prev) => prev + 1)
+      setInputValue("")
+      setSuggestionDismissed(false)
+      setSuggestionHighlight(0)
 
       const commandContext: CommandContext = {
         projectPath: context.projectPath,
@@ -269,6 +294,32 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         return
       }
 
+      if (suggestionVisible) {
+        if (key.upArrow) {
+          setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, -1))
+          return
+        }
+        if (key.downArrow) {
+          setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, 1))
+          return
+        }
+        if (key.escape) {
+          setSuggestionDismissed(true)
+          return
+        }
+      }
+
+      if (key.return) {
+        const suggestedCommand = suggestionVisible ? suggestedCommands[clampedSuggestionHighlight] : undefined
+        if (suggestedCommand) {
+          const typedRest = inputValue.trim().slice(firstWord.length)
+          void handleSend(`/${suggestedCommand.name}${typedRest}`)
+        } else if (!isStreaming && inputValue.trim()) {
+          void handleSend(inputValue)
+        }
+        return
+      }
+
       if (key.tab) {
         setActiveTab((prev) => (prev === "tools" ? "diffs" : "tools"))
         return
@@ -299,6 +350,8 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           feedbackEntries={feedbackEntries}
           inputKey={inputKey}
           inputDisabled={pickerRequest !== null}
+          onInputChange={handleInputChange}
+          suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
         />
         <Sidebar
           width={sidebarWidth}
@@ -338,9 +391,11 @@ interface ChatPanelProps {
   feedbackEntries: FeedbackEntry[]
   inputKey: number
   inputDisabled?: boolean
+  onInputChange?: (value: string) => void
+  suggestion?: CommandSuggestionProps
 }
 
-function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled }: ChatPanelProps) {
+function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
   return (
     <Box
       width={width}
@@ -368,12 +423,20 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedback
           <Text color="yellow">Thinking...</Text>
         )}
       </Box>
+      {suggestion && (
+        <Box paddingBottom={1}>
+          <CommandSuggestion
+            items={suggestion.items}
+            highlightIndex={suggestion.highlightIndex}
+          />
+        </Box>
+      )}
       <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
         <TextInput
           key={inputKey}
           placeholder={isStreaming ? "Waiting for response..." : "Type your message..."}
           isDisabled={isStreaming || inputDisabled}
-          onSubmit={onSend}
+          onChange={onInputChange}
         />
       </Box>
     </Box>
