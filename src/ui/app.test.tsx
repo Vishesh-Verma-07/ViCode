@@ -38,6 +38,9 @@ function until(condition: () => boolean, timeoutMs = 5000): Promise<void> {
 function createStubProvider(capturedMessages: Message[][], events?: StreamEvent[]): Provider {
   return {
     getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+    async listModels() {
+      return []
+    },
     async *streamChat(messages) {
       capturedMessages.push([...messages])
       for (const event of events ?? [
@@ -624,6 +627,9 @@ describe("App /new command", () => {
     let streamCall = 0
     const provider: Provider = {
       getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
       async *streamChat(messages) {
         capturedMessages.push([...messages])
         let events: StreamEvent[]
@@ -807,6 +813,9 @@ describe("App /exit command", () => {
     const seed = makeSeedSession("sess_exit_idle")
     const stubProvider: Provider = {
       getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
       async *streamChat() {
         yield { type: "finish", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
       },
@@ -829,6 +838,9 @@ describe("App /exit command", () => {
     let abortObserved = false
     const hangingProvider: Provider = {
       getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
       async *streamChat(messages, _tools, _systemPrompt, abortSignal) {
         capturedMessages.push([...messages])
         yield { type: "text-delta", text: "partial reply" }
@@ -871,6 +883,9 @@ describe("App streaming guard for commands", () => {
     const capturedMessages: Message[][] = []
     const hangingProvider: Provider = {
       getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
       async *streamChat(messages, _tools, _systemPrompt, abortSignal) {
         capturedMessages.push([...messages])
         yield { type: "text-delta", text: "partial reply" }

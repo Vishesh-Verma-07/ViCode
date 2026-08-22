@@ -23,6 +23,16 @@ export interface ModelInfo {
   name: string
 }
 
+export type ModelListingPricing =
+  | { kind: "free" }
+  | { kind: "paid"; inputPricePerToken: number; outputPricePerToken: number }
+
+export interface ModelListing {
+  id: string
+  name: string
+  pricing: ModelListingPricing
+}
+
 export interface Provider {
   streamChat(
     messages: Message[],
@@ -31,4 +41,5 @@ export interface Provider {
     abortSignal?: AbortSignal,
   ): AsyncIterable<StreamEvent>
   getModelInfo(): ModelInfo
+  listModels(): Promise<ModelListing[]>
 }

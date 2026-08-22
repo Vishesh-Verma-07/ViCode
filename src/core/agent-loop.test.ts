@@ -16,6 +16,9 @@ function createMockProvider(events: StreamEvent[][]): Provider {
     getModelInfo() {
       return { id: "mock", name: "Mock Model" }
     },
+    async listModels() {
+      return []
+    },
   }
 }
 
@@ -244,6 +247,9 @@ describe("agent-loop", () => {
       },
       getModelInfo() {
         return { id: "mock", name: "Mock" }
+      },
+      async listModels() {
+        return []
       },
     }
 
