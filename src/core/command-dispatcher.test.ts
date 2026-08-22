@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { isCommandAttempt, dispatchCommand } from "./command-dispatcher"
+import { isCommandAttempt, getCommandName, dispatchCommand } from "./command-dispatcher"
 import { CommandRegistry } from "./command-registry"
 import type { Command, CommandContext } from "./types"
 
@@ -35,6 +35,24 @@ describe("isCommandAttempt", () => {
   it("does not classify empty input", () => {
     expect(isCommandAttempt("")).toBe(false)
     expect(isCommandAttempt("   ")).toBe(false)
+  })
+})
+
+describe("getCommandName", () => {
+  it("strips the leading slash from the first word", () => {
+    expect(getCommandName("/help")).toBe("help")
+  })
+
+  it("returns only the name, not the arguments", () => {
+    expect(getCommandName("/session switch sess_1")).toBe("session")
+  })
+
+  it("ignores surrounding whitespace", () => {
+    expect(getCommandName("   /exit  now   ")).toBe("exit")
+  })
+
+  it("preserves case exactly as typed, mirroring registry lookups", () => {
+    expect(getCommandName("/EXIT")).toBe("EXIT")
   })
 })
 

@@ -3,14 +3,19 @@ import { describe, it, expect } from "bun:test"
 import { mkdtempSync, existsSync, readFileSync, readdirSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { EventEmitter } from "events"
+import { render as inkRender } from "ink"
 import { render } from "ink-testing-library"
-import { App, FeedbackLine, extractDiff } from "./app"
+import { App, FeedbackLine, STREAMING_COMMAND_NOTICE, extractDiff } from "./app"
 import { CommandRegistry } from "../core/command-registry"
 import { createHelpCommand } from "../commands/help"
 import { createSessionCommand } from "../commands/session"
-import { saveSession, type Session } from "../core/session"
-import type { Command, Message } from "../core/types"
+import { createNewCommand } from "../commands/new"
+import { createExitCommand } from "../commands/exit"
+import { saveSession, loadSession, type Session } from "../core/session"
+import type { Command, Message, ToolDefinition } from "../core/types"
 import type { Provider, StreamEvent } from "../core/provider"
+import { z } from "zod"
 
 function until(condition: () => boolean, timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -540,6 +545,391 @@ describe("App session switcher", () => {
     } finally {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+})
+
+class TestStdout extends EventEmitter {
+  get columns() {
+    return 100
+  }
+
+  frames: string[] = []
+  private lastFrameValue?: string
+
+  write = (frame: string) => {
+    this.frames.push(frame)
+    this.lastFrameValue = frame
+  }
+
+  lastFrame = () => this.lastFrameValue
+}
+
+class TestStdin extends EventEmitter {
+  isTTY = true
+  data: string | null = null
+
+  constructor(options: { isTTY?: boolean } = {}) {
+    super()
+    this.isTTY = options.isTTY ?? true
+  }
+
+  write = (data: string) => {
+    this.data = data
+    this.emit("readable")
+    this.emit("data", data)
+  }
+
+  setEncoding() {}
+  setRawMode() {}
+  resume() {}
+  pause() {}
+  ref() {}
+  unref() {}
+
+  read = () => {
+    const { data } = this
+    this.data = null
+    return data
+  }
+}
+
+describe("App /new command", () => {
+  function makeSeedSession(): Session {
+    return {
+      id: "sess_seed_one",
+      projectPath: "/tmp/test",
+      model: "stub-model",
+      messages: [
+        { id: "msg_seed", role: "user", content: [{ type: "text", text: "hello seed conversation" }], timestamp: Date.now() },
+      ],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 7,
+      totalCost: 0.001,
+    }
+  }
+
+  const stampTool: ToolDefinition = {
+    name: "stamp",
+    description: "Stamp the project",
+    dangerous: false,
+    parameters: z.object({}),
+    execute: async () =>
+      "stamped\n__DIFF_START__\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n__DIFF_END__",
+  }
+
+  function setupLifecycle(seedSession: Session | undefined) {
+    const capturedMessages: Message[][] = []
+    let streamCall = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async *streamChat(messages) {
+        capturedMessages.push([...messages])
+        let events: StreamEvent[]
+        if (streamCall === 0) {
+          events = [
+            { type: "tool-call-start", toolCallId: "t1", toolName: "stamp" },
+            { type: "tool-call-end", toolCallId: "t1", toolName: "stamp", args: {} },
+            { type: "finish", usage: { inputTokens: 3, outputTokens: 3, totalTokens: 6, cost: 0 } },
+          ]
+        } else if (streamCall === 1) {
+          events = [{ type: "finish", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }]
+        } else {
+          events = [{ type: "finish", usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10, cost: 0 } }]
+        }
+        streamCall++
+        for (const event of events) yield event
+      },
+    }
+
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-new-test-"))
+    if (seedSession) saveSession(seedSession, sessionsDir)
+
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createNewCommand())
+
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[stampTool]}
+        systemPrompt=""
+        context={{ projectPath: join(sessionsDir, "project") }}
+        initialSession={seedSession}
+        sessionsDir={sessionsDir}
+        commands={registry.getAll()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    async function pressKey(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { ...instance, capturedMessages, sessionsDir, typeAndSubmit, pressKey }
+  }
+
+  it("persists the current conversation and clears chat panel, sidebar entries and usage counters; the next message starts a brand-new session", async () => {
+    const seed = makeSeedSession()
+    const { lastFrame, capturedMessages, sessionsDir, typeAndSubmit, pressKey, unmount } = setupLifecycle(seed)
+    try {
+      await until(() => (lastFrame() ?? "").includes("hello seed conversation"))
+
+      await typeAndSubmit("turn one question")
+      await until(() => (lastFrame() ?? "").includes("stamp"))
+      await until(() => (lastFrame() ?? "").includes("Tokens: 6"))
+
+      pressKey("\t")
+      await until(() => (lastFrame() ?? "").includes("+new"))
+      const frameBeforeNew = lastFrame() ?? ""
+      expect(frameBeforeNew).toContain("-old")
+      expect(frameBeforeNew).toContain("file.txt")
+
+      await typeAndSubmit("/new")
+
+      await until(() => (lastFrame() ?? "").includes("Started a new session"))
+      const frameAfterNew = lastFrame() ?? ""
+      expect(frameAfterNew).not.toContain("hello seed conversation")
+      expect(frameAfterNew).not.toContain("turn one question")
+      expect(frameAfterNew).toContain("No diffs yet")
+      expect(frameAfterNew).toContain("Tokens: 0")
+      expect(frameAfterNew).toContain("$0.00")
+      expect(existsSync(join(sessionsDir, "sess_seed_one.json"))).toBe(true)
+
+      pressKey("\t")
+      await until(() => (lastFrame() ?? "").includes("No tool calls yet"))
+
+      const resumable = loadSession("sess_seed_one", sessionsDir)
+      expect(resumable).not.toBeNull()
+      const resumableTexts = JSON.stringify(resumable!.messages)
+      expect(resumableTexts).toContain("hello seed conversation")
+      expect(resumableTexts).toContain("turn one question")
+
+      await typeAndSubmit("fresh start message")
+      await until(() => capturedMessages.length >= 3)
+      await until(() => (lastFrame() ?? "").includes("Tokens: 10"))
+
+      expect(lastFrame()).toContain("fresh start message")
+      const lastContextTexts = JSON.stringify(capturedMessages.at(-1))
+      expect(lastContextTexts).toContain("fresh start message")
+      expect(lastContextTexts).not.toContain("hello seed conversation")
+
+      const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).sort()
+      expect(files).toHaveLength(2)
+      expect(files).toContain("sess_seed_one.json")
+      const freshFile = files.find((f) => f !== "sess_seed_one.json")!
+      expect(freshFile.startsWith("sess_")).toBe(true)
+      const freshRaw = readFileSync(join(sessionsDir, freshFile), "utf-8")
+      expect(freshRaw).toContain("fresh start message")
+      expect(freshRaw).not.toContain("hello seed conversation")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("App /exit command", () => {
+  function makeSeedSession(id: string): Session {
+    return {
+      id,
+      projectPath: "/tmp/test",
+      model: "stub-model",
+      messages: [],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+  }
+
+  function expectExitWithin(instance: { waitUntilExit(): Promise<unknown> }, timeoutMs = 5000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("app did not exit after /exit")), timeoutMs)
+      instance.waitUntilExit().then(
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+      )
+    })
+  }
+
+  function setupExitApp(provider: Provider, seedSession?: Session) {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-exit-test-"))
+    if (seedSession) saveSession(seedSession, sessionsDir)
+
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createExitCommand())
+
+    const stdout = new TestStdout()
+    const stderr = new TestStdout()
+    const stdin = new TestStdin()
+    const instance = inkRender(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: join(sessionsDir, "project") }}
+        initialSession={seedSession}
+        sessionsDir={sessionsDir}
+        commands={registry.getAll()}
+      />,
+      { stdout, stderr, stdin, debug: true, exitOnCtrlC: false, patchConsole: false } as unknown as Parameters<typeof inkRender>[1],
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      stdin.write("\r")
+    }
+
+    return { instance, stdout, stdin, sessionsDir, typeAndSubmit }
+  }
+
+  it("exits normally via /exit when no stream is in progress", async () => {
+    const seed = makeSeedSession("sess_exit_idle")
+    const stubProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async *streamChat() {
+        yield { type: "finish", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+      },
+    }
+    const { instance, stdout, sessionsDir, typeAndSubmit } = setupExitApp(stubProvider, seed)
+    try {
+      await until(() => (stdout.lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("/exit")
+
+      await expectExitWithin(instance)
+    } finally {
+      instance.unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+
+  it("aborts an in-flight response via /exit, saves the conversation and exits", async () => {
+    const capturedMessages: Message[][] = []
+    let abortObserved = false
+    const hangingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async *streamChat(messages, _tools, _systemPrompt, abortSignal) {
+        capturedMessages.push([...messages])
+        yield { type: "text-delta", text: "partial reply" }
+        await new Promise<void>((resolve) => {
+          if (abortSignal?.aborted) {
+            resolve()
+            return
+          }
+          abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+        })
+        abortObserved = true
+        yield { type: "finish", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+      },
+    }
+    const seed = makeSeedSession("sess_exit_streaming")
+    const { instance, stdout, sessionsDir, typeAndSubmit } = setupExitApp(hangingProvider, seed)
+    try {
+      await until(() => (stdout.lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("persist me")
+      await until(() => (stdout.lastFrame() ?? "").includes("partial reply"))
+
+      await typeAndSubmit("/exit")
+
+      await expectExitWithin(instance)
+
+      expect(abortObserved).toBe(true)
+
+      const raw = readFileSync(join(sessionsDir, "sess_exit_streaming.json"), "utf-8")
+      expect(raw).toContain("persist me")
+    } finally {
+      instance.unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("App streaming guard for commands", () => {
+  function setupGuarded() {
+    const capturedMessages: Message[][] = []
+    const hangingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async *streamChat(messages, _tools, _systemPrompt, abortSignal) {
+        capturedMessages.push([...messages])
+        yield { type: "text-delta", text: "partial reply" }
+        await new Promise<void>((resolve) => {
+          if (abortSignal?.aborted) {
+            resolve()
+            return
+          }
+          abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+        })
+        yield { type: "finish", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+      },
+    }
+    const instance = render(
+      <App
+        provider={hangingProvider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/guard-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    return { ...instance, capturedMessages, typeAndSubmit }
+  }
+
+  it("rejects non-exit commands with a gentle notice while streaming and changes nothing", async () => {
+    const { lastFrame, capturedMessages, typeAndSubmit, unmount } = setupGuarded()
+    const frameText = () =>
+      (lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first question")
+      await until(() => (lastFrame() ?? "").includes("partial reply"))
+
+      await typeAndSubmit("/help")
+      await until(() => frameText().includes(STREAMING_COMMAND_NOTICE))
+
+      expect(frameText()).not.toContain("List available commands")
+      expect(capturedMessages).toHaveLength(1)
+      expect((lastFrame() ?? "").split("You:").length - 1).toBe(1)
+
+      await typeAndSubmit("/frobnicate")
+      await until(() => frameText().split(STREAMING_COMMAND_NOTICE).length > 2)
+      expect(frameText()).not.toContain("Unknown command")
+      expect(capturedMessages).toHaveLength(1)
+    } finally {
+      unmount()
     }
   })
 })

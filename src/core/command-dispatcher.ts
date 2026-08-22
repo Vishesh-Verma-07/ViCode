@@ -12,6 +12,10 @@ export function isCommandAttempt(input: string): boolean {
   return firstWord.startsWith("/")
 }
 
+export function getCommandName(input: string): string {
+  return input.trim().split(/\s+/)[0]!.slice(1)
+}
+
 function formatAvailableCommands(registry: CommandRegistry): string {
   return registry
     .getAll()
@@ -29,7 +33,7 @@ export async function dispatchCommand(
   }
 
   const words = input.trim().split(/\s+/)
-  const name = words[0]!.slice(1)
+  const name = getCommandName(input)
   const args = words.slice(1)
 
   const command = registry.get(name)

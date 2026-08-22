@@ -65,12 +65,18 @@ export interface SessionsCapability {
   dir: string
   getActiveSession(): Session | null
   switchTo(session: Session): void
+  startFresh(): void
+}
+
+export interface ExitCapability {
+  requestExit(): Promise<void>
 }
 
 export interface CommandContext {
   projectPath: string
   openPicker?: OpenPicker
   sessions?: SessionsCapability
+  exit?: ExitCapability
 }
 
 export interface Session {

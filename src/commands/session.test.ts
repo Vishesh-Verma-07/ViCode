@@ -58,6 +58,7 @@ function createContext(opts: {
         dir: opts.dir,
         getActiveSession: () => activeSession,
         switchTo: (session) => switchedTo.push(session),
+        startFresh: () => {},
       },
     },
   }

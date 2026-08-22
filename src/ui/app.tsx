@@ -7,7 +7,7 @@ import type { Provider, TokenUsage } from "../core/provider"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import { runAgentLoop } from "../core/agent-loop"
 import { CommandRegistry } from "../core/command-registry"
-import { dispatchCommand } from "../core/command-dispatcher"
+import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import { Picker } from "./picker"
@@ -43,6 +43,8 @@ interface PendingApproval {
   args: Record<string, unknown>
   resolve: (approved: boolean) => void
 }
+
+export const STREAMING_COMMAND_NOTICE = "Still responding - press Esc to stop it, or /exit to quit."
 
 interface AppProps {
   provider: Provider
@@ -83,6 +85,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
   const [suggestionDismissed, setSuggestionDismissed] = useState(false)
   const [suggestionHighlight, setSuggestionHighlight] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
+  const activeTurnRef = useRef<Promise<void> | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
 
@@ -139,9 +142,30 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
     }
   }, [])
 
+  const performExit = useCallback(async () => {
+    abortRef.current?.abort()
+    const turn = activeTurnRef.current
+    if (turn) {
+      try {
+        await turn
+      } catch {
+        // The turn already reports its own errors; never let one block exiting.
+      }
+    }
+    exit()
+  }, [exit])
+
   const handleSend = useCallback(
     async (input: string) => {
-      if (!input.trim() || isStreaming) return
+      if (!input.trim()) return
+
+      if (isStreaming) {
+        if (!isCommandAttempt(input)) return
+        if (getCommandName(input) !== "exit") {
+          appendFeedback(STREAMING_COMMAND_NOTICE, "info")
+          return
+        }
+      }
 
       setCurrentText("")
       setInputKey((prev) => prev + 1)
@@ -160,8 +184,18 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
                 setSession(loaded)
                 setMessages(loaded.messages)
               },
+              startFresh: () => {
+                setSession(null)
+                setMessages([])
+                setToolCalls([])
+                setDiffs([])
+                setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+              },
             }
           : undefined,
+        exit: {
+          requestExit: () => performExit(),
+        },
       }
       const dispatch = await dispatchCommand(input, commandRegistry, commandContext)
 
@@ -189,91 +223,99 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
       const controller = new AbortController()
       abortRef.current = controller
 
-      try {
-        const result = await runAgentLoop(
-          [...messages, userMsg],
-          provider,
-          tools,
-          systemPrompt,
-          context,
-          {
-            onTextDelta: (text) => {
-              setCurrentText((prev) => prev + text)
-            },
-            onToolCallStart: (id, name) => {
-              setToolCalls((prev) => [
-                ...prev,
-                { id, name, args: {} },
-              ])
-            },
-            onToolCallDelta: () => {},
-            onToolCallEnd: (id, _name, args) => {
-              setToolCalls((prev) =>
-                prev.map((tc) =>
-                  tc.id === id ? { ...tc, args } : tc,
-                ),
-              )
-            },
-            onToolResult: (id, _name, result) => {
-              const { message, diff } = extractDiff(result)
-              setToolCalls((prev) =>
-                prev.map((tc) =>
-                  tc.id === id ? { ...tc, result: message } : tc,
-                ),
-              )
-              if (diff) {
-                const toolCall = toolCalls.find((tc) => tc.id === id)
-                const filePath = toolCall?.args?.path as string ?? "unknown"
-                setDiffs((prev) => [
+      const turn = (async () => {
+        try {
+          const result = await runAgentLoop(
+            [...messages, userMsg],
+            provider,
+            tools,
+            systemPrompt,
+            context,
+            {
+              onTextDelta: (text) => {
+                setCurrentText((prev) => prev + text)
+              },
+              onToolCallStart: (id, name) => {
+                setToolCalls((prev) => [
                   ...prev,
-                  { id, filePath, diff, timestamp: Date.now() },
+                  { id, name, args: {} },
                 ])
-              }
+              },
+              onToolCallDelta: () => {},
+              onToolCallEnd: (id, _name, args) => {
+                setToolCalls((prev) =>
+                  prev.map((tc) =>
+                    tc.id === id ? { ...tc, args } : tc,
+                  ),
+                )
+              },
+              onToolResult: (id, _name, result) => {
+                const { message, diff } = extractDiff(result)
+                setToolCalls((prev) =>
+                  prev.map((tc) =>
+                    tc.id === id ? { ...tc, result: message } : tc,
+                  ),
+                )
+                if (diff) {
+                  const toolCall = toolCalls.find((tc) => tc.id === id)
+                  const filePath = toolCall?.args?.path as string ?? "unknown"
+                  setDiffs((prev) => [
+                    ...prev,
+                    { id, filePath, diff, timestamp: Date.now() },
+                  ])
+                }
+              },
+              onError: (error) => {
+                console.error("Agent error:", error)
+              },
+              requestApproval: (toolName, args) => {
+                return new Promise<boolean>((resolve) => {
+                  setPendingApproval({ toolName, args, resolve })
+                })
+              },
             },
-            onError: (error) => {
-              console.error("Agent error:", error)
-            },
-            requestApproval: (toolName, args) => {
-              return new Promise<boolean>((resolve) => {
-                setPendingApproval({ toolName, args, resolve })
-              })
-            },
-          },
-          controller.signal,
-        )
+            controller.signal,
+          )
 
-        log(result)
+          log(result)
 
-        setMessages(result.messages)
-        setUsage(result.totalUsage)
+          setMessages(result.messages)
+          setUsage(result.totalUsage)
 
-        if (sessionsDir) {
-          const activeSession = session ?? createSession({
-            projectPath: context.projectPath,
-            model: provider.getModelInfo().name,
-            messages: result.messages,
-          })
-          const savedSession: Session = {
-            ...activeSession,
-            messages: result.messages,
-            updatedAt: new Date().toISOString(),
-            totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
-            totalCost: activeSession.totalCost + result.totalUsage.cost,
+          if (sessionsDir) {
+            const activeSession = session ?? createSession({
+              projectPath: context.projectPath,
+              model: provider.getModelInfo().name,
+              messages: result.messages,
+            })
+            const savedSession: Session = {
+              ...activeSession,
+              messages: result.messages,
+              updatedAt: new Date().toISOString(),
+              totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
+              totalCost: activeSession.totalCost + result.totalUsage.cost,
+            }
+            saveSession(savedSession, sessionsDir)
+            setSession(savedSession)
           }
-          saveSession(savedSession, sessionsDir)
-          setSession(savedSession)
+        } catch (error) {
+          if (error instanceof Error && error.name !== "AbortError") {
+            console.error("Loop error:", error)
+          }
+        } finally {
+          setCurrentText("")
+          setIsStreaming(false)
+          abortRef.current = null
         }
-      } catch (error) {
-        if (error instanceof Error && error.name !== "AbortError") {
-          console.error("Loop error:", error)
-        }
+      })()
+      activeTurnRef.current = turn
+      try {
+        await turn
       } finally {
-        setCurrentText("")
-        setIsStreaming(false)
-        abortRef.current = null
+        if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker],
+    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit],
   )
 
   useInput(
@@ -314,7 +356,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         if (suggestedCommand) {
           const typedRest = inputValue.trim().slice(firstWord.length)
           void handleSend(`/${suggestedCommand.name}${typedRest}`)
-        } else if (!isStreaming && inputValue.trim()) {
+        } else if (inputValue.trim()) {
           void handleSend(inputValue)
         }
         return
@@ -434,8 +476,8 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedback
       <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
         <TextInput
           key={inputKey}
-          placeholder={isStreaming ? "Waiting for response..." : "Type your message..."}
-          isDisabled={isStreaming || inputDisabled}
+          placeholder={isStreaming ? "Responding - /exit to quit" : "Type your message..."}
+          isDisabled={inputDisabled}
           onChange={onInputChange}
         />
       </Box>
