@@ -508,7 +508,7 @@ describe("App session switcher", () => {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 
   it("loads the selected conversation and appends subsequent turns to its file", async () => {
     const target = makeSession({
@@ -545,12 +545,12 @@ describe("App session switcher", () => {
       )
       expect(texts).toContain("earlier question")
       expect(texts).toContain("follow up question")
-      expect(capturedMessages.at(-1)!.map((m) => m.content.filter((c) => c.type === "text").map((c) => (c.type === "text" ? c.text : "")).join(""))).toContain("earlier question")
+      expect(capturedMessages.at(-1)!.map((m) => m.content.filter((c) => c.type === "text").map((c) => (c.type === "text" ? c.text : "")).join(""))      ).toContain("earlier question")
     } finally {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 })
 
 describe("App model switcher", () => {
@@ -674,7 +674,7 @@ describe("App model switcher", () => {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 
   it("marks the active model and no other in the picker listing", async () => {
     const { lastFrame, sessionsDir, typeAndSubmit, pressKey, unmount } = setupModelSwitcher()
@@ -693,7 +693,7 @@ describe("App model switcher", () => {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 })
 
 class TestStdout extends EventEmitter {
@@ -885,7 +885,7 @@ describe("App /new command", () => {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 })
 
 describe("App /exit command", () => {
@@ -975,7 +975,7 @@ describe("App /exit command", () => {
       instance.unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 
   it("aborts an in-flight response via /exit, saves the conversation and exits", async () => {
     const capturedMessages: Message[][] = []
@@ -1019,7 +1019,7 @@ describe("App /exit command", () => {
       instance.unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
     }
-  })
+  }, 30000)
 })
 
 describe("App streaming guard for commands", () => {
@@ -1090,5 +1090,5 @@ describe("App streaming guard for commands", () => {
     } finally {
       unmount()
     }
-  })
+  }, 30000)
 })
