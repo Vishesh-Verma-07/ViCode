@@ -551,6 +551,34 @@ describe("App session switcher", () => {
       rmSync(sessionsDir, { recursive: true, force: true })
     }
   }, 30000)
+
+  it("shows the loaded session's stored token and cost totals in the status bar", async () => {
+    const target = makeSession({
+      id: "sess_totals",
+      messages: [makeUserMessage("totally counted convo")],
+      totalTokens: 42,
+      totalCost: 0.05,
+      updatedAt: "2025-06-01T10:00:00.000Z",
+    })
+    const { lastFrame, sessionsDir, typeAndSubmit, pressKey, unmount } = setupSwitcher([target])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      expect(lastFrame() ?? "").not.toContain("Tokens: 42")
+
+      await typeAndSubmit("/session")
+      await until(() => (lastFrame() ?? "").includes("sess_totals"))
+      await pressKey("\r")
+
+      await until(() => (lastFrame() ?? "").includes("Switched to session sess_totals"))
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("Tokens: 42")
+      expect(frame).toContain("$0.050")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
 })
 
 describe("App model switcher", () => {

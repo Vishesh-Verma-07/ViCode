@@ -185,6 +185,12 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               switchTo: (loaded) => {
                 setSession(loaded)
                 setMessages(loaded.messages)
+                setUsage({
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  totalTokens: loaded.totalTokens,
+                  cost: loaded.totalCost,
+                })
               },
               startFresh: () => {
                 setSession(null)
