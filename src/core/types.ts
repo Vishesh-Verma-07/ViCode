@@ -1,4 +1,5 @@
 import type { z } from "zod"
+import type { ModelListing } from "./provider"
 
 export type Role = "user" | "assistant" | "system" | "tool"
 
@@ -72,11 +73,18 @@ export interface ExitCapability {
   requestExit(): Promise<void>
 }
 
+export interface ModelsCapability {
+  list(): Promise<ModelListing[]>
+  getCurrentModelId(): string
+  switchTo(modelId: string): void
+}
+
 export interface CommandContext {
   projectPath: string
   openPicker?: OpenPicker
   sessions?: SessionsCapability
   exit?: ExitCapability
+  models?: ModelsCapability
 }
 
 export interface Session {

@@ -105,8 +105,10 @@ if (!config.apiKey) {
 const model = config.model ?? "anthropic/claude-sonnet-4"
 log("component mounted ", model);
 
+const apiKey: string = config.apiKey
+
 const provider = createOpenRouterProvider({
-  apiKey: config.apiKey,
+  apiKey,
   model,
 })
 
@@ -122,6 +124,11 @@ commandRegistry.registerAll(createBuiltinCommands(commandRegistry))
 render(
   React.createElement(App, {
     provider,
+    createProvider: (modelId: string) =>
+      createOpenRouterProvider({
+        apiKey,
+        model: modelId,
+      }),
     tools: readOnlyTools,
     systemPrompt,
     context: { projectPath },

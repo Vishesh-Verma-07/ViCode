@@ -4,12 +4,20 @@ import { createHelpCommand } from "./help"
 import { createSessionCommand } from "./session"
 import { createNewCommand } from "./new"
 import { createExitCommand } from "./exit"
+import { createModelCommand } from "./model"
 
 export { createHelpCommand, formatCommandList } from "./help"
 export { createSessionCommand, formatSessionMeta } from "./session"
 export { createNewCommand } from "./new"
 export { createExitCommand } from "./exit"
+export { createModelCommand, formatModelPricing } from "./model"
 
 export function createBuiltinCommands(registry: CommandRegistry): Command[] {
-  return [createHelpCommand(registry), createSessionCommand(), createNewCommand(), createExitCommand()]
+  return [
+    createHelpCommand(registry),
+    createSessionCommand(),
+    createNewCommand(),
+    createExitCommand(),
+    createModelCommand(),
+  ]
 }

@@ -48,6 +48,7 @@ export const STREAMING_COMMAND_NOTICE = "Still responding - press Esc to stop it
 
 interface AppProps {
   provider: Provider
+  createProvider?: (modelId: string) => Provider
   tools: ToolDefinition[]
   systemPrompt: string
   context: ToolContext
@@ -67,9 +68,10 @@ export function extractDiff(result: string): { message: string; diff: string | n
   return { message, diff }
 }
 
-export function App({ provider, tools, systemPrompt, context, initialSession, sessionsDir, commands }: AppProps) {
+export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, sessionsDir, commands }: AppProps) {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
+  const [providerState, setProviderState] = useState<Provider>(provider)
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
@@ -196,6 +198,13 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         exit: {
           requestExit: () => performExit(),
         },
+        models: createProvider
+          ? {
+              list: () => providerState.listModels(),
+              getCurrentModelId: () => providerState.getModelInfo().id,
+              switchTo: (modelId) => setProviderState(createProvider(modelId)),
+            }
+          : undefined,
       }
       const dispatch = await dispatchCommand(input, commandRegistry, commandContext)
 
@@ -227,7 +236,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         try {
           const result = await runAgentLoop(
             [...messages, userMsg],
-            provider,
+            providerState,
             tools,
             systemPrompt,
             context,
@@ -280,17 +289,23 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           log(result)
 
           setMessages(result.messages)
-          setUsage(result.totalUsage)
+          setUsage((prev) => ({
+            inputTokens: prev.inputTokens + result.totalUsage.inputTokens,
+            outputTokens: prev.outputTokens + result.totalUsage.outputTokens,
+            totalTokens: prev.totalTokens + result.totalUsage.totalTokens,
+            cost: prev.cost + result.totalUsage.cost,
+          }))
 
           if (sessionsDir) {
             const activeSession = session ?? createSession({
               projectPath: context.projectPath,
-              model: provider.getModelInfo().name,
+              model: providerState.getModelInfo().name,
               messages: result.messages,
             })
             const savedSession: Session = {
               ...activeSession,
               messages: result.messages,
+              model: providerState.getModelInfo().name,
               updatedAt: new Date().toISOString(),
               totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
               totalCost: activeSession.totalCost + result.totalUsage.cost,
@@ -315,7 +330,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit],
+    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit],
   )
 
   useInput(
@@ -402,7 +417,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           diffs={diffs}
         />
       </Box>
-      <StatusBar usage={usage} model={provider.getModelInfo().name} />
+      <StatusBar usage={usage} model={providerState.getModelInfo().name} />
       {pickerRequest && (
         <Picker
           title={pickerRequest.title}
@@ -418,7 +433,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         />
       )}
       {showExitSummary && (
-        <ExitSummary usage={usage} model={provider.getModelInfo().name} />
+        <ExitSummary usage={usage} model={providerState.getModelInfo().name} />
       )}
     </Box>
   )

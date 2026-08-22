@@ -12,9 +12,10 @@ import { createHelpCommand } from "../commands/help"
 import { createSessionCommand } from "../commands/session"
 import { createNewCommand } from "../commands/new"
 import { createExitCommand } from "../commands/exit"
+import { createModelCommand } from "../commands/model"
 import { saveSession, loadSession, type Session } from "../core/session"
 import type { Command, Message, ToolDefinition } from "../core/types"
-import type { Provider, StreamEvent } from "../core/provider"
+import type { Provider, StreamEvent, ModelListing } from "../core/provider"
 import { z } from "zod"
 
 function until(condition: () => boolean, timeoutMs = 5000): Promise<void> {
@@ -545,6 +546,149 @@ describe("App session switcher", () => {
       expect(texts).toContain("earlier question")
       expect(texts).toContain("follow up question")
       expect(capturedMessages.at(-1)!.map((m) => m.content.filter((c) => c.type === "text").map((c) => (c.type === "text" ? c.text : "")).join(""))).toContain("earlier question")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("App model switcher", () => {
+  const LISTINGS: ModelListing[] = [
+    { id: "free-alpha", name: "Alpha", pricing: { kind: "free" } },
+    {
+      id: "paid-beta",
+      name: "Beta",
+      pricing: { kind: "paid", inputPricePerToken: 2 / 1_000_000, outputPricePerToken: 8 / 1_000_000 },
+    },
+  ]
+
+  function setupModelSwitcher() {
+    const handledBy: string[] = []
+    const capturedMessages: Message[][] = []
+    const eventsByModel: Record<string, StreamEvent[]> = {
+      "free-alpha": [
+        { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0.001 } },
+      ],
+      "paid-beta": [
+        { type: "text-delta", text: "ok" },
+        { type: "finish", usage: { inputTokens: 3, outputTokens: 3, totalTokens: 6, cost: 0.002 } },
+      ],
+    }
+    const createProvider = (modelId: string): Provider => ({
+      getModelInfo: () => ({ id: modelId, name: `MODEL:${modelId}:ACTIVE` }),
+      async listModels() {
+        return [...LISTINGS]
+      },
+      async *streamChat(messages) {
+        capturedMessages.push([...messages])
+        handledBy.push(modelId)
+        for (const event of eventsByModel[modelId] ?? []) yield event
+      },
+    })
+    const provider = createProvider("free-alpha")
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-model-test-"))
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createModelCommand())
+
+    const instance = render(
+      <App
+        provider={provider}
+        createProvider={createProvider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: join(sessionsDir, "project") }}
+        sessionsDir={sessionsDir}
+        commands={registry.getAll()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    async function pressKey(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { ...instance, capturedMessages, handledBy, sessionsDir, typeAndSubmit, pressKey }
+  }
+
+  it("switches models mid-session: status bar updates immediately, the next turn uses the new model, and totals accumulate", async () => {
+    const { lastFrame, handledBy, sessionsDir, stdin, typeAndSubmit, pressKey, unmount } = setupModelSwitcher()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first question")
+      await until(() => handledBy.length >= 1)
+      await until(() => (lastFrame() ?? "").includes("Tokens: 2"))
+      expect(handledBy).toEqual(["free-alpha"])
+
+      await typeAndSubmit("/model")
+      await until(() => (lastFrame() ?? "").includes("Alpha"))
+      const frameWithPicker = lastFrame() ?? ""
+      expect(frameWithPicker).toContain("free-alpha · free")
+      expect(frameWithPicker).toContain("paid-beta · $2.00/M in · $8.00/M out")
+
+      for (let i = 0; i < 10 && !(lastFrame() ?? "").includes("> Beta"); i++) {
+        stdin.write("\u001B[B")
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      }
+      expect(lastFrame()).toContain("> Beta")
+      await pressKey("\r")
+
+      await until(() => (lastFrame() ?? "").includes("Switched to Beta"))
+
+      expect(lastFrame()).toContain("MODEL:paid-beta:ACTIVE")
+      expect(lastFrame()).toContain("Tokens: 2")
+
+      await typeAndSubmit("second question")
+      await until(() => handledBy.length >= 2)
+      await until(() => (lastFrame() ?? "").includes("Tokens: 8"))
+      expect(handledBy[1]).toBe("paid-beta")
+      expect(lastFrame()).toContain("$0.003")
+
+      await until(() => {
+        if (!existsSync(sessionsDir)) return false
+        const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".json"))
+        if (files.length === 0) return false
+        return files.some((f) => readFileSync(join(sessionsDir, f), "utf-8").includes("MODEL:paid-beta:ACTIVE"))
+      })
+
+      const handledCountBefore = handledBy.length
+      await typeAndSubmit("/model")
+      await until(() => (lastFrame() ?? "").includes("Beta (current)"))
+      expect(lastFrame()).not.toContain("Alpha (current)")
+      await pressKey("\u001B")
+      await until(() => !(lastFrame() ?? "").includes("Up/Down: navigate"))
+
+      expect(lastFrame()).toContain("MODEL:paid-beta:ACTIVE")
+      expect(handledBy.length).toBe(handledCountBefore)
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+
+  it("marks the active model and no other in the picker listing", async () => {
+    const { lastFrame, sessionsDir, typeAndSubmit, pressKey, unmount } = setupModelSwitcher()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("/model")
+      await until(() => (lastFrame() ?? "").includes("Alpha (current)"))
+
+      const frame = lastFrame() ?? ""
+      expect(frame).not.toContain("Beta (current)")
+
+      await pressKey("\u001B")
+      await until(() => !(lastFrame() ?? "").includes("Up/Down: navigate"))
     } finally {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })
