@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo } from "react"
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize } from "ink"
 import { TextInput } from "@inkjs/ui"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
@@ -43,11 +43,6 @@ interface PendingApproval {
   resolve: (approved: boolean) => void
 }
 
-interface PickerState {
-  request: PickerRequest
-  resolve: (index: number | null) => void
-}
-
 interface AppProps {
   provider: Provider
   tools: ToolDefinition[]
@@ -82,7 +77,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
   const [showExitSummary, setShowExitSummary] = useState(false)
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
   const [inputKey, setInputKey] = useState(0)
-  const [pickerState, setPickerState] = useState<PickerState | null>(null)
+  const [pickerRequest, setPickerRequest] = useState<PickerRequest | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -100,21 +95,27 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
     ])
   }, [])
 
+  const pickerResolveRef = useRef<((index: number | null) => void) | null>(null)
+
   const openPicker = useCallback((request: PickerRequest) => {
     return new Promise<number | null>((resolve) => {
-      setPickerState({ request, resolve })
+      pickerResolveRef.current = resolve
+      setPickerRequest(request)
     })
   }, [])
 
-  const closePicker = useCallback(
-    (index: number | null) => {
-      setPickerState((prev) => {
-        prev?.resolve(index)
-        return null
-      })
-    },
-    [],
-  )
+  const closePicker = useCallback((index: number | null) => {
+    pickerResolveRef.current?.(index)
+    pickerResolveRef.current = null
+    setPickerRequest(null)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      pickerResolveRef.current?.(null)
+      pickerResolveRef.current = null
+    }
+  }, [])
 
   const handleSend = useCallback(
     async (input: string) => {
@@ -252,7 +253,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
 
   useInput(
     (input, key) => {
-      if (pickerState) return
+      if (pickerRequest) return
 
       if (pendingApproval) {
         const lower = input.toLowerCase()
@@ -297,7 +298,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           onSend={handleSend}
           feedbackEntries={feedbackEntries}
           inputKey={inputKey}
-          inputDisabled={pickerState !== null}
+          inputDisabled={pickerRequest !== null}
         />
         <Sidebar
           width={sidebarWidth}
@@ -307,10 +308,10 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         />
       </Box>
       <StatusBar usage={usage} model={provider.getModelInfo().name} />
-      {pickerState && (
+      {pickerRequest && (
         <Picker
-          title={pickerState.request.title}
-          items={pickerState.request.items}
+          title={pickerRequest.title}
+          items={pickerRequest.items}
           onSelect={(index) => closePicker(index)}
           onCancel={() => closePicker(null)}
         />
