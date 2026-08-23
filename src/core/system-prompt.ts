@@ -39,6 +39,7 @@ interface AssemblePromptOptions {
   projectPath: string
   projectPrompt?: string
   cliPrompt?: string
+  skillPrompts?: string[]
 }
 
 function readPromptFile(path: string): string | null {
@@ -51,7 +52,7 @@ function readPromptFile(path: string): string | null {
 }
 
 export function assembleSystemPrompt(options: AssemblePromptOptions): string {
-  const { projectPath, projectPrompt: cliProjectPrompt, cliPrompt } = options
+  const { projectPath, projectPrompt: cliProjectPrompt, cliPrompt, skillPrompts } = options
 
   const parts: string[] = [BASE_SYSTEM_PROMPT]
 
@@ -64,6 +65,10 @@ export function assembleSystemPrompt(options: AssemblePromptOptions): string {
 
   if (cliPrompt) {
     parts.push(cliPrompt)
+  }
+
+  if (skillPrompts && skillPrompts.length > 0) {
+    parts.push(...skillPrompts)
   }
 
   return parts.join("\n\n")

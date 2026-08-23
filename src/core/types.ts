@@ -1,5 +1,6 @@
 import type { z } from "zod"
 import type { ModelListing } from "./provider"
+import type { Skill } from "./skills"
 
 export type Role = "user" | "assistant" | "system" | "tool"
 
@@ -79,12 +80,18 @@ export interface ModelsCapability {
   switchTo(modelId: string): void
 }
 
+export interface SkillContext {
+  list(): Promise<Skill[]>
+}
+
 export interface CommandContext {
   projectPath: string
   openPicker?: OpenPicker
   sessions?: SessionsCapability
   exit?: ExitCapability
   models?: ModelsCapability
+  skills?: SkillContext
+  onSkillActivate?: (content: string) => void
 }
 
 export interface Session {

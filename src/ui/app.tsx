@@ -13,6 +13,7 @@ import { formatCost, formatTokens } from "../core/cost-calculator"
 import { Picker } from "./picker"
 import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
 import { log } from "../utils/logger"
+import { discoverSkills } from "../core/skills"
 
 interface ToolCallEntry {
   id: string
@@ -55,6 +56,7 @@ interface AppProps {
   initialSession?: Session
   sessionsDir?: string
   commands?: Command[]
+  onSkillActivate?: (content: string) => void
 }
 
 export function extractDiff(result: string): { message: string; diff: string | null } {
@@ -86,6 +88,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const [inputValue, setInputValue] = useState("")
   const [suggestionDismissed, setSuggestionDismissed] = useState(false)
   const [suggestionHighlight, setSuggestionHighlight] = useState(0)
+  const [activeSkills, setActiveSkills] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
   const { exit } = useApp()
@@ -198,6 +201,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 setToolCalls([])
                 setDiffs([])
                 setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+                setActiveSkills([])
               },
             }
           : undefined,
@@ -211,6 +215,15 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               switchTo: (modelId) => setProviderState(createProvider(modelId)),
             }
           : undefined,
+        skills: {
+          list: async () => discoverSkills(context.projectPath),
+        },
+        onSkillActivate: (content: string) => {
+          setActiveSkills((prev) => {
+            if (prev.some((s) => s === content)) return prev
+            return [...prev, content]
+          })
+        },
       }
       const dispatch = await dispatchCommand(input, commandRegistry, commandContext)
 
@@ -240,11 +253,14 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
 
       const turn = (async () => {
         try {
+          const effectiveSystemPrompt = `${systemPrompt}\n\n${activeSkills.filter(
+            (s) => s
+          ).join("\n\n")}`
           const result = await runAgentLoop(
             [...messages, userMsg],
             providerState,
             tools,
-            systemPrompt,
+            effectiveSystemPrompt,
             context,
             {
               onTextDelta: (text) => {
@@ -336,7 +352,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit],
+    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills],
   )
 
   useInput(

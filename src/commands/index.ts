@@ -5,6 +5,7 @@ import { createSessionCommand } from "./session"
 import { createNewCommand } from "./new"
 import { createExitCommand } from "./exit"
 import { createModelCommand } from "./model"
+import { createSkillCommand } from "./skill"
 
 export { createHelpCommand, formatCommandList } from "./help"
 export { createSessionCommand, formatSessionMeta } from "./session"
@@ -19,5 +20,6 @@ export function createBuiltinCommands(registry: CommandRegistry): Command[] {
     createNewCommand(),
     createExitCommand(),
     createModelCommand(),
+    createSkillCommand(),
   ]
 }
