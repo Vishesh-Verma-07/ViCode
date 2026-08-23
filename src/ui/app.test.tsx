@@ -694,7 +694,7 @@ describe("App model switcher", () => {
       await until(() => (lastFrame() ?? "").includes("Beta (current)"))
       expect(lastFrame()).not.toContain("Alpha (current)")
       await pressKey("\u001B")
-      await until(() => !(lastFrame() ?? "").includes("Up/Down: navigate"))
+      await until(() => !(lastFrame() ?? "").includes("Switch model"))
 
       expect(lastFrame()).toContain("MODEL:paid-beta:ACTIVE")
       expect(handledBy.length).toBe(handledCountBefore)
@@ -716,7 +716,7 @@ describe("App model switcher", () => {
       expect(frame).not.toContain("Beta (current)")
 
       await pressKey("\u001B")
-      await until(() => !(lastFrame() ?? "").includes("Up/Down: navigate"))
+      await until(() => !(lastFrame() ?? "").includes("Switch model"))
     } finally {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })

@@ -446,6 +446,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           items={pickerRequest.items}
           onSelect={(index) => closePicker(index)}
           onCancel={() => closePicker(null)}
+          rows={rows}
         />
       )}
       {pendingApproval && (

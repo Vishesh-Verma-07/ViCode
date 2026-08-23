@@ -42,10 +42,10 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
   const projectRaw = readJsonFile(projectFile)
   const projectConfig = projectRaw ? configSchema.parse(projectRaw) : {}
 
+  // Config layering: project overrides global; no CLI layer
   const merged: AppConfig = {
     ...globalConfig,
     ...projectConfig,
-    ...cleanUndefined(cliArgs),
   }
 
   if (!merged.apiKey) {

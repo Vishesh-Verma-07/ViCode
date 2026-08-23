@@ -92,6 +92,73 @@ describe("Picker", () => {
     instance.unmount()
   })
 
+  it("filters items when the user types a search query", async () => {
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={() => {}} onCancel={() => {}} />,
+    )
+    await sendKeys(instance, ["s", "e", "s", "s", "_", "b"])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("sess_b")
+    expect(frame).not.toContain("sess_a")
+    expect(frame).toContain("Search: sess_b")
+    instance.unmount()
+  })
+
+  it("resets the highlight to the first match after searching", async () => {
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={() => {}} onCancel={() => {}} />,
+    )
+    await sendKeys(instance, ["\u001B[B", "s", "e", "s", "s"])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("> sess_a")
+    instance.unmount()
+  })
+
+  it("navigates within the filtered list and selects the original index on Enter", async () => {
+    const selected: number[] = []
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={(i) => selected.push(i)} onCancel={() => {}} />,
+    )
+    await sendKeys(instance, ["s", "e", "s", "s", "_", "b", "\u001B[B", "\r"])
+    expect(selected).toEqual([1])
+    instance.unmount()
+  })
+
+  it("shows a no-matches state for a query that filters everything out", async () => {
+    const selected: number[] = []
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={(i) => selected.push(i)} onCancel={() => {}} />,
+    )
+    await sendKeys(instance, ["z", "z", "z"])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("No matching items")
+    await sendKeys(instance, ["\r"])
+    expect(selected).toEqual([])
+    instance.unmount()
+  })
+
+  it("windows long lists to the scroll budget and follows the highlight", async () => {
+    const many: PickerItem[] = Array.from({ length: 20 }, (_, i) => ({
+      label: `model_${i + 1}`,
+    }))
+    const instance = render(
+      <Picker title="Pick" items={many} rows={24} onSelect={() => {}} onCancel={() => {}} />,
+    )
+    let frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("(1-4 of 20)")
+    expect(frame).toContain("model_4")
+    expect(frame).not.toContain("model_5")
+
+    for (let i = 0; i < 6; i++) {
+      await sendKeys(instance, ["\u001B[B"])
+    }
+    frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("> model_7")
+    expect(frame).toContain("(4-7 of 20)")
+    expect(frame).not.toContain("model_1\n")
+    instance.unmount()
+  })
+
   it("renders a no-items state and ignores Enter", async () => {
     const selected: number[] = []
     let cancelled = false
@@ -106,7 +173,7 @@ describe("Picker", () => {
       />,
     )
     const frame = instance.lastFrame() ?? ""
-    expect(frame).toContain("No items")
+    expect(frame).toContain("No matching items")
     await sendKeys(instance, ["\r"])
     expect(selected).toEqual([])
     expect(cancelled).toBe(false)

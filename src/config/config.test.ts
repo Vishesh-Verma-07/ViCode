@@ -71,34 +71,7 @@ describe("config merge priority", () => {
     expect(result.apiKey).toBe("global-key")
   })
 
-  it("CLI flags override project config", () => {
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({ model: "project-model" })
-    )
-    const result = loadConfig({
-      projectPath: tmpDir,
-      cliArgs: { model: "cli-model" },
-    })
-    expect(result.model).toBe("cli-model")
-  })
-
-  it("CLI flags override global config", () => {
-    const homeDir = join(tmpDir, "home")
-    mkdirSync(homeDir, { recursive: true })
-    writeFileSync(
-      join(homeDir, "config.json"),
-      JSON.stringify({ model: "global-model" })
-    )
-    const result = loadConfig({
-      projectPath: tmpDir,
-      globalConfigPath: join(homeDir, "config.json"),
-      cliArgs: { model: "cli-model" },
-    })
-    expect(result.model).toBe("cli-model")
-  })
-
-  it("full three-layer merge", () => {
+  it("full two-layer merge: project overrides global", () => {
     const homeDir = join(tmpDir, "home")
     mkdirSync(homeDir, { recursive: true })
     writeFileSync(
@@ -112,10 +85,9 @@ describe("config merge priority", () => {
     const result = loadConfig({
       projectPath: tmpDir,
       globalConfigPath: join(homeDir, "config.json"),
-      cliArgs: { model: "cli-model" },
     })
     expect(result.apiKey).toBe("global-key")
-    expect(result.model).toBe("cli-model")
+    expect(result.model).toBe("project-model")
     expect(result.systemPrompt).toBe("project-prompt")
   })
 })
