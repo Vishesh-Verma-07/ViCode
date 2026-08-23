@@ -1,14 +1,19 @@
-import React, { useState, useCallback, useRef } from "react"
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize } from "ink"
 import { TextInput } from "@inkjs/ui"
-import type { Message, ToolDefinition, ToolContext } from "../core/types"
+import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
 import { runAgentLoop } from "../core/agent-loop"
+import { CommandRegistry } from "../core/command-registry"
+import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
+import { Picker } from "./picker"
+import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
 import { log } from "../utils/logger"
+import { discoverSkills } from "../core/skills"
 
 interface ToolCallEntry {
   id: string
@@ -26,19 +31,32 @@ interface DiffEntry {
 
 type SidebarTab = "tools" | "diffs"
 
+export type FeedbackTone = "info" | "error"
+
+export interface FeedbackEntry {
+  id: string
+  text: string
+  tone: FeedbackTone
+}
+
 interface PendingApproval {
   toolName: string
   args: Record<string, unknown>
   resolve: (approved: boolean) => void
 }
 
+export const STREAMING_COMMAND_NOTICE = "Still responding - press Esc to stop it, or /exit to quit."
+
 interface AppProps {
   provider: Provider
+  createProvider?: (modelId: string) => Provider
   tools: ToolDefinition[]
   systemPrompt: string
   context: ToolContext
   initialSession?: Session
   sessionsDir?: string
+  commands?: Command[]
+  onSkillActivate?: (content: string) => void
 }
 
 export function extractDiff(result: string): { message: string; diff: string | null } {
@@ -52,9 +70,10 @@ export function extractDiff(result: string): { message: string; diff: string | n
   return { message, diff }
 }
 
-export function App({ provider, tools, systemPrompt, context, initialSession, sessionsDir }: AppProps) {
+export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, sessionsDir, commands }: AppProps) {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
+  const [providerState, setProviderState] = useState<Provider>(provider)
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
@@ -63,13 +82,159 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
   const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [showExitSummary, setShowExitSummary] = useState(false)
+  const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
+  const [inputKey, setInputKey] = useState(0)
+  const [pickerRequest, setPickerRequest] = useState<PickerRequest | null>(null)
+  const [inputValue, setInputValue] = useState("")
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
+  const [suggestionHighlight, setSuggestionHighlight] = useState(0)
+  const [activeSkills, setActiveSkills] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const activeTurnRef = useRef<Promise<void> | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
 
+  const commandRegistry = useMemo(() => {
+    const registry = new CommandRegistry()
+    if (commands) registry.registerAll(commands)
+    return registry
+  }, [commands])
+
+  const appendFeedback = useCallback((text: string, tone: FeedbackTone) => {
+    setFeedbackEntries((prev) => [
+      ...prev,
+      { id: `feedback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, text, tone },
+    ])
+  }, [])
+
+  const allCommands = commandRegistry.getAll()
+  const firstWord = inputValue.trim().split(/\s+/)[0] ?? ""
+  const suggestedCommands = firstWord.startsWith("/") ? filterCommands(allCommands, firstWord) : []
+  const suggestionVisible =
+    !isStreaming &&
+    !pickerRequest &&
+    !pendingApproval &&
+    !showExitSummary &&
+    firstWord.startsWith("/") &&
+    !suggestionDismissed
+  const clampedSuggestionHighlight = Math.min(suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
+
+  const handleInputChange = useCallback((value: string) => {
+    setInputValue(value)
+    setSuggestionDismissed(false)
+    setSuggestionHighlight(0)
+  }, [])
+
+  const pickerResolveRef = useRef<((index: number | null) => void) | null>(null)
+
+  const openPicker = useCallback((request: PickerRequest) => {
+    return new Promise<number | null>((resolve) => {
+      pickerResolveRef.current = resolve
+      setPickerRequest(request)
+    })
+  }, [])
+
+  const closePicker = useCallback((index: number | null) => {
+    pickerResolveRef.current?.(index)
+    pickerResolveRef.current = null
+    setPickerRequest(null)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      pickerResolveRef.current?.(null)
+      pickerResolveRef.current = null
+    }
+  }, [])
+
+  const performExit = useCallback(async () => {
+    abortRef.current?.abort()
+    const turn = activeTurnRef.current
+    if (turn) {
+      try {
+        await turn
+      } catch {
+        // The turn already reports its own errors; never let one block exiting.
+      }
+    }
+    exit()
+  }, [exit])
+
   const handleSend = useCallback(
     async (input: string) => {
-      if (!input.trim() || isStreaming) return
+      if (!input.trim()) return
+
+      if (isStreaming) {
+        if (!isCommandAttempt(input)) return
+        if (getCommandName(input) !== "exit") {
+          appendFeedback(STREAMING_COMMAND_NOTICE, "info")
+          return
+        }
+      }
+
+      setCurrentText("")
+      setInputKey((prev) => prev + 1)
+      setInputValue("")
+      setSuggestionDismissed(false)
+      setSuggestionHighlight(0)
+
+      const commandContext: CommandContext = {
+        projectPath: context.projectPath,
+        openPicker,
+        sessions: sessionsDir
+          ? {
+              dir: sessionsDir,
+              getActiveSession: () => session,
+              switchTo: (loaded) => {
+                setSession(loaded)
+                setMessages(loaded.messages)
+                setUsage({
+                  inputTokens: 0,
+                  outputTokens: 0,
+                  totalTokens: loaded.totalTokens,
+                  cost: loaded.totalCost,
+                })
+              },
+              startFresh: () => {
+                setSession(null)
+                setMessages([])
+                setToolCalls([])
+                setDiffs([])
+                setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+                setActiveSkills([])
+              },
+            }
+          : undefined,
+        exit: {
+          requestExit: () => performExit(),
+        },
+        models: createProvider
+          ? {
+              list: () => providerState.listModels(),
+              getCurrentModelId: () => providerState.getModelInfo().id,
+              switchTo: (modelId) => setProviderState(createProvider(modelId)),
+            }
+          : undefined,
+        skills: {
+          list: async () => discoverSkills(context.projectPath),
+        },
+        onSkillActivate: (content: string) => {
+          setActiveSkills((prev) => {
+            if (prev.some((s) => s === content)) return prev
+            return [...prev, content]
+          })
+        },
+      }
+      const dispatch = await dispatchCommand(input, commandRegistry, commandContext)
+
+      if (dispatch.kind !== "pass-through") {
+        if (dispatch.kind === "executed") {
+          if (dispatch.output) appendFeedback(dispatch.output, "info")
+        } else {
+          appendFeedback(dispatch.error, "error")
+        }
+        return
+      }
 
       const userMsg: Message = {
         id: `user_${Date.now()}`,
@@ -79,7 +244,6 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
       }
 
       setMessages((prev) => [...prev, userMsg])
-      setCurrentText("")
       setToolCalls([])
       setDiffs([])
       setIsStreaming(true)
@@ -87,95 +251,114 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
       const controller = new AbortController()
       abortRef.current = controller
 
-      try {
-        const result = await runAgentLoop(
-          [...messages, userMsg],
-          provider,
-          tools,
-          systemPrompt,
-          context,
-          {
-            onTextDelta: (text) => {
-              setCurrentText((prev) => prev + text)
-            },
-            onToolCallStart: (id, name) => {
-              setToolCalls((prev) => [
-                ...prev,
-                { id, name, args: {} },
-              ])
-            },
-            onToolCallDelta: () => {},
-            onToolCallEnd: (id, _name, args) => {
-              setToolCalls((prev) =>
-                prev.map((tc) =>
-                  tc.id === id ? { ...tc, args } : tc,
-                ),
-              )
-            },
-            onToolResult: (id, _name, result) => {
-              const { message, diff } = extractDiff(result)
-              setToolCalls((prev) =>
-                prev.map((tc) =>
-                  tc.id === id ? { ...tc, result: message } : tc,
-                ),
-              )
-              if (diff) {
-                const toolCall = toolCalls.find((tc) => tc.id === id)
-                const filePath = toolCall?.args?.path as string ?? "unknown"
-                setDiffs((prev) => [
+      const turn = (async () => {
+        try {
+          const effectiveSystemPrompt = `${systemPrompt}\n\n${activeSkills.filter(
+            (s) => s
+          ).join("\n\n")}`
+          const result = await runAgentLoop(
+            [...messages, userMsg],
+            providerState,
+            tools,
+            effectiveSystemPrompt,
+            context,
+            {
+              onTextDelta: (text) => {
+                setCurrentText((prev) => prev + text)
+              },
+              onToolCallStart: (id, name) => {
+                setToolCalls((prev) => [
                   ...prev,
-                  { id, filePath, diff, timestamp: Date.now() },
+                  { id, name, args: {} },
                 ])
-              }
+              },
+              onToolCallDelta: () => {},
+              onToolCallEnd: (id, _name, args) => {
+                setToolCalls((prev) =>
+                  prev.map((tc) =>
+                    tc.id === id ? { ...tc, args } : tc,
+                  ),
+                )
+              },
+              onToolResult: (id, _name, result) => {
+                const { message, diff } = extractDiff(result)
+                setToolCalls((prev) =>
+                  prev.map((tc) =>
+                    tc.id === id ? { ...tc, result: message } : tc,
+                  ),
+                )
+                if (diff) {
+                  const toolCall = toolCalls.find((tc) => tc.id === id)
+                  const filePath = toolCall?.args?.path as string ?? "unknown"
+                  setDiffs((prev) => [
+                    ...prev,
+                    { id, filePath, diff, timestamp: Date.now() },
+                  ])
+                }
+              },
+              onError: (error) => {
+                console.error("Agent error:", error)
+              },
+              requestApproval: (toolName, args) => {
+                return new Promise<boolean>((resolve) => {
+                  setPendingApproval({ toolName, args, resolve })
+                })
+              },
             },
-            onError: (error) => {
-              console.error("Agent error:", error)
-            },
-            requestApproval: (toolName, args) => {
-              return new Promise<boolean>((resolve) => {
-                setPendingApproval({ toolName, args, resolve })
-              })
-            },
-          },
-          controller.signal,
-        )
+            controller.signal,
+          )
 
-        log(result)
+          log(result)
 
-        setMessages(result.messages)
-        setUsage(result.totalUsage)
+          setMessages(result.messages)
+          setUsage((prev) => ({
+            inputTokens: prev.inputTokens + result.totalUsage.inputTokens,
+            outputTokens: prev.outputTokens + result.totalUsage.outputTokens,
+            totalTokens: prev.totalTokens + result.totalUsage.totalTokens,
+            cost: prev.cost + result.totalUsage.cost,
+          }))
 
-        if (sessionsDir) {
-          const activeSession = session ?? createSession({
-            projectPath: context.projectPath,
-            model: provider.getModelInfo().name,
-            messages: result.messages,
-          })
-          const savedSession: Session = {
-            ...activeSession,
-            messages: result.messages,
-            updatedAt: new Date().toISOString(),
-            totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
-            totalCost: activeSession.totalCost + result.totalUsage.cost,
+          if (sessionsDir) {
+            const activeSession = session ?? createSession({
+              projectPath: context.projectPath,
+              model: providerState.getModelInfo().name,
+              messages: result.messages,
+            })
+            const savedSession: Session = {
+              ...activeSession,
+              messages: result.messages,
+              model: providerState.getModelInfo().name,
+              updatedAt: new Date().toISOString(),
+              totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
+              totalCost: activeSession.totalCost + result.totalUsage.cost,
+            }
+            saveSession(savedSession, sessionsDir)
+            setSession(savedSession)
           }
-          saveSession(savedSession, sessionsDir)
-          setSession(savedSession)
+        } catch (error) {
+          if (error instanceof Error && error.name !== "AbortError") {
+            console.error("Loop error:", error)
+          }
+        } finally {
+          setCurrentText("")
+          setIsStreaming(false)
+          abortRef.current = null
         }
-      } catch (error) {
-        if (error instanceof Error && error.name !== "AbortError") {
-          console.error("Loop error:", error)
-        }
+      })()
+      activeTurnRef.current = turn
+      try {
+        await turn
       } finally {
-        setCurrentText("")
-        setIsStreaming(false)
-        abortRef.current = null
+        if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, provider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir],
+    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills],
   )
 
   useInput(
     (input, key) => {
+      if (pickerRequest) return
+
       if (pendingApproval) {
         const lower = input.toLowerCase()
         if (lower === "y" || lower === "n") {
@@ -187,6 +370,32 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
 
       if (showExitSummary) {
         exit()
+        return
+      }
+
+      if (suggestionVisible) {
+        if (key.upArrow) {
+          setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, -1))
+          return
+        }
+        if (key.downArrow) {
+          setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, 1))
+          return
+        }
+        if (key.escape) {
+          setSuggestionDismissed(true)
+          return
+        }
+      }
+
+      if (key.return) {
+        const suggestedCommand = suggestionVisible ? suggestedCommands[clampedSuggestionHighlight] : undefined
+        if (suggestedCommand) {
+          const typedRest = inputValue.trim().slice(firstWord.length)
+          void handleSend(`/${suggestedCommand.name}${typedRest}`)
+        } else if (inputValue.trim()) {
+          void handleSend(inputValue)
+        }
         return
       }
 
@@ -217,6 +426,11 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           currentText={currentText}
           isStreaming={isStreaming}
           onSend={handleSend}
+          feedbackEntries={feedbackEntries}
+          inputKey={inputKey}
+          inputDisabled={pickerRequest !== null}
+          onInputChange={handleInputChange}
+          suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
         />
         <Sidebar
           width={sidebarWidth}
@@ -225,7 +439,16 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
           diffs={diffs}
         />
       </Box>
-      <StatusBar usage={usage} model={provider.getModelInfo().name} />
+      <StatusBar usage={usage} model={providerState.getModelInfo().name} />
+      {pickerRequest && (
+        <Picker
+          title={pickerRequest.title}
+          items={pickerRequest.items}
+          onSelect={(index) => closePicker(index)}
+          onCancel={() => closePicker(null)}
+          rows={rows}
+        />
+      )}
       {pendingApproval && (
         <ApprovalPrompt
           toolName={pendingApproval.toolName}
@@ -233,7 +456,7 @@ export function App({ provider, tools, systemPrompt, context, initialSession, se
         />
       )}
       {showExitSummary && (
-        <ExitSummary usage={usage} model={provider.getModelInfo().name} />
+        <ExitSummary usage={usage} model={providerState.getModelInfo().name} />
       )}
     </Box>
   )
@@ -245,9 +468,14 @@ interface ChatPanelProps {
   currentText: string
   isStreaming: boolean
   onSend: (input: string) => void
+  feedbackEntries: FeedbackEntry[]
+  inputKey: number
+  inputDisabled?: boolean
+  onInputChange?: (value: string) => void
+  suggestion?: CommandSuggestionProps
 }
 
-function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPanelProps) {
+function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
   return (
     <Box
       width={width}
@@ -257,13 +485,16 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPa
       paddingX={1}
     >
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {messages.length === 0 && (
+        {messages.length === 0 && feedbackEntries.length === 0 && (
           <Text color="gray" italic>
             Type a message to start chatting...
           </Text>
         )}
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
+        ))}
+        {feedbackEntries.map((entry) => (
+          <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />
         ))}
         {isStreaming && currentText && (
           <Text>{currentText}</Text>
@@ -272,11 +503,20 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPa
           <Text color="yellow">Thinking...</Text>
         )}
       </Box>
+      {suggestion && (
+        <Box paddingBottom={1}>
+          <CommandSuggestion
+            items={suggestion.items}
+            highlightIndex={suggestion.highlightIndex}
+          />
+        </Box>
+      )}
       <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
         <TextInput
-          placeholder={isStreaming ? "Waiting for response..." : "Type your message..."}
-          isDisabled={isStreaming}
-          onSubmit={onSend}
+          key={inputKey}
+          placeholder={isStreaming ? "Responding - /exit to quit" : "Type your message..."}
+          isDisabled={inputDisabled}
+          onChange={onInputChange}
         />
       </Box>
     </Box>
@@ -285,6 +525,16 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend }: ChatPa
 
 interface MessageBubbleProps {
   message: Message
+}
+
+export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone }) {
+  return (
+    <Box marginBottom={1}>
+      <Text color={tone === "error" ? "red" : "cyan"} wrap="wrap">
+        {text}
+      </Text>
+    </Box>
+  )
 }
 
 function MessageBubble({ message }: MessageBubbleProps) {

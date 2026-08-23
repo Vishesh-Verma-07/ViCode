@@ -9,10 +9,11 @@ import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
 import { assembleSystemPrompt } from "./core/system-prompt"
 import { readOnlyTools } from "./tools"
+import { CommandRegistry } from "./core/command-registry"
+import { createBuiltinCommands } from "./commands"
 import { App } from "./ui/app"
 import {
   getSessionsDir,
-  listSessions,
   loadSession,
   loadLatestSession,
   type Session,
@@ -46,46 +47,10 @@ if (existsSync(envPath)) {
 
 const sessionsDir = getSessionsDir(projectPath)
 
-if (args.sessions) {
-  const sessions = listSessions(sessionsDir)
-  if (sessions.length === 0) {
-    console.log("No sessions found for this project.")
-  } else {
-    console.log(`Sessions for ${projectPath}:\n`)
-    for (const s of sessions) {
-      const date = new Date(s.updatedAt).toLocaleString()
-      console.log(
-        `  ${s.id}  ${date}  ${s.messageCount} messages  ${s.model}  tokens: ${s.totalTokens}`,
-      )
-    }
-  }
-  process.exit(0)
-}
-
 let initialSession: Session | null = null
-
-if (args.resume) {
-  initialSession = loadSession(args.resume, sessionsDir)
-  if (!initialSession) {
-    console.error(`Session "${args.resume}" not found.`)
-    process.exit(1)
-  }
-} else if (!args.new) {
-  initialSession = loadLatestSession(projectPath)
-}
-
-const cliSystemPrompt = args.system
-  ? existsSync(args.system)
-    ? readFileSync(args.system, "utf-8")
-    : args.system
-  : undefined
 
 const config = loadConfig({
   projectPath,
-  cliArgs: {
-    model: args.model,
-    systemPrompt: cliSystemPrompt,
-  },
 })
 
 if (!config.apiKey) {
@@ -103,24 +68,35 @@ if (!config.apiKey) {
 const model = config.model ?? "anthropic/claude-sonnet-4"
 log("component mounted ", model);
 
+const apiKey: string = config.apiKey
+
 const provider = createOpenRouterProvider({
-  apiKey: config.apiKey,
+  apiKey,
   model,
 })
 
 const systemPrompt = assembleSystemPrompt({
   projectPath,
   projectPrompt: config.systemPrompt,
-  cliPrompt: cliSystemPrompt && config.systemPrompt !== cliSystemPrompt ? cliSystemPrompt : undefined,
+  cliPrompt: undefined,
 })
+
+const commandRegistry = new CommandRegistry()
+commandRegistry.registerAll(createBuiltinCommands(commandRegistry))
 
 render(
   React.createElement(App, {
     provider,
+    createProvider: (modelId: string) =>
+      createOpenRouterProvider({
+        apiKey,
+        model: modelId,
+      }),
     tools: readOnlyTools,
     systemPrompt,
     context: { projectPath },
     initialSession: initialSession ?? undefined,
     sessionsDir,
+    commands: commandRegistry.getAll(),
   }),
 )

@@ -1,16 +1,32 @@
-import type { Provider, StreamEvent, TokenUsage, ModelInfo } from "../core/provider"
+import type { Provider, StreamEvent, TokenUsage, ModelInfo, ModelListing, ModelListingPricing } from "../core/provider"
 import type { Message, ToolDefinition } from "../core/types"
 import type { ModelMessage, ToolSet } from "ai"
 import { streamText, tool, zodSchema } from "ai"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
 import { getModelPricing, calculateCost } from "../core/cost-calculator"
+import { join, dirname } from "path"
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs"
 
 export interface OpenRouterProviderConfig {
   apiKey: string
   model: string
 }
 
-export function createOpenRouterProvider(config: OpenRouterProviderConfig): Provider {
+export interface ListModelsOptions {
+  /** Where the model-list cache lives. Defaults to ~/.vicode/models-cache.json */
+  cachePath?: string
+  /** HTTP boundary override for tests. */
+  fetchImpl?: typeof fetch
+}
+
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+function defaultModelsCachePath(): string {
+  const home = process.env.HOME || process.env.USERPROFILE || ""
+  return join(home, ".vicode", "models-cache.json")
+}
+
+export function createOpenRouterProvider(config: OpenRouterProviderConfig, options?: ListModelsOptions): Provider {
   const openrouter = createOpenRouter({ apiKey: config.apiKey })
   const modelId = config.model
 
@@ -78,6 +94,10 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig): Prov
 
     getModelInfo(): ModelInfo {
       return { id: modelId, name: modelId }
+    },
+
+    listModels(): Promise<ModelListing[]> {
+      return listOpenRouterModels(options)
     },
   }
 }
@@ -157,4 +177,113 @@ function extractUsage(raw: { inputTokens?: number; outputTokens?: number; totalT
   const pricing = getModelPricing(modelId)
   const cost = calculateCost(inputTokens, outputTokens, pricing)
   return { inputTokens, outputTokens, totalTokens, cost }
+}
+
+interface ModelsCacheFile {
+  fetchedAt: string
+  models: ModelListing[]
+}
+
+function parseOpenRouterModels(payload: unknown): ModelListing[] {
+  const data = (payload as { data?: unknown } | null)?.data
+  if (!Array.isArray(data)) return []
+
+  const listings: ModelListing[] = []
+  for (const entry of data) {
+    const model = entry as {
+      id?: unknown
+      name?: unknown
+      pricing?: { prompt?: unknown; completion?: unknown }
+    }
+    if (typeof model.id !== "string" || model.id === "") continue
+
+    const inputPricePerToken = toPricePerToken(model.pricing?.prompt)
+    const outputPricePerToken = toPricePerToken(model.pricing?.completion)
+    let pricing: ModelListingPricing
+    if (inputPricePerToken <= 0 && outputPricePerToken <= 0) {
+      pricing = { kind: "free" }
+    } else {
+      pricing = { kind: "paid", inputPricePerToken, outputPricePerToken }
+    }
+
+    listings.push({
+      id: model.id,
+      name: typeof model.name === "string" && model.name !== "" ? model.name : model.id,
+      pricing,
+    })
+  }
+
+  return listings
+}
+
+function toPricePerToken(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+function isValidModelListing(value: unknown): value is ModelListing {
+  if (typeof value !== "object" || value === null) return false
+  const listing = value as { id?: unknown; name?: unknown; pricing?: unknown }
+  if (typeof listing.id !== "string" || typeof listing.name !== "string") return false
+  if (typeof listing.pricing !== "object" || listing.pricing === null) return false
+  const pricing = listing.pricing as { kind?: unknown }
+  if (pricing.kind === "free") return true
+  if (pricing.kind === "paid") {
+    const rates = listing.pricing as { inputPricePerToken?: unknown; outputPricePerToken?: unknown }
+    return typeof rates.inputPricePerToken === "number" && typeof rates.outputPricePerToken === "number"
+  }
+  return false
+}
+
+function readModelsCache(cachePath: string): ModelListing[] | null {
+  if (!existsSync(cachePath)) return null
+  try {
+    const raw = JSON.parse(readFileSync(cachePath, "utf-8")) as { models?: unknown }
+    if (!Array.isArray(raw.models)) return null
+    const models = raw.models.filter(isValidModelListing)
+    return models.length > 0 ? models : null
+  } catch {
+    return null
+  }
+}
+
+function writeModelsCache(cachePath: string, models: ModelListing[]): void {
+  try {
+    mkdirSync(dirname(cachePath), { recursive: true })
+    const payload: ModelsCacheFile = { fetchedAt: new Date().toISOString(), models }
+    writeFileSync(cachePath, JSON.stringify(payload, null, 2), "utf-8")
+  } catch {
+    // Cache writing is best-effort; never fail the listing itself.
+  }
+}
+
+export async function listOpenRouterModels(options?: ListModelsOptions): Promise<ModelListing[]> {
+  const fetchImpl = options?.fetchImpl ?? fetch
+  const cachePath = options?.cachePath ?? defaultModelsCachePath()
+
+  let fetched: ModelListing[] | null = null
+  try {
+    const response = await fetchImpl(OPENROUTER_MODELS_URL)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    fetched = parseOpenRouterModels(await response.json())
+    if (fetched.length === 0) throw new Error("empty model list")
+  } catch {
+    fetched = null
+  }
+
+  if (fetched) {
+    writeModelsCache(cachePath, fetched)
+    return fetched
+  }
+
+  const cached = readModelsCache(cachePath)
+  if (cached) return cached
+
+  throw new Error(
+    "Failed to fetch OpenRouter models and no cached model list is available. Connect to the internet once to populate the cache.",
+  )
 }

@@ -1,4 +1,6 @@
 import type { z } from "zod"
+import type { ModelListing } from "./provider"
+import type { Skill } from "./skills"
 
 export type Role = "user" | "assistant" | "system" | "tool"
 
@@ -41,6 +43,55 @@ export interface ToolDefinition {
 
 export interface ToolContext {
   projectPath: string
+}
+
+export interface Command {
+  name: string
+  description: string
+  execute: (args: string[], context: CommandContext) => Promise<string>
+}
+
+export interface PickerItem {
+  label: string
+  metadata?: string
+}
+
+export interface PickerRequest {
+  title: string
+  items: PickerItem[]
+}
+
+export type OpenPicker = (request: PickerRequest) => Promise<number | null>
+
+export interface SessionsCapability {
+  dir: string
+  getActiveSession(): Session | null
+  switchTo(session: Session): void
+  startFresh(): void
+}
+
+export interface ExitCapability {
+  requestExit(): Promise<void>
+}
+
+export interface ModelsCapability {
+  list(): Promise<ModelListing[]>
+  getCurrentModelId(): string
+  switchTo(modelId: string): void
+}
+
+export interface SkillContext {
+  list(): Promise<Skill[]>
+}
+
+export interface CommandContext {
+  projectPath: string
+  openPicker?: OpenPicker
+  sessions?: SessionsCapability
+  exit?: ExitCapability
+  models?: ModelsCapability
+  skills?: SkillContext
+  onSkillActivate?: (content: string) => void
 }
 
 export interface Session {
