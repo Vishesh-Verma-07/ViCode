@@ -280,6 +280,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       const turnStart = Date.now()
       let hadError = false
       let turnFailed = false
+      const pendingToolNames: string[] = []
 
       const turn = (async () => {
         try {
@@ -297,6 +298,11 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 setCurrentText((prev) => prev + text)
               },
               onToolCallStart: (id, name) => {
+                pendingToolNames.push(name)
+                const executing = pendingToolNames[0]
+                if (executing) {
+                  setTurnStatus({ kind: "working", toolName: executing })
+                }
                 setToolCalls((prev) => [
                   ...prev,
                   { id, name, args: {} },
@@ -311,6 +317,9 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 )
               },
               onToolResult: (id, _name, result) => {
+                pendingToolNames.shift()
+                const nextTool = pendingToolNames[0]
+                setTurnStatus(nextTool ? { kind: "working", toolName: nextTool } : { kind: "thinking" })
                 const { message, diff } = extractDiff(result)
                 setToolCalls((prev) =>
                   prev.map((tc) =>

@@ -1129,11 +1129,11 @@ describe("App status bar indicator", () => {
         .replace(/\s+/g, " ")
   }
 
-  function setupWithProvider(provider: Provider) {
+  function setupWithProvider(provider: Provider, tools: ToolDefinition[] = []) {
     const instance = render(
       <App
         provider={provider}
-        tools={[]}
+        tools={tools}
         systemPrompt=""
         context={{ projectPath: "/tmp/status-test" }}
         commands={createTestCommands()}
@@ -1259,6 +1259,110 @@ describe("App status bar indicator", () => {
       await until(() => frameText().includes("Ready"), 5000)
       expect(frameText()).not.toContain("Done in")
       expect(frameText()).not.toContain("Error")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("shows Working with the tool name while a tool executes, then Thinking when the model resumes", async () => {
+    const echoTool: ToolDefinition = {
+      name: "echo",
+      description: "Echo input",
+      parameters: z.object({ input: z.string() }),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        return "echoed"
+      },
+      dangerous: false,
+    }
+    let step = 0
+    const toolCallingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "calling tool" }
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "echo" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "echo", args: { input: "hi" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "all done" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(toolCallingProvider, [echoTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("use the tool")
+      await until(() => frameText().includes("Thinking"))
+      await until(() => frameText().includes("Working: echo"))
+
+      await until(() => frameText().includes("Thinking") && !frameText().includes("Working"))
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("shows each sequential tool call under its own name", async () => {
+    const alphaTool: ToolDefinition = {
+      name: "alpha",
+      description: "Alpha",
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        return "alpha result"
+      },
+      dangerous: false,
+    }
+    const betaTool: ToolDefinition = {
+      name: "beta",
+      description: "Beta",
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        return "beta result"
+      },
+      dangerous: false,
+    }
+    let step = 0
+    const twoToolProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "alpha" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "alpha", args: {} }
+          yield { type: "tool-call-start", toolCallId: "call_2", toolName: "beta" }
+          yield { type: "tool-call-end", toolCallId: "call_2", toolName: "beta", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(twoToolProvider, [alphaTool, betaTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run both")
+      await until(() => frameText().includes("Working: alpha"))
+
+      await until(() => frameText().includes("Working: beta"))
+
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
     } finally {
       unmount()
     }
