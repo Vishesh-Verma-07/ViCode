@@ -287,7 +287,7 @@ describe("App command suggestion dropdown", () => {
 
       const hintIndex = frame.indexOf("Type a message to start chatting")
       const dropdownLineIndex = frame.indexOf("> /help")
-      const statusBarIndex = frame.indexOf("Tokens:")
+      const statusBarIndex = frame.indexOf("Tokens: 0 | Cost:")
       expect(hintIndex).toBeGreaterThanOrEqual(0)
       expect(dropdownLineIndex).toBeGreaterThan(hintIndex)
       expect(dropdownLineIndex).toBeLessThan(statusBarIndex)
@@ -878,13 +878,9 @@ describe("App /new command", () => {
       const frameAfterNew = lastFrame() ?? ""
       expect(frameAfterNew).not.toContain("hello seed conversation")
       expect(frameAfterNew).not.toContain("turn one question")
-      expect(frameAfterNew).toContain("No diffs yet")
       expect(frameAfterNew).toContain("Tokens: 0")
       expect(frameAfterNew).toContain("$0.00")
       expect(existsSync(join(sessionsDir, "sess_seed_one.json"))).toBe(true)
-
-      pressKey("\t")
-      await until(() => (lastFrame() ?? "").includes("No tool calls yet"))
 
       const resumable = loadSession("sess_seed_one", sessionsDir)
       expect(resumable).not.toBeNull()
@@ -1874,4 +1870,83 @@ describe("Inline tool bubbles in chat", () => {
       unmount()
     }
   }, 20000)
+})
+
+describe("Usage panel", () => {
+  function setupUsage(provider: Provider) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/usage-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    const anyFrameContaining = (needle: string) =>
+      instance.stdout.frames.some((f) => f.includes(needle))
+
+    return { ...instance, typeAndSubmit, frameText, anyFrameContaining }
+  }
+
+  it("shows model, token breakdown, cost and turn count, with no Tools/Diffs tabs", async () => {
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        yield { type: "text-delta", text: `reply ${step}` }
+        yield { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0.01 } }
+      },
+    }
+    const { frameText, typeAndSubmit, anyFrameContaining, unmount } = setupUsage(provider)
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+
+      expect(frameText()).not.toContain("Tools | Diffs")
+
+      await typeAndSubmit("first")
+      await until(() => frameText().includes("reply 1"), 10000)
+      await typeAndSubmit("second")
+      await until(() => frameText().includes("reply 2"), 10000)
+
+      const usageSection = frameText().split("Usage")[1] ?? ""
+      expect(frameText()).toContain("Usage")
+      expect(usageSection).toContain("stub-model")
+      expect(usageSection).toContain("Tokens: 30")
+      expect(usageSection).toContain("In: 20 / Out: 10")
+      expect(usageSection).toContain("$0.02")
+      expect(usageSection).toContain("Turns: 2")
+      expect(frameText()).not.toContain("No tool calls yet")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("ignores the Tab key entirely", async () => {
+    const { frameText, stdin, anyFrameContaining, unmount } = setupUsage(createStubProvider([]))
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+      stdin.write("\t")
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(frameText()).not.toContain("Diffs")
+    } finally {
+      unmount()
+    }
+  }, 15000)
 })

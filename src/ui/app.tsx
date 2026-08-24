@@ -23,14 +23,6 @@ interface ToolCallEntry {
   result?: string
 }
 
-interface DiffEntry {
-  id: string
-  filePath: string
-  diff: string
-  timestamp: number
-}
-
-type SidebarTab = "tools" | "diffs"
 
 export type FeedbackTone = "info" | "error"
 
@@ -99,9 +91,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const [turnStatus, setTurnStatus] = useState<TurnStatus>({ kind: "idle" })
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
-  const [diffs, setDiffs] = useState<DiffEntry[]>([])
-  const [activeTab, setActiveTab] = useState<SidebarTab>("tools")
   const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+  const [turnCount, setTurnCount] = useState(0)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [showExitSummary, setShowExitSummary] = useState(false)
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
@@ -241,8 +232,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 setSession(null)
                 setMessages([])
                 setToolCalls([])
-                setDiffs([])
                 setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+                setTurnCount(0)
                 setActiveSkills([])
               },
             }
@@ -287,7 +278,6 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
 
       setMessages((prev) => [...prev, userMsg])
       setToolCalls([])
-      setDiffs([])
       setIsStreaming(true)
       setTurnStatus({ kind: "thinking" })
 
@@ -334,23 +324,15 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 )
               },
               onToolResult: (id, _name, result) => {
-                pendingToolNames.shift()
-                advanceToolStatus()
-                const { message, diff } = extractDiff(result)
-                setToolCalls((prev) =>
-                  prev.map((tc) =>
-                    tc.id === id ? { ...tc, result: message } : tc,
-                  ),
-                )
-                if (diff) {
-                  const toolCall = toolCalls.find((tc) => tc.id === id)
-                  const filePath = toolCall?.args?.path as string ?? "unknown"
-                  setDiffs((prev) => [
-                    ...prev,
-                    { id, filePath, diff, timestamp: Date.now() },
-                  ])
-                }
-              },
+                 pendingToolNames.shift()
+                 advanceToolStatus()
+                 const { message } = extractDiff(result)
+                 setToolCalls((prev) =>
+                   prev.map((tc) =>
+                     tc.id === id ? { ...tc, result: message } : tc,
+                   ),
+                 )
+               },
               onError: (error) => {
                 hadError = true
                 setTurnStatus({ kind: "error" })
@@ -411,10 +393,13 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           abortRef.current = null
           if (!turnFailed && controller.signal.aborted) {
             setTurnStatus({ kind: "idle" })
-          } else if (hadError || turnFailed) {
-            setTurnStatus({ kind: "error" })
           } else {
-            setTurnStatus({ kind: "done", durationMs: Date.now() - turnStart })
+            setTurnCount((n) => n + 1)
+            if (hadError || turnFailed) {
+              setTurnStatus({ kind: "error" })
+            } else {
+              setTurnStatus({ kind: "done", durationMs: Date.now() - turnStart })
+            }
           }
         }
       })()
@@ -472,11 +457,6 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         return
       }
 
-      if (key.tab) {
-        setActiveTab((prev) => (prev === "tools" ? "diffs" : "tools"))
-        return
-      }
-
       if (key.escape && isStreaming && abortRef.current) {
         abortRef.current.abort()
       }
@@ -509,11 +489,11 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           onInputChange={handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
         />
-        <Sidebar
+        <UsagePanel
           width={sidebarWidth}
-          activeTab={activeTab}
-          toolCalls={toolCalls}
-          diffs={diffs}
+          model={providerState.getModelInfo().name}
+          usage={usage}
+          turns={turnCount}
         />
       </Box>
       <StatusBar usage={usage} model={providerState.getModelInfo().name} status={turnStatus} />
@@ -841,100 +821,26 @@ function MessageBubble({ message }: MessageBubbleProps) {
   return null
 }
 
-interface SidebarProps {
+interface UsagePanelProps {
   width: number
-  activeTab: SidebarTab
-  toolCalls: ToolCallEntry[]
-  diffs: DiffEntry[]
+  model: string
+  usage: TokenUsage
+  turns: number
 }
 
-function Sidebar({ width, activeTab, toolCalls, diffs }: SidebarProps) {
+function UsagePanel({ width, model, usage, turns }: UsagePanelProps) {
   return (
-    <Box
-      width={width}
-      flexDirection="column"
-      borderStyle="single"
-      borderColor="gray"
-      paddingX={1}
-    >
-      <Box>
-        <Text
-          color={activeTab === "tools" ? "cyan" : "gray"}
-          bold={activeTab === "tools"}
-        >
-          Tools
-        </Text>
-        <Text color="gray"> | </Text>
-        <Text
-          color={activeTab === "diffs" ? "cyan" : "gray"}
-          bold={activeTab === "diffs"}
-        >
-          Diffs{diffs.length > 0 ? ` (${diffs.length})` : ""}
-        </Text>
+    <Box width={width} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+      <Text bold color="cyan">
+        Usage
+      </Text>
+      <Box marginTop={1} flexDirection="column" gap={0}>
+        <Text color="gray">Model: {model}</Text>
+        <Text color="gray">Tokens: {formatTokens(usage.totalTokens)}</Text>
+        <Text color="gray">  In: {formatTokens(usage.inputTokens)} / Out: {formatTokens(usage.outputTokens)}</Text>
+        <Text color="gray">Cost: {formatCost(usage.cost)}</Text>
+        <Text color="gray">Turns: {turns}</Text>
       </Box>
-      {activeTab === "tools" && (
-        <ToolsTab toolCalls={toolCalls} />
-      )}
-      {activeTab === "diffs" && (
-        <DiffsTab diffs={diffs} />
-      )}
-    </Box>
-  )
-}
-
-function ToolsTab({ toolCalls }: { toolCalls: ToolCallEntry[] }) {
-  if (toolCalls.length === 0) {
-    return (
-      <Text color="gray" italic>
-        No tool calls yet
-      </Text>
-    )
-  }
-  return (
-    <Box flexDirection="column">
-      {toolCalls.map((tc) => {
-        const argsStr = Object.keys(tc.args).length > 0
-          ? JSON.stringify(tc.args)
-          : ""
-        const maxLines = 500
-        const resultDisplay = tc.result
-          ? truncateLines(tc.result, maxLines)
-          : ""
-        return (
-          <Box key={tc.id} flexDirection="column" marginBottom={1}>
-            <Text color="yellow">
-              {tc.name}
-            </Text>
-            {argsStr && (
-              <Text color="gray" wrap="wrap">
-                {argsStr}
-              </Text>
-            )}
-            {resultDisplay && (
-              <Text color="gray" wrap="wrap">
-                {resultDisplay}
-              </Text>
-            )}
-          </Box>
-        )
-      })}
-    </Box>
-  )
-}
-
-function DiffsTab({ diffs }: { diffs: DiffEntry[] }) {
-  if (diffs.length === 0) {
-    return (
-      <Text color="gray" italic>
-        No diffs yet
-      </Text>
-    )
-  }
-  return (
-    <Box flexDirection="column">
-      {diffs.map((entry) => (
-        <DiffView key={entry.id} filePath={entry.filePath} diff={entry.diff} />
-      ))}
     </Box>
   )
 }
@@ -960,13 +866,6 @@ function DiffView({ filePath, diff }: { filePath: string; diff: string }) {
       })}
     </Box>
   )
-}
-
-function truncateLines(text: string, maxLines: number): string {
-  const lines = text.split("\n")
-  if (lines.length <= maxLines) return text
-  const truncated = lines.slice(0, maxLines).join("\n")
-  return truncated + `\n... (${lines.length - maxLines} more lines)`
 }
 
 interface StatusBarProps {
