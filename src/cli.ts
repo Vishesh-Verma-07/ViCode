@@ -65,7 +65,7 @@ if (!config.apiKey) {
   process.exit(1)
 }
 
-const model = config.model ?? "anthropic/claude-sonnet-4"
+const model = config.model ?? "z-ai/glm-5.2:free"
 log("component mounted ", model);
 
 const apiKey: string = config.apiKey

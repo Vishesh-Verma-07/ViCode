@@ -336,6 +336,13 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               onError: (error) => {
                 hadError = true
                 setTurnStatus({ kind: "error" })
+                const detail =
+                  error instanceof Error
+                    ? error.message
+                    : typeof error === "object" && error !== null && "message" in error
+                      ? String((error as { message: unknown }).message)
+                      : String(error)
+                appendFeedback(`Model error: ${detail.slice(0, 200)}`, "error")
                 console.error("Agent error:", error)
               },
               requestApproval: (toolName, args) => {

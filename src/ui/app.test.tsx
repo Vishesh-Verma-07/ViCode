@@ -1950,3 +1950,41 @@ describe("Usage panel", () => {
     }
   }, 15000)
 })
+
+describe("Error surfacing", () => {
+  it("shows the API error message as chat feedback alongside the error status", async () => {
+    const failingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        yield { type: "error", error: new Error("Rate limit exceeded: free-models-per-day") }
+      },
+    }
+    const instance = render(
+      <App
+        provider={failingProvider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/err-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    try {
+      const frameText = () =>
+        (instance.lastFrame() ?? "")
+          .replace(/\u001B\[[0-9;]*m/g, "")
+          .replace(/\s+/g, " ")
+      await until(() => frameText().includes("Type your message"))
+      instance.stdin.write("h")
+      await new Promise((r) => setTimeout(r, 10))
+      instance.stdin.write("\r")
+
+      await until(() => frameText().includes("✗ Error"))
+      expect(frameText()).toContain("Rate limit exceeded")
+    } finally {
+      instance.unmount()
+    }
+  }, 15000)
+})
