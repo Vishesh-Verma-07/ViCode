@@ -107,11 +107,11 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
   const { stdout } = useStdout()
-  const [, resyncAfterMouseSetup] = useState(0)
+  const [, mouseSetupTick] = useState(0)
 
   useEffect(() => {
     stdout.write(MOUSE_TRACKING_ENABLE)
-    resyncAfterMouseSetup((n) => n + 1)
+    mouseSetupTick((n) => n + 1)
     return () => {
       stdout.write(MOUSE_TRACKING_DISABLE)
     }
@@ -324,15 +324,15 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 )
               },
               onToolResult: (id, _name, result) => {
-                 pendingToolNames.shift()
-                 advanceToolStatus()
-                 const { message } = extractDiff(result)
-                 setToolCalls((prev) =>
-                   prev.map((tc) =>
-                     tc.id === id ? { ...tc, result: message } : tc,
-                   ),
-                 )
-               },
+                pendingToolNames.shift()
+                advanceToolStatus()
+                const { message } = extractDiff(result)
+                setToolCalls((prev) =>
+                  prev.map((tc) =>
+                    tc.id === id ? { ...tc, result: message } : tc,
+                  ),
+                )
+              },
               onError: (error) => {
                 hadError = true
                 setTurnStatus({ kind: "error" })
@@ -537,6 +537,14 @@ interface ChatPanelProps {
 }
 
 const CHAT_CHROME_LINES = 7
+const WHEEL_STEP_LINES = 3
+
+function textContentOf(msg: Message): string {
+  return msg.content
+    .filter((c) => c.type === "text")
+    .map((c) => (c.type === "text" ? c.text : ""))
+    .join("")
+}
 
 function estimateLines(text: string, usableWidth: number): number {
   return text
@@ -567,9 +575,9 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
     if (scrollDisabled) return
     const wheel = parseWheelEvent(_input)
     if (wheel === "up") {
-      setBottomOffset((prev) => prev + 3)
+      setBottomOffset((prev) => prev + WHEEL_STEP_LINES)
     } else if (wheel === "down") {
-      setBottomOffset((prev) => Math.max(0, prev - 3))
+      setBottomOffset((prev) => Math.max(0, prev - WHEEL_STEP_LINES))
     } else if (key.pageUp) {
       setBottomOffset((prev) => prev + viewportHeight)
     } else if (key.pageDown) {
@@ -616,16 +624,9 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
 
   for (const msg of messages) {
     if (msg.role === "user") {
-      const text = msg.content
-        .filter((c) => c.type === "text")
-        .map((c) => (c.type === "text" ? c.text : ""))
-        .join("")
-      addTextBlocks(msg.id, text, { prefix: "You: ", color: "blue" })
+      addTextBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: "blue" })
     } else if (msg.role === "assistant") {
-      const text = msg.content
-        .filter((c) => c.type === "text")
-        .map((c) => (c.type === "text" ? c.text : ""))
-        .join("")
+      const text = textContentOf(msg)
       if (text) {
         addTextBlocks(msg.id, text, { prefix: "vicode: ", color: "green" })
       }
@@ -772,10 +773,6 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
   )
 }
 
-interface MessageBubbleProps {
-  message: Message
-}
-
 export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone }) {
   return (
     <Box marginBottom={1}>
@@ -784,41 +781,6 @@ export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone 
       </Text>
     </Box>
   )
-}
-
-function MessageBubble({ message }: MessageBubbleProps) {
-  if (message.role === "user") {
-    const text = message.content
-      .filter((c) => c.type === "text")
-      .map((c) => (c.type === "text" ? c.text : ""))
-      .join("")
-    return (
-      <Box marginBottom={1}>
-        <Text color="blue" bold>
-          You:{" "}
-        </Text>
-        <Text>{text}</Text>
-      </Box>
-    )
-  }
-
-  if (message.role === "assistant") {
-    const text = message.content
-      .filter((c) => c.type === "text")
-      .map((c) => (c.type === "text" ? c.text : ""))
-      .join("")
-    if (!text) return null
-    return (
-      <Box marginBottom={1}>
-        <Text color="green" bold>
-          vicode:{" "}
-        </Text>
-        <Text>{text}</Text>
-      </Box>
-    )
-  }
-
-  return null
 }
 
 interface UsagePanelProps {

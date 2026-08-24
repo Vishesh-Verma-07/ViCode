@@ -14,7 +14,7 @@ export function parseWheelEvent(input: string): WheelDirection | null {
   return null
 }
 
-const MOUSE_JUNK = /<\d+;\d+;\d+[Mm]/g
+const MOUSE_JUNK = /\x1B?\[?<\d+;\d+;\d+[Mm]/g
 
 export function scrubMouseSequences(text: string): string {
   return text.replace(MOUSE_JUNK, "")
