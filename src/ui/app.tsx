@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize } from "ink"
-import { TextInput } from "@inkjs/ui"
+import { TextInput, Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
@@ -47,6 +47,25 @@ interface PendingApproval {
 
 export const STREAMING_COMMAND_NOTICE = "Still responding - press Esc to stop it, or /exit to quit."
 
+export type TurnStatus =
+  | { kind: "idle" }
+  | { kind: "thinking" }
+  | { kind: "working"; toolName: string }
+  | { kind: "done"; durationMs: number }
+  | { kind: "error" }
+
+const DONE_REVERT_MS = 3000
+
+function makeSpinnerTheme(color: string) {
+  return extendTheme(defaultTheme, {
+    components: { Spinner: { styles: { frame: () => ({ color }) } } },
+  })
+}
+
+const yellowSpinnerTheme = makeSpinnerTheme("yellow")
+
+const cyanSpinnerTheme = makeSpinnerTheme("cyan")
+
 interface AppProps {
   provider: Provider
   createProvider?: (modelId: string) => Provider
@@ -75,6 +94,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
   const [providerState, setProviderState] = useState<Provider>(provider)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [turnStatus, setTurnStatus] = useState<TurnStatus>({ kind: "idle" })
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
   const [diffs, setDiffs] = useState<DiffEntry[]>([])
@@ -93,6 +113,12 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const activeTurnRef = useRef<Promise<void> | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
+
+  useEffect(() => {
+    if (turnStatus.kind !== "done") return
+    const timer = setTimeout(() => setTurnStatus({ kind: "idle" }), DONE_REVERT_MS)
+    return () => clearTimeout(timer)
+  }, [turnStatus])
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry()
@@ -247,9 +273,13 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       setToolCalls([])
       setDiffs([])
       setIsStreaming(true)
+      setTurnStatus({ kind: "thinking" })
 
       const controller = new AbortController()
       abortRef.current = controller
+      const turnStart = Date.now()
+      let hadError = false
+      let turnFailed = false
 
       const turn = (async () => {
         try {
@@ -297,6 +327,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 }
               },
               onError: (error) => {
+                hadError = true
+                setTurnStatus({ kind: "error" })
                 console.error("Agent error:", error)
               },
               requestApproval: (toolName, args) => {
@@ -336,13 +368,21 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
             setSession(savedSession)
           }
         } catch (error) {
-          if (error instanceof Error && error.name !== "AbortError") {
+          turnFailed = !(error instanceof Error && error.name === "AbortError")
+          if (turnFailed) {
             console.error("Loop error:", error)
           }
         } finally {
           setCurrentText("")
           setIsStreaming(false)
           abortRef.current = null
+          if (!turnFailed && controller.signal.aborted) {
+            setTurnStatus({ kind: "idle" })
+          } else if (hadError || turnFailed) {
+            setTurnStatus({ kind: "error" })
+          } else {
+            setTurnStatus({ kind: "done", durationMs: Date.now() - turnStart })
+          }
         }
       })()
       activeTurnRef.current = turn
@@ -439,7 +479,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           diffs={diffs}
         />
       </Box>
-      <StatusBar usage={usage} model={providerState.getModelInfo().name} />
+      <StatusBar usage={usage} model={providerState.getModelInfo().name} status={turnStatus} />
       {pickerRequest && (
         <Picker
           title={pickerRequest.title}
@@ -498,9 +538,6 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedback
         ))}
         {isStreaming && currentText && (
           <Text>{currentText}</Text>
-        )}
-        {isStreaming && !currentText && (
-          <Text color="yellow">Thinking...</Text>
         )}
       </Box>
       {suggestion && (
@@ -562,7 +599,7 @@ function MessageBubble({ message }: MessageBubbleProps) {
     return (
       <Box marginBottom={1}>
         <Text color="green" bold>
-          AI:{" "}
+          vicode:{" "}
         </Text>
         <Text>{text}</Text>
       </Box>
@@ -703,9 +740,10 @@ function truncateLines(text: string, maxLines: number): string {
 interface StatusBarProps {
   usage: TokenUsage
   model: string
+  status: TurnStatus
 }
 
-function StatusBar({ usage, model }: StatusBarProps) {
+function StatusBar({ usage, model, status }: StatusBarProps) {
   return (
     <Box
       justifyContent="space-between"
@@ -713,14 +751,40 @@ function StatusBar({ usage, model }: StatusBarProps) {
       borderStyle="single"
       borderColor="gray"
     >
-      <Text color="gray">
-        {model}
-      </Text>
+      <Box gap={2}>
+        <Text color="gray">
+          {model}
+        </Text>
+        <StatusIndicator status={status} />
+      </Box>
       <Text color="gray">
         Tokens: {formatTokens(usage.totalTokens)} | Cost: {formatCost(usage.cost)}
       </Text>
     </Box>
   )
+}
+
+export function StatusIndicator({ status }: { status: TurnStatus }) {
+  switch (status.kind) {
+    case "idle":
+      return <Text color="gray">Ready</Text>
+    case "thinking":
+      return (
+        <ThemeProvider theme={yellowSpinnerTheme}>
+          <Spinner label="Thinking…" />
+        </ThemeProvider>
+      )
+    case "working":
+      return (
+        <ThemeProvider theme={cyanSpinnerTheme}>
+          <Spinner label={`Working: ${status.toolName}…`} />
+        </ThemeProvider>
+      )
+    case "done":
+      return <Text color="green">✓ Done in {(status.durationMs / 1000).toFixed(1)}s</Text>
+    case "error":
+      return <Text color="red">✗ Error</Text>
+  }
 }
 
 interface ApprovalPromptProps {

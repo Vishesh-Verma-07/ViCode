@@ -1120,3 +1120,147 @@ describe("App streaming guard for commands", () => {
     }
   }, 30000)
 })
+
+describe("App status bar indicator", () => {
+  function normalizeFrame(lastFrame: () => string | undefined): () => string {
+    return () =>
+      (lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+  }
+
+  function setupWithProvider(provider: Provider) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/status-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { ...instance, frameText: normalizeFrame(instance.lastFrame), typeAndSubmit }
+  }
+
+  it("shows Ready when idle", async () => {
+    const { lastFrame, unmount } = setupWithProvider(createStubProvider([]))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      expect((lastFrame() ?? "")).toContain("Ready")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("shows Thinking while streaming, then Done with duration, then reverts to Ready after three seconds", async () => {
+    const delayedProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        yield { type: "text-delta", text: "hello" }
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(delayedProvider)
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first question")
+      await until(() => frameText().includes("Thinking"))
+
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      expect(frameText()).not.toContain("Thinking")
+
+      await until(() => frameText().includes("Ready") && !frameText().includes("Done in"), 6000)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("shows a persistent Error when the stream fails, cleared by the next send", async () => {
+    let calls = 0
+    const failingThenWorkingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(messages) {
+        calls++
+        if (calls === 1) {
+          throw new Error("boom")
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        for (const event of [
+          { type: "text-delta" as const, text: "recovered" },
+          { type: "finish" as const, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+        ]) {
+          yield event
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(failingThenWorkingProvider)
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("break it")
+      await until(() => frameText().includes("Error"))
+
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(frameText()).toContain("Error")
+
+      await typeAndSubmit("fix it")
+      await until(() => frameText().includes("Thinking"))
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      expect(frameText()).not.toContain("✗ Error")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("reverts straight to Ready when Esc aborts a turn mid-stream", async () => {
+    const hangingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, _tools, _systemPrompt, abortSignal) {
+        yield { type: "text-delta", text: "partial reply" }
+        await new Promise<void>((resolve) => {
+          if (abortSignal?.aborted) {
+            resolve()
+            return
+          }
+          abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+        })
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(hangingProvider)
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("slow question")
+      await until(() => frameText().includes("Thinking"))
+
+      stdin.write("\x1B")
+
+      await until(() => frameText().includes("Ready"), 5000)
+      expect(frameText()).not.toContain("Done in")
+      expect(frameText()).not.toContain("Error")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
