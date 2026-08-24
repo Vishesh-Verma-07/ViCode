@@ -497,6 +497,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           width={chatWidth}
           viewportHeight={Math.max(5, rows - CHAT_CHROME_LINES)}
           scrollDisabled={pickerRequest !== null || pendingApproval !== null || showExitSummary}
+          runningTools={toolCalls.filter((tc) => !tc.result).map((tc) => ({ id: tc.id, name: tc.name }))}
           messages={messages}
           currentText={currentText}
           isStreaming={isStreaming}
@@ -542,6 +543,7 @@ interface ChatPanelProps {
   width: number
   viewportHeight: number
   scrollDisabled?: boolean
+  runningTools: Array<{ id: string; name: string }>
   messages: Message[]
   currentText: string
   isStreaming: boolean
@@ -562,7 +564,23 @@ function estimateLines(text: string, usableWidth: number): number {
     .reduce((n, seg) => n + Math.max(1, Math.ceil(seg.length / usableWidth)), 0)
 }
 
-function ChatPanel({ width, viewportHeight, scrollDisabled, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
+const RESULT_SUMMARY_LINES = 3
+
+function summarizeResult(result: string): { text: string; lines: number } {
+  const lines = result.replace(/\n+$/, "").split("\n")
+  if (lines.length <= RESULT_SUMMARY_LINES + 1) {
+    return { text: lines.join("\n"), lines: Math.max(1, lines.length) }
+  }
+  const head = lines.slice(0, RESULT_SUMMARY_LINES)
+  return { text: `${head.join("\n")}\n… +${lines.length - RESULT_SUMMARY_LINES} more lines`, lines: RESULT_SUMMARY_LINES + 1 }
+}
+
+function diffLabel(diff: string): string {
+  const line = diff.split("\n").find((l) => l.startsWith("+++ "))
+  return line ? line.replace(/^\+\+\+ \S?\s*/, "").trim() || "(diff)" : "(diff)"
+}
+
+function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
   useInput((_input, key) => {
@@ -628,9 +646,62 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, messages, currentTex
         .filter((c) => c.type === "text")
         .map((c) => (c.type === "text" ? c.text : ""))
         .join("")
-      if (!text) continue
-      addTextBlocks(msg.id, text, { prefix: "vicode: ", color: "green" })
+      if (text) {
+        addTextBlocks(msg.id, text, { prefix: "vicode: ", color: "green" })
+      }
+      for (const c of msg.content) {
+        if (c.type !== "tool-call") continue
+        blocks.push({
+          key: `${msg.id}:call:${c.toolCallId}`,
+          lines: 1,
+          node: (
+            <Text key={`${msg.id}:call:${c.toolCallId}`} color="gray">
+              ⚙ {c.toolName}
+            </Text>
+          ),
+          text: `⚙ ${c.toolName}`,
+        })
+      }
+    } else if (msg.role === "tool") {
+      for (const c of msg.content) {
+        if (c.type !== "tool-result") continue
+        const { diff, message } = extractDiff(c.result)
+        if (diff) {
+          const lines = diff.split("\n").length
+          blocks.push({
+            key: `${msg.id}:result:${c.toolCallId}`,
+            lines,
+            node: <DiffView key={`${msg.id}:result:${c.toolCallId}`} filePath={diffLabel(diff)} diff={diff} />,
+          })
+        } else {
+          const summary = summarizeResult(message)
+          blocks.push({
+            key: `${msg.id}:result:${c.toolCallId}`,
+            lines: summary.lines + 1,
+            node: (
+              <Text key={`${msg.id}:result:${c.toolCallId}`} color="gray">
+                ⚙ {c.toolName}
+                {"\n"}
+                {summary.text}
+              </Text>
+            ),
+            text: `⚙ ${c.toolName}\n${summary.text}`,
+          })
+        }
+      }
     }
+  }
+  for (const tool of runningTools) {
+    blocks.push({
+      key: `running:${tool.id}`,
+      lines: 1,
+      node: (
+        <Text key={`running:${tool.id}`} color="gray">
+          ⚙ {tool.name}…
+        </Text>
+      ),
+      text: `⚙ ${tool.name}…`,
+    })
   }
   for (const entry of feedbackEntries) {
     blocks.push({

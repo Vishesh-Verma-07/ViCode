@@ -1696,3 +1696,182 @@ describe("App mouse wheel scrolling", () => {
     }
   }, 30000)
 })
+
+describe("Inline tool bubbles in chat", () => {
+  function setupTools(provider: Provider, tools: ToolDefinition[]) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={tools}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/bubble-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    return { ...instance, typeAndSubmit, frameText }
+  }
+
+  const echoTool: ToolDefinition = {
+    name: "echo",
+    description: "Echo",
+    parameters: z.object({}),
+    execute: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return "echoed"
+    },
+    dangerous: false,
+  }
+
+  it("shows a dim running line while a tool executes, then the completed bubble with summary", async () => {
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 150))
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "echo" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [echoTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("use echo")
+      await until(() => frameText().includes("⚙ echo…"), 5000)
+
+      await until(() => /⚙ echo\b/.test(frameText()) && !frameText().includes("⚙ echo…"), 5000)
+      expect(frameText()).toContain("echoed")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("renders past tool activity from persisted history after the turn", async () => {
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "echo" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "text-delta", text: "all finished" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [echoTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("use echo")
+      await until(() => frameText().includes("all finished"), 10000)
+
+      expect(frameText()).toContain("⚙ echo")
+      expect(frameText()).toContain("echoed")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("truncates long results to three lines with an overflow marker", async () => {
+    const longTool: ToolDefinition = {
+      name: "spew",
+      description: "Spew lines",
+      parameters: z.object({}),
+      execute: async () => Array.from({ length: 10 }, (_, i) => `out ${i}`).join("\n"),
+      dangerous: false,
+    }
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "spew" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "spew", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [longTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("spew")
+      await until(() => frameText().includes("out 2"), 10000)
+
+      expect(frameText()).toContain("out 2")
+      expect(frameText()).toContain("more lines")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("renders diffs inline when the result contains diff markers", async () => {
+    const DIFF_START = "__DIFF_START__"
+    const DIFF_END = "__DIFF_END__"
+    const editTool: ToolDefinition = {
+      name: "edit-file",
+      description: "Edit",
+      parameters: z.object({}),
+      execute: async () =>
+        `Edited.\n${DIFF_START}\n--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-old line\n+new line\n${DIFF_END}`,
+      dangerous: false,
+    }
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "edit-file" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "edit-file", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [editTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("edit it")
+      await until(() => frameText().includes("+new line"), 10000)
+
+      expect(frameText()).toContain("-old line")
+      expect(frameText()).toContain("@@ -1 +1 @@")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+})
