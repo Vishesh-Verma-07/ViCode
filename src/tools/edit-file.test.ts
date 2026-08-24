@@ -96,4 +96,16 @@ describe("edit_file tool", () => {
     expect(result).toContain("-world")
     expect(result).toContain("+universe")
   })
+
+  describe("approval policy", () => {
+    it("auto-approves edits to normal files", async () => {
+      const needs = await editFileTool.requiresApproval?.({ path: "src/app.ts" }, ctx)
+      expect(needs).toBe(false)
+    })
+
+    it("requires approval for edits to .env", async () => {
+      const needs = await editFileTool.requiresApproval?.({ path: ".env" }, ctx)
+      expect(needs).toBe(true)
+    })
+  })
 })

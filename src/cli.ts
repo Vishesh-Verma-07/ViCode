@@ -8,7 +8,7 @@ import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
 import { assembleSystemPrompt } from "./core/system-prompt"
-import { readOnlyTools } from "./tools"
+import { allTools } from "./tools"
 import { CommandRegistry } from "./core/command-registry"
 import { createBuiltinCommands } from "./commands"
 import { App } from "./ui/app"
@@ -92,9 +92,9 @@ render(
         apiKey,
         model: modelId,
       }),
-    tools: readOnlyTools,
+    tools: allTools,
     systemPrompt,
-    context: { projectPath },
+    context: { projectPath, sensitivePatterns: config.sensitiveFiles },
     initialSession: initialSession ?? undefined,
     sessionsDir,
     commands: commandRegistry.getAll(),

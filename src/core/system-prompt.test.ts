@@ -31,6 +31,13 @@ describe("assembleSystemPrompt", () => {
     expect(result).toContain("search")
   })
 
+  it("documents the permission behavior in the base prompt", () => {
+    const result = assembleSystemPrompt({ projectPath: tmpDir })
+    expect(result.toLowerCase()).toContain("without asking")
+    expect(result.toLowerCase()).toContain("approval")
+    expect(result.toLowerCase()).toContain("sensitive")
+  })
+
   it("appends project prompt from .vicode/system.md", () => {
     mkdirSync(join(tmpDir, ".vicode"), { recursive: true })
     writeFileSync(join(tmpDir, ".vicode", "system.md"), "Project-specific rules here")

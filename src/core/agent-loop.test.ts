@@ -515,4 +515,85 @@ describe("agent-loop", () => {
 
     expect(result.totalUsage.cost).toBeCloseTo(0.06, 4)
   })
+
+  describe("per-call approval policy", () => {
+    function makePolicyTool(overrides: Partial<ToolDefinition>): ToolDefinition {
+      return {
+        name: "touch",
+        description: "Touch a file",
+        parameters: z.object({ path: z.string() }),
+        dangerous: true,
+        execute: async () => "done",
+        ...overrides,
+      }
+    }
+
+    function policyProvider(): Provider {
+      return createMockProvider([
+        [
+          { type: "tool-call-start", toolCallId: "c1", toolName: "touch" },
+          { type: "tool-call-end", toolCallId: "c1", toolName: "touch", args: { path: "a.txt" } },
+          { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+        ],
+      ])
+    }
+
+    it("auto-approves a call when requiresApproval returns false despite dangerous flag", async () => {
+      const approvals: string[] = []
+      const tool = makePolicyTool({ requiresApproval: () => false })
+      const result = await runAgentLoop(
+        [userMessage("go")],
+        policyProvider(),
+        [tool],
+        "system",
+        mockContext,
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
+      )
+      expect(approvals).toEqual([])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toBe("done")
+    })
+
+    it("pauses for approval when requiresApproval returns true despite non-dangerous flag", async () => {
+      const approvals: string[] = []
+      const tool = makePolicyTool({ dangerous: false, requiresApproval: () => true })
+      await runAgentLoop(
+        [userMessage("go")],
+        policyProvider(),
+        [tool],
+        "system",
+        mockContext,
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
+      )
+      expect(approvals).toEqual(["touch"])
+    })
+
+    it("reports rejection when requiresApproval pauses and user rejects", async () => {
+      const tool = makePolicyTool({ dangerous: false, requiresApproval: () => true })
+      const result = await runAgentLoop(
+        [userMessage("go")],
+        policyProvider(),
+        [tool],
+        "system",
+        mockContext,
+        createMockCallbacks({ requestApproval: async () => false }),
+      )
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toBe("User rejected this tool call.")
+    })
+
+    it("falls back to the dangerous flag when requiresApproval is absent", async () => {
+      const approvals: string[] = []
+      const tool = makePolicyTool({})
+      await runAgentLoop(
+        [userMessage("go")],
+        policyProvider(),
+        [tool],
+        "system",
+        mockContext,
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
+      )
+      expect(approvals).toEqual(["touch"])
+    })
+  })
 })

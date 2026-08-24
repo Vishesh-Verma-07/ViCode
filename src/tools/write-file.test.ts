@@ -90,4 +90,27 @@ describe("write_file tool", () => {
     expect(result).not.toContain("__DIFF_START__")
     expect(result).not.toContain("__DIFF_END__")
   })
+
+  describe("approval policy", () => {
+    it("auto-approves writes to normal files", async () => {
+      const needs = await writeFileTool.requiresApproval?.({ path: "src/app.ts" }, ctx)
+      expect(needs).toBe(false)
+    })
+
+    it("requires approval for writes to .env", async () => {
+      const needs = await writeFileTool.requiresApproval?.({ path: ".env" }, ctx)
+      expect(needs).toBe(true)
+    })
+
+    it("requires approval for nested secret files", async () => {
+      const needs = await writeFileTool.requiresApproval?.({ path: "config/server.key" }, ctx)
+      expect(needs).toBe(true)
+    })
+
+    it("honors extra patterns from context", async () => {
+      const ctxExtra: ToolContext = { projectPath: tmpDir, sensitivePatterns: ["secrets/**"] }
+      const needs = await writeFileTool.requiresApproval?.({ path: "secrets/token.txt" }, ctxExtra)
+      expect(needs).toBe(true)
+    })
+  })
 })

@@ -48,6 +48,15 @@ async function executeTool(
   }
 }
 
+function needsApproval(
+  tool: ToolDefinition,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): boolean | Promise<boolean> {
+  if (tool.requiresApproval) return tool.requiresApproval(args, context)
+  return tool.dangerous
+}
+
 export async function runAgentLoop(
   messages: Message[],
   provider: Provider,
@@ -176,7 +185,7 @@ export async function runAgentLoop(
 
       if (!toolDef) {
         result = `Error: Unknown tool "${tc.toolName}"`
-      } else if (toolDef.dangerous) {
+      } else if (await needsApproval(toolDef, tc.args, context)) {
         const approved = await callbacks.requestApproval(tc.toolName, tc.args)
         if (!approved) {
           result = "User rejected this tool call."

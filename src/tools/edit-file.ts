@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "fs"
 import { resolve } from "path"
 import { createTwoFilesPatch } from "diff"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
+import { isSensitivePath } from "../core/sensitive-files"
 import type { ToolDefinition, ToolContext } from "../core/types"
 
 export const editFileTool: ToolDefinition = {
@@ -14,6 +15,8 @@ export const editFileTool: ToolDefinition = {
     newText: z.string().describe("Text to replace oldText with"),
   }),
   dangerous: true,
+  requiresApproval: (args, context: ToolContext) =>
+    isSensitivePath(args.path as string, context.sensitivePatterns),
   execute: async (args, context) => {
     const filePath = args.path as string
     const oldText = args.oldText as string

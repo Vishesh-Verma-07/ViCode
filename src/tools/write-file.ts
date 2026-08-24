@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, readFileSync } from "fs"
 import { resolve, dirname } from "path"
 import { createTwoFilesPatch } from "diff"
 import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
+import { isSensitivePath } from "../core/sensitive-files"
 import type { ToolDefinition, ToolContext } from "../core/types"
 
 export const writeFileTool: ToolDefinition = {
@@ -13,6 +14,8 @@ export const writeFileTool: ToolDefinition = {
     content: z.string().describe("Content to write to the file"),
   }),
   dangerous: true,
+  requiresApproval: (args, context: ToolContext) =>
+    isSensitivePath(args.path as string, context.sensitivePatterns),
   execute: async (args, context) => {
     const filePath = args.path as string
     const content = args.content as string

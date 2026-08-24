@@ -4,7 +4,8 @@
 |------|-----------|
 | **Agent Loop** | The core ReAct cycle: send messages to LLM → receive response → parse tool calls → execute tools → feed results back → repeat until no more tool calls. |
 | **Tool** | A function the LLM can invoke to interact with the filesystem or shell. Each tool has a name, description, Zod parameter schema, and execute function. |
-| **Dangerous Tool** | A tool that can modify state (write files, execute commands). Requires user approval before execution. |
+| **Dangerous Tool** | A tool that can modify state (write files, execute commands). Approval attaches to individual Tool Calls, not whole tools: normal project file edits run silently, calls targeting Sensitive Paths require user approval, and every `bash` call requires approval. |
+| **Sensitive Path** | A file path protected from unsupervised access — matched by default patterns (`.env*`, key material, credential stores, `.ssh/**`) plus user-configured patterns. Writes and edits pause for approval; reads are refused entirely; search results omit matches inside them. |
 | **Provider** | An LLM backend (e.g., OpenRouter) that the agent sends messages to and receives responses from. Abstracted behind a `Provider` interface. |
 | **Seam** | A boundary between modules where behavior can be swapped or mocked for testing. The four seams are: Provider, Tool, Config, and Session. |
 | **ReAct Loop** | Reasoning + Acting loop pattern. The LLM reasons about what to do, calls a tool, observes the result, and decides the next step. |

@@ -39,10 +39,12 @@ export interface ToolDefinition {
   parameters: z.ZodObject<z.ZodRawShape>
   execute: (args: Record<string, unknown>, context: ToolContext) => Promise<string>
   dangerous: boolean
+  requiresApproval?: (args: Record<string, unknown>, context: ToolContext) => boolean | Promise<boolean>
 }
 
 export interface ToolContext {
   projectPath: string
+  sensitivePatterns?: string[]
 }
 
 export interface Command {
