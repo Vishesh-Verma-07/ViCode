@@ -1988,3 +1988,36 @@ describe("Error surfacing", () => {
     }
   }, 15000)
 })
+
+describe("Chat input mouse-byte immunity", () => {
+  it("ignores X10-encoded mouse bytes while typing still works", async () => {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/x10-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    try {
+      const frameText = () =>
+        (instance.lastFrame() ?? "")
+          .replace(/\u001B\[[0-9;]*m/g, "")
+          .replace(/\s+/g, " ")
+      await until(() => frameText().includes("Type your message"))
+
+      instance.stdin.write("\u001B[M !!")
+      await new Promise((r) => setTimeout(r, 100))
+      expect(frameText()).not.toMatch(/!!/)
+
+      for (const char of "hello") {
+        instance.stdin.write(char)
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      expect(frameText()).toContain("hello")
+    } finally {
+      instance.unmount()
+    }
+  }, 15000)
+})

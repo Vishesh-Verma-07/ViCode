@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { parseWheelEvent, scrubMouseSequences, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
+import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
 
 describe("parseWheelEvent", () => {
   it("detects wheel-up (button 64 press)", () => {
@@ -29,20 +29,6 @@ describe("parseWheelEvent", () => {
     expect(parseWheelEvent("hello")).toBeNull()
     expect(parseWheelEvent("")).toBeNull()
     expect(parseWheelEvent("\r")).toBeNull()
-  })
-})
-
-describe("scrubMouseSequences", () => {
-  it("removes embedded wheel sequences", () => {
-    expect(scrubMouseSequences("hello <64;12;30M world")).toBe("hello  world")
-  })
-
-  it("removes multiple sequences", () => {
-    expect(scrubMouseSequences("<64;1;1M<65;2;2M<0;3;3Mx")).toBe("x")
-  })
-
-  it("leaves clean text untouched", () => {
-    expect(scrubMouseSequences("plain text")).toBe("plain text")
   })
 })
 

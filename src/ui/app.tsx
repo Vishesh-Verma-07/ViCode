@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
-import { TextInput, Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
-import { parseWheelEvent, scrubMouseSequences, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
+import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
+import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
@@ -149,11 +149,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const clampedSuggestionHighlight = Math.min(suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
 
   const handleInputChange = useCallback((value: string) => {
-    const cleaned = scrubMouseSequences(value)
-    if (cleaned !== value) {
-      setInputKey((prev) => prev + 1)
-    }
-    setInputValue(cleaned)
+    setInputValue(value)
     setSuggestionDismissed(false)
     setSuggestionHighlight(0)
   }, [])
@@ -768,15 +764,70 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
         </Box>
       )}
       <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
-        <TextInput
-          key={inputKey}
-          defaultValue={inputValue}
+        <ChatInput
+          value={inputValue}
           placeholder={isStreaming ? "Responding - /exit to quit" : "Type your message..."}
           isDisabled={inputDisabled}
-          onChange={onInputChange}
+          onChange={onInputChange ?? (() => {})}
         />
       </Box>
     </Box>
+  )
+}
+
+const MOUSE_SGR_INPUT = /^\[?<\d+;\d+;\d+[Mm]$/
+const X10_PAYLOAD_IGNORE_MS = 60
+
+function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string) => void }) {
+  const ignoreUntilRef = useRef(0)
+  const valueRef = useRef(value)
+
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
+
+  const commit = (next: string) => {
+    valueRef.current = next
+    onChange(next)
+  }
+
+  useInput((input, key) => {
+    if (isDisabled) return
+    if (
+      key.return ||
+      key.upArrow ||
+      key.downArrow ||
+      key.leftArrow ||
+      key.rightArrow ||
+      key.tab ||
+      key.escape ||
+      key.pageUp ||
+      key.pageDown ||
+      key.home ||
+      key.end
+    ) {
+      return
+    }
+    if (key.backspace || key.delete) {
+      if (valueRef.current.length > 0) commit(valueRef.current.slice(0, -1))
+      return
+    }
+    if (!input) return
+    if (input === "[M") {
+      ignoreUntilRef.current = Date.now() + X10_PAYLOAD_IGNORE_MS
+      return
+    }
+    if (Date.now() < ignoreUntilRef.current) return
+    if (MOUSE_SGR_INPUT.test(input)) return
+    if (/[\x00-\x1f\x7f]/.test(input)) return
+    commit(valueRef.current + input)
+  })
+
+  return (
+    <Text>
+      {value ? <Text>{value}</Text> : <Text color="gray">{placeholder}</Text>}
+      {!isDisabled && <Text inverse> </Text>}
+    </Text>
   )
 }
 

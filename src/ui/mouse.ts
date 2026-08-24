@@ -13,9 +13,3 @@ export function parseWheelEvent(input: string): WheelDirection | null {
   if (button === 65) return "down"
   return null
 }
-
-const MOUSE_JUNK = /\x1B?\[?<\d+;\d+;\d+[Mm]/g
-
-export function scrubMouseSequences(text: string): string {
-  return text.replace(MOUSE_JUNK, "")
-}
