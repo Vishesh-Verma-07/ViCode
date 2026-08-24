@@ -1367,4 +1367,142 @@ describe("App status bar indicator", () => {
       unmount()
     }
   }, 15000)
+
+  it("shows Waiting for approval while a dangerous tool pauses, resuming Working after approve", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        return "ran"
+      },
+      dangerous: true,
+    }
+    let step = 0
+    const approvalProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "bash" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "done now" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(approvalProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run ls")
+      await until(() => frameText().includes("Waiting for approval"))
+
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(frameText()).toContain("Waiting for approval")
+
+      stdin.write("y")
+
+      await until(() => frameText().includes("Working: bash"))
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("clears the waiting state and finishes the turn when the user rejects", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => "should not run",
+      dangerous: true,
+    }
+    let step = 0
+    const approvalProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "bash" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "bash", args: { command: "rm" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "moving on" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(approvalProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run rm")
+      await until(() => frameText().includes("Waiting for approval"))
+
+      stdin.write("n")
+
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      expect(frameText()).not.toContain("Waiting for approval")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("reaches Error after an approval pause when the resumed stream fails", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => "ran",
+      dangerous: true,
+    }
+    let step = 0
+    const approvalThenErrorProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "bash" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "error", error: new Error("stream blew up") }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(approvalThenErrorProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run ls then fail")
+      await until(() => frameText().includes("Waiting for approval"))
+
+      stdin.write("y")
+
+      await until(() => frameText().includes("✗ Error"))
+      expect(frameText()).not.toContain("Waiting for approval")
+      expect(frameText()).not.toContain("Done in")
+    } finally {
+      unmount()
+    }
+  }, 15000)
 })

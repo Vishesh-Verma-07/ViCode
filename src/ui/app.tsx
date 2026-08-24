@@ -51,6 +51,7 @@ export type TurnStatus =
   | { kind: "idle" }
   | { kind: "thinking" }
   | { kind: "working"; toolName: string }
+  | { kind: "waiting-approval" }
   | { kind: "done"; durationMs: number }
   | { kind: "error" }
 
@@ -281,6 +282,10 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       let hadError = false
       let turnFailed = false
       const pendingToolNames: string[] = []
+      const advanceToolStatus = () => {
+        const nextTool = pendingToolNames[0]
+        setTurnStatus(nextTool ? { kind: "working", toolName: nextTool } : { kind: "thinking" })
+      }
 
       const turn = (async () => {
         try {
@@ -299,10 +304,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               },
               onToolCallStart: (id, name) => {
                 pendingToolNames.push(name)
-                const executing = pendingToolNames[0]
-                if (executing) {
-                  setTurnStatus({ kind: "working", toolName: executing })
-                }
+                advanceToolStatus()
                 setToolCalls((prev) => [
                   ...prev,
                   { id, name, args: {} },
@@ -318,8 +320,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               },
               onToolResult: (id, _name, result) => {
                 pendingToolNames.shift()
-                const nextTool = pendingToolNames[0]
-                setTurnStatus(nextTool ? { kind: "working", toolName: nextTool } : { kind: "thinking" })
+                advanceToolStatus()
                 const { message, diff } = extractDiff(result)
                 setToolCalls((prev) =>
                   prev.map((tc) =>
@@ -342,7 +343,15 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               },
               requestApproval: (toolName, args) => {
                 return new Promise<boolean>((resolve) => {
-                  setPendingApproval({ toolName, args, resolve })
+                  setTurnStatus({ kind: "waiting-approval" })
+                  setPendingApproval({
+                    toolName,
+                    args,
+                    resolve: (approved) => {
+                      advanceToolStatus()
+                      resolve(approved)
+                    },
+                  })
                 })
               },
             },
@@ -789,6 +798,8 @@ export function StatusIndicator({ status }: { status: TurnStatus }) {
           <Spinner label={`Working: ${status.toolName}…`} />
         </ThemeProvider>
       )
+    case "waiting-approval":
+      return <Text color="gray">Waiting for approval</Text>
     case "done":
       return <Text color="green">✓ Done in {(status.durationMs / 1000).toFixed(1)}s</Text>
     case "error":
