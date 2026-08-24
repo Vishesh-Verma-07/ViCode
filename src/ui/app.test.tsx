@@ -1506,3 +1506,120 @@ describe("App status bar indicator", () => {
     }
   }, 15000)
 })
+
+describe("App chat scrolling", () => {
+  function setupScrolling(provider: Provider) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/scroll-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    function pressKey(sequence: string): void {
+      instance.stdin.write(sequence)
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    return { ...instance, typeAndSubmit, pressKey, frameText }
+  }
+
+  function bigStreamProvider(lines: number, chunkDelayMs = 0): Provider {
+    return {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        if (chunkDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, chunkDelayMs))
+        yield { type: "text-delta", text: "HEAD_MARKER\n" }
+        for (let i = 0; i < lines; i++) {
+          yield { type: "text-delta", text: `filler line ${i}\n` }
+          if (chunkDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, chunkDelayMs))
+        }
+        yield { type: "text-delta", text: "TAIL_MARKER" }
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+  }
+
+  it("auto-follows the stream so the latest output stays visible and the head is clipped", async () => {
+    const { lastFrame, typeAndSubmit, unmount } = setupScrolling(bigStreamProvider(300))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("write a lot")
+      await until(() => (lastFrame() ?? "").includes("TAIL_MARKER"), 20000)
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("TAIL_MARKER")
+      expect(frame).not.toContain("HEAD_MARKER")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("PageUp scrolls into history showing the hint, End returns to the live bottom", async () => {
+    const { lastFrame, frameText, typeAndSubmit, pressKey, unmount } = setupScrolling(bigStreamProvider(300))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("write a lot")
+      await until(() => (lastFrame() ?? "").includes("TAIL_MARKER"), 20000)
+      expect(frameText()).not.toContain("End to return")
+
+      let scrolledToTop = false
+      for (let i = 0; i < 60 && !scrolledToTop; i++) {
+        pressKey("\x1B[5~")
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        scrolledToTop = (lastFrame() ?? "").includes("HEAD_MARKER")
+      }
+      expect(scrolledToTop).toBe(true)
+
+      pressKey("\x1B[F")
+      await until(() => (lastFrame() ?? "").includes("TAIL_MARKER"))
+      expect(frameText()).not.toContain("End to return")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("pauses auto-follow while scrolled up during streaming", async () => {
+    const { lastFrame, frameText, typeAndSubmit, pressKey, unmount } = setupScrolling(bigStreamProvider(40, 150))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("slowly write a lot")
+
+      let paused = false
+      for (let i = 0; i < 80 && !paused; i++) {
+        pressKey("\x1B[5~")
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        paused = frameText().includes("End to return")
+      }
+      expect(paused).toBe(true)
+
+      await until(() => frameText().includes("✓ Done in"), 30000)
+      expect(frameText()).not.toContain("TAIL_MARKER")
+      expect(frameText()).toMatch(/filler line \d+/)
+      expect(frameText()).toContain("End to return")
+    } finally {
+      unmount()
+    }
+  }, 45000)
+})

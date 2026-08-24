@@ -480,6 +480,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       <Box flexDirection="row" flexGrow={1}>
         <ChatPanel
           width={chatWidth}
+          viewportHeight={Math.max(5, rows - CHAT_CHROME_LINES)}
+          scrollDisabled={pickerRequest !== null || pendingApproval !== null || showExitSummary}
           messages={messages}
           currentText={currentText}
           isStreaming={isStreaming}
@@ -522,6 +524,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
 
 interface ChatPanelProps {
   width: number
+  viewportHeight: number
+  scrollDisabled?: boolean
   messages: Message[]
   currentText: string
   isStreaming: boolean
@@ -533,7 +537,128 @@ interface ChatPanelProps {
   suggestion?: CommandSuggestionProps
 }
 
-function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
+const CHAT_CHROME_LINES = 7
+
+function estimateLines(text: string, usableWidth: number): number {
+  return text
+    .split("\n")
+    .reduce((n, seg) => n + Math.max(1, Math.ceil(seg.length / usableWidth)), 0)
+}
+
+function ChatPanel({ width, viewportHeight, scrollDisabled, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
+  const [bottomOffset, setBottomOffset] = useState(0)
+
+  useInput((_input, key) => {
+    if (scrollDisabled) return
+    if (key.pageUp) {
+      setBottomOffset((prev) => prev + viewportHeight)
+    } else if (key.pageDown) {
+      setBottomOffset((prev) => Math.max(0, prev - viewportHeight))
+    } else if (key.end) {
+      setBottomOffset(0)
+    }
+  })
+
+  const usableWidth = Math.max(10, width - 4)
+  const estimate = (text: string) => estimateLines(text, usableWidth)
+
+  type Block = { key: string; lines: number; node: React.ReactNode; text?: string }
+  const blocks: Block[] = []
+
+  const TEXT_CHUNK_LINES = 10
+
+  const addTextBlocks = (
+    keyBase: string,
+    text: string,
+    opts?: { prefix?: string; color?: "blue" | "green" },
+  ) => {
+    const prefix = opts?.prefix ?? ""
+    const full = prefix ? `${prefix}${text}` : text
+    const linesArr = full.split("\n")
+    for (let i = 0; i < linesArr.length; i += TEXT_CHUNK_LINES) {
+      const chunkText = linesArr.slice(i, i + TEXT_CHUNK_LINES).join("\n")
+      const key = `${keyBase}:${i}`
+      const isFirst = i === 0
+      const node =
+        isFirst && prefix ? (
+          <Text key={key}>
+            <Text color={opts?.color} bold>
+              {chunkText.slice(0, prefix.length)}
+            </Text>
+            {chunkText.slice(prefix.length)}
+          </Text>
+        ) : (
+          <Text key={key}>{chunkText}</Text>
+        )
+      blocks.push({ key, lines: estimate(chunkText), node, text: chunkText })
+    }
+  }
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      const text = msg.content
+        .filter((c) => c.type === "text")
+        .map((c) => (c.type === "text" ? c.text : ""))
+        .join("")
+      addTextBlocks(msg.id, text, { prefix: "You: ", color: "blue" })
+    } else if (msg.role === "assistant") {
+      const text = msg.content
+        .filter((c) => c.type === "text")
+        .map((c) => (c.type === "text" ? c.text : ""))
+        .join("")
+      if (!text) continue
+      addTextBlocks(msg.id, text, { prefix: "vicode: ", color: "green" })
+    }
+  }
+  for (const entry of feedbackEntries) {
+    blocks.push({
+      key: entry.id,
+      lines: estimate(entry.text) + 1,
+      node: <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />,
+      text: entry.text,
+    })
+  }
+  if (currentText) {
+    addTextBlocks("current-stream", currentText)
+  }
+
+  const totalLines = blocks.reduce((n, b) => n + b.lines, 0)
+  const maxScroll = Math.max(0, totalLines - viewportHeight + 1)
+  const offset = Math.min(bottomOffset, maxScroll)
+  const hintLines = offset > 0 ? 1 : 0
+
+  const sliceBlockText = (block: Block, count: number, mode: "head" | "tail"): React.ReactNode => {
+    if (block.text === undefined) return block.node
+    const linesArr = block.text.split("\n")
+    const sliced = mode === "head" ? linesArr.slice(0, count) : linesArr.slice(-count)
+    return <Text key={`${block.key}:slice`}>{sliced.join("\n")}</Text>
+  }
+
+  let skip = offset
+  let budget = viewportHeight - hintLines
+  const visibleNodes: React.ReactNode[] = []
+  for (let i = blocks.length - 1; i >= 0 && budget > 0; i--) {
+    const block = blocks[i]!
+    if (skip > 0) {
+      if (block.lines <= skip) {
+        skip -= block.lines
+        continue
+      }
+      const show = Math.min(block.lines - skip, budget)
+      visibleNodes.unshift(sliceBlockText(block, show, "head"))
+      budget -= show
+      skip = 0
+      continue
+    }
+    const fit = Math.min(block.lines, budget)
+    if (fit < block.lines) {
+      visibleNodes.unshift(sliceBlockText(block, fit, "tail"))
+    } else {
+      visibleNodes.unshift(block.node)
+    }
+    budget -= fit
+  }
+
   return (
     <Box
       width={width}
@@ -543,20 +668,15 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedback
       paddingX={1}
     >
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {messages.length === 0 && feedbackEntries.length === 0 && (
+        {blocks.length === 0 && (
           <Text color="gray" italic>
             Type a message to start chatting...
           </Text>
         )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-        {feedbackEntries.map((entry) => (
-          <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />
-        ))}
-        {isStreaming && currentText && (
-          <Text>{currentText}</Text>
+        {offset > 0 && (
+          <Text color="gray">↑ {offset} lines — End to return</Text>
         )}
+        {visibleNodes}
       </Box>
       {suggestion && (
         <Box paddingBottom={1}>
