@@ -1623,3 +1623,76 @@ describe("App chat scrolling", () => {
     }
   }, 45000)
 })
+
+describe("App mouse wheel scrolling", () => {
+  function setupWheel(provider: Provider) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/wheel-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    const anyFrameContaining = (needle: string) =>
+      instance.stdout.frames.some((f) => f.includes(needle))
+
+    return { ...instance, typeAndSubmit, frameText, anyFrameContaining }
+  }
+
+  it("enables mouse tracking on mount and disables it on unmount", async () => {
+    const { stdout, unmount } = setupWheel(createStubProvider([]))
+    try {
+      await until(() => stdout.frames.some((f) => f.includes("\u001B[?1000h")))
+    } finally {
+      unmount()
+    }
+    expect(stdout.frames.some((f) => f.includes("\u001B[?1000l"))).toBe(true)
+  })
+
+  it("scrolls history with wheel-up and returns with wheel-down without leaking junk into the input", async () => {
+    const provider = createStubProvider([], [
+      { type: "text-delta", text: Array.from({ length: 200 }, (_, i) => `wheel filler ${i}`).join("\n") },
+      { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ])
+    const { lastFrame, frameText, typeAndSubmit, stdin, anyFrameContaining, unmount } = setupWheel(provider)
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+
+      await typeAndSubmit("fill the screen")
+      await until(() => frameText().includes("✓ Done in"))
+
+      for (let i = 0; i < 25 && !frameText().includes("End to return"); i++) {
+        stdin.write("\u001B[<64;10;5M")
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(frameText()).toContain("End to return")
+
+      for (let i = 0; i < 40 && frameText().includes("End to return"); i++) {
+        stdin.write("\u001B[<65;10;5M")
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(frameText()).not.toContain("End to return")
+
+      expect(frameText()).not.toMatch(/<6[45];/)
+      expect(frameText()).not.toContain("<64")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+})

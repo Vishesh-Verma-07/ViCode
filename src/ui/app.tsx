@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
-import { Box, Text, useInput, useApp, useWindowSize } from "ink"
+import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
 import { TextInput, Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
+import { parseWheelEvent, scrubMouseSequences, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
@@ -114,6 +115,16 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const activeTurnRef = useRef<Promise<void> | null>(null)
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
+  const { stdout } = useStdout()
+  const [, resyncAfterMouseSetup] = useState(0)
+
+  useEffect(() => {
+    stdout.write(MOUSE_TRACKING_ENABLE)
+    resyncAfterMouseSetup((n) => n + 1)
+    return () => {
+      stdout.write(MOUSE_TRACKING_DISABLE)
+    }
+  }, [stdout])
 
   useEffect(() => {
     if (turnStatus.kind !== "done") return
@@ -147,7 +158,11 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const clampedSuggestionHighlight = Math.min(suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
 
   const handleInputChange = useCallback((value: string) => {
-    setInputValue(value)
+    const cleaned = scrubMouseSequences(value)
+    if (cleaned !== value) {
+      setInputKey((prev) => prev + 1)
+    }
+    setInputValue(cleaned)
     setSuggestionDismissed(false)
     setSuggestionHighlight(0)
   }, [])
@@ -488,6 +503,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           onSend={handleSend}
           feedbackEntries={feedbackEntries}
           inputKey={inputKey}
+          inputValue={inputValue}
           inputDisabled={pickerRequest !== null}
           onInputChange={handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
@@ -532,6 +548,7 @@ interface ChatPanelProps {
   onSend: (input: string) => void
   feedbackEntries: FeedbackEntry[]
   inputKey: number
+  inputValue: string
   inputDisabled?: boolean
   onInputChange?: (value: string) => void
   suggestion?: CommandSuggestionProps
@@ -545,12 +562,17 @@ function estimateLines(text: string, usableWidth: number): number {
     .reduce((n, seg) => n + Math.max(1, Math.ceil(seg.length / usableWidth)), 0)
 }
 
-function ChatPanel({ width, viewportHeight, scrollDisabled, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
+function ChatPanel({ width, viewportHeight, scrollDisabled, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
   useInput((_input, key) => {
     if (scrollDisabled) return
-    if (key.pageUp) {
+    const wheel = parseWheelEvent(_input)
+    if (wheel === "up") {
+      setBottomOffset((prev) => prev + 3)
+    } else if (wheel === "down") {
+      setBottomOffset((prev) => Math.max(0, prev - 3))
+    } else if (key.pageUp) {
       setBottomOffset((prev) => prev + viewportHeight)
     } else if (key.pageDown) {
       setBottomOffset((prev) => Math.max(0, prev - viewportHeight))
@@ -689,6 +711,7 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, messages, currentTex
       <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
         <TextInput
           key={inputKey}
+          defaultValue={inputValue}
           placeholder={isStreaming ? "Responding - /exit to quit" : "Type your message..."}
           isDisabled={inputDisabled}
           onChange={onInputChange}
