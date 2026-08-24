@@ -791,6 +791,10 @@ function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string
     onChange(next)
   }
 
+  const deleteWord = () => {
+    commit(valueRef.current.replace(/\s*\S+\s*$/, ""))
+  }
+
   useInput((input, key) => {
     if (isDisabled) return
     if (
@@ -806,6 +810,13 @@ function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string
       key.home ||
       key.end
     ) {
+      return
+    }
+    if (
+      (key.ctrl && (input === "w" || input === "\u0017")) ||
+      ((key.backspace || key.delete) && (key.ctrl || key.meta))
+    ) {
+      deleteWord()
       return
     }
     if (key.backspace || key.delete) {

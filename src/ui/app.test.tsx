@@ -2021,3 +2021,55 @@ describe("Chat input mouse-byte immunity", () => {
     }
   }, 15000)
 })
+
+describe("ChatInput word deletion", () => {
+  async function typedFrame(initialKeys: string[]): Promise<ReturnType<() => string>> {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/wdel-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    await until(() => frameText().includes("Type your message"))
+    for (const key of initialKeys) {
+      instance.stdin.write(key)
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    return { frameText, unmount: instance.unmount }
+  }
+
+  it("Ctrl+W deletes the previous word", async () => {
+    const { frameText, unmount } = await typedFrame([
+      ..."hello beautiful world",
+      "\u0017",
+    ])
+    try {
+      await until(() => frameText().includes("hello"))
+      expect(frameText()).not.toContain("world")
+      expect(frameText()).toContain("beautiful")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("Alt+Backspace deletes the previous word including trailing spaces", async () => {
+    const { frameText, unmount } = await typedFrame([
+      ..."foo bar   ",
+      "\u001B\u007F",
+    ])
+    try {
+      await until(() => frameText().includes("foo"))
+      expect(frameText()).toContain("foo")
+      expect(frameText()).not.toContain("bar")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
