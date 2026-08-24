@@ -1,8 +1,12 @@
-import { describe, it, expect } from "bun:test"
+import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { runAgentLoop, type AgentLoopCallbacks } from "./agent-loop"
 import type { Provider, StreamEvent } from "./provider"
 import type { Message, ToolDefinition, ToolContext } from "./types"
 import { z } from "zod"
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs"
+import { join } from "path"
+import { writeFileTool } from "../tools/write-file"
+import { bashTool } from "../tools/bash"
 
 function createMockProvider(events: StreamEvent[][]): Provider {
   let callIndex = 0
@@ -36,6 +40,17 @@ function createMockCallbacks(overrides?: Partial<AgentLoopCallbacks>): AgentLoop
 }
 
 const mockContext: ToolContext = { projectPath: "/tmp/test" }
+
+const realToolsDir = join(import.meta.dir, "__tmp_agent_loop_tools_test")
+
+beforeEach(() => {
+  if (existsSync(realToolsDir)) rmSync(realToolsDir, { recursive: true })
+  mkdirSync(realToolsDir, { recursive: true })
+})
+
+afterEach(() => {
+  if (existsSync(realToolsDir)) rmSync(realToolsDir, { recursive: true })
+})
 
 function userMessage(text: string): Message {
   return {
@@ -594,6 +609,65 @@ describe("agent-loop", () => {
         createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
       )
       expect(approvals).toEqual(["touch"])
+    })
+  })
+
+  describe("real tools through the loop", () => {
+    function toolCallProvider(toolName: string, args: Record<string, unknown>): Provider {
+      return createMockProvider([
+        [
+          { type: "tool-call-start", toolCallId: "c1", toolName },
+          { type: "tool-call-end", toolCallId: "c1", toolName, args },
+          { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+        ],
+      ])
+    }
+
+    it("executes a normal write_file silently with no approval", async () => {
+      const approvals: string[] = []
+      await runAgentLoop(
+        [userMessage("write")],
+        toolCallProvider("write_file", { path: "notes.txt", content: "hello" }),
+        [writeFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
+      )
+      expect(approvals).toEqual([])
+      expect(readFileSync(join(realToolsDir, "notes.txt"), "utf-8")).toBe("hello")
+    })
+
+    it("pauses for approval on a .env write and rejection leaves the file untouched", async () => {
+      writeFileSync(join(realToolsDir, ".env"), "ORIGINAL=1")
+      const approvals: string[] = []
+      const result = await runAgentLoop(
+        [userMessage("write env")],
+        toolCallProvider("write_file", { path: ".env", content: "HACKED=1" }),
+        [writeFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return false } }),
+      )
+      expect(approvals).toEqual(["write_file"])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toBe("User rejected this tool call.")
+      expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toBe("ORIGINAL=1")
+    })
+
+    it("always asks for approval before bash runs", async () => {
+      const approvals: string[] = []
+      await runAgentLoop(
+        [userMessage("run")],
+        toolCallProvider("bash", { command: "echo hi" }),
+        [bashTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({
+          requestApproval: async (name) => { approvals.push(name); return true },
+          onTextDelta: () => {},
+        }),
+      )
+      expect(approvals).toEqual(["bash"])
     })
   })
 })

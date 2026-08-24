@@ -1,3 +1,5 @@
+import { resolve, relative } from "path"
+
 export const DEFAULT_SENSITIVE_PATTERNS = [
   ".env",
   ".env.*",
@@ -41,17 +43,23 @@ function compilePattern(glob: string): RegExp {
 
 export function isSensitivePath(relativePath: string, extraPatterns: string[] = []): boolean {
   const normalized = relativePath.replace(/\\/g, "/")
-  const baseName = normalized.split("/").pop() ?? normalized
   const patterns = [...DEFAULT_SENSITIVE_PATTERNS, ...extraPatterns]
 
   for (const glob of patterns) {
-    const regex = compilePattern(glob)
-    if (glob.includes("/")) {
-      if (regex.test(normalized)) return true
-    } else if (regex.test(baseName) || regex.test(normalized)) {
-      return true
-    }
+    if (compilePattern(glob).test(normalized)) return true
   }
 
   return false
+}
+
+export function pathRequiresApproval(
+  args: Record<string, unknown>,
+  context: { projectPath: string; sensitivePatterns?: string[] },
+): boolean {
+  const declared = args.path as string | undefined
+  if (!declared) return true
+  const absPath = resolve(context.projectPath, declared)
+  if (!absPath.startsWith(context.projectPath)) return false
+  const relPath = relative(context.projectPath, absPath)
+  return isSensitivePath(relPath, context.sensitivePatterns)
 }

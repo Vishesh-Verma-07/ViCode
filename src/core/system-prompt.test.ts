@@ -33,9 +33,12 @@ describe("assembleSystemPrompt", () => {
 
   it("documents the permission behavior in the base prompt", () => {
     const result = assembleSystemPrompt({ projectPath: tmpDir })
-    expect(result.toLowerCase()).toContain("without asking")
-    expect(result.toLowerCase()).toContain("approval")
-    expect(result.toLowerCase()).toContain("sensitive")
+    const lower = result.toLowerCase()
+    expect(lower).toContain("without asking")
+    expect(lower).toContain("approval")
+    expect(lower).toContain("sensitive")
+    expect(lower).toContain("cannot read")
+    expect(lower).toContain("every bash command requires")
   })
 
   it("appends project prompt from .vicode/system.md", () => {
