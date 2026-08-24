@@ -1501,6 +1501,114 @@ describe("App status bar indicator", () => {
       unmount()
     }
   }, 15000)
+
+  function makeSequentialToolProvider(
+    toolName: string,
+    args: Record<string, unknown>,
+    callsPerTurn: number,
+  ): Provider {
+    let callsMade = 0
+    return {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(messages) {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        const isTurnStart = messages[messages.length - 1]?.role === "user"
+        if (isTurnStart && callsMade < callsPerTurn) {
+          callsMade++
+          yield { type: "tool-call-start", toolCallId: `call_${callsMade}`, toolName }
+          yield { type: "tool-call-end", toolCallId: `call_${callsMade}`, toolName, args }
+        }
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+  }
+
+  it("auto-approves subsequent writes to the same file after one approval in a session", async () => {
+    const writeFileTool: ToolDefinition = {
+      name: "write_file",
+      description: "Write file",
+      parameters: z.object({ path: z.string(), content: z.string() }),
+      execute: async () => "written",
+      dangerous: true,
+    }
+    const twoWritesProvider = makeSequentialToolProvider("write_file", { path: ".env", content: "v" }, 3)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(twoWritesProvider, [writeFileTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first write")
+      await until(() => frameText().includes("Waiting for approval"))
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+
+      await typeAndSubmit("second write")
+      let sawApproval = false
+      await until(() => {
+        if (frameText().includes("Waiting for approval")) sawApproval = true
+        return /Done in [0-9]+\.[0-9]s/.test(frameText())
+      }, 8000)
+      expect(sawApproval).toBe(false)
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("asks again when the previous write to that file was rejected", async () => {
+    const writeFileTool: ToolDefinition = {
+      name: "write_file",
+      description: "Write file",
+      parameters: z.object({ path: z.string(), content: z.string() }),
+      execute: async () => "written",
+      dangerous: true,
+    }
+    const twoWritesProvider = makeSequentialToolProvider("write_file", { path: ".env", content: "v" }, 3)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(twoWritesProvider, [writeFileTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first write")
+      await until(() => frameText().includes("Waiting for approval"))
+      stdin.write("n")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+
+      await typeAndSubmit("second write")
+      await until(() => frameText().includes("Waiting for approval"), 8000)
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("does not extend the once-approved treatment to bash", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => "ran",
+      dangerous: true,
+    }
+    const twoRunsProvider = makeSequentialToolProvider("bash", { command: "echo hi" }, 3)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(twoRunsProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first run")
+      await until(() => frameText().includes("Waiting for approval"))
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+
+      await typeAndSubmit("second run")
+      await until(() => frameText().includes("Waiting for approval"), 8000)
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 20000)
 })
 
 describe("App chat scrolling", () => {
@@ -2023,7 +2131,7 @@ describe("Chat input mouse-byte immunity", () => {
 })
 
 describe("ChatInput word deletion", () => {
-  async function typedFrame(initialKeys: string[]): Promise<ReturnType<() => string>> {
+  async function typedFrame(initialKeys: string[]): Promise<{ frameText: () => string; unmount: () => void }> {
     const instance = render(
       <App
         provider={createStubProvider([])}

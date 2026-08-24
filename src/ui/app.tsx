@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
+import { resolve } from "path"
 import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
 import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
@@ -104,6 +105,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const [activeSkills, setActiveSkills] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
+  const approvedPathsRef = useRef<Set<string>>(new Set())
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
   const { stdout } = useStdout()
@@ -215,6 +217,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               dir: sessionsDir,
               getActiveSession: () => session,
               switchTo: (loaded) => {
+                approvedPathsRef.current.clear()
                 setSession(loaded)
                 setMessages(loaded.messages)
                 setUsage({
@@ -225,6 +228,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 })
               },
               startFresh: () => {
+                approvedPathsRef.current.clear()
                 setSession(null)
                 setMessages([])
                 setToolCalls([])
@@ -342,14 +346,24 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 console.error("Agent error:", error)
               },
               requestApproval: (toolName, args) => {
-                return new Promise<boolean>((resolve) => {
+                const approvalKey =
+                  toolName === "write_file" || toolName === "edit_file"
+                    ? resolve(context.projectPath, String(args.path ?? ""))
+                    : null
+                if (approvalKey && approvedPathsRef.current.has(approvalKey)) {
+                  return Promise.resolve(true)
+                }
+                return new Promise<boolean>((resolveApproval) => {
                   setTurnStatus({ kind: "waiting-approval" })
                   setPendingApproval({
                     toolName,
                     args,
                     resolve: (approved) => {
+                      if (approved && approvalKey) {
+                        approvedPathsRef.current.add(approvalKey)
+                      }
                       advanceToolStatus()
-                      resolve(approved)
+                      resolveApproval(approved)
                     },
                   })
                 })
