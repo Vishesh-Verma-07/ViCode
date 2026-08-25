@@ -136,3 +136,49 @@ describe("missing config files", () => {
     expect(result).toBeDefined()
   })
 })
+
+describe("sensitiveFiles config", () => {
+  function makeHomeDir(): string {
+    const homeDir = join(tmpDir, "home")
+    mkdirSync(homeDir, { recursive: true })
+    return homeDir
+  }
+
+  it("accepts sensitiveFiles in project config", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ sensitiveFiles: ["service-account.json", "secrets/**"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.sensitiveFiles).toEqual(["service-account.json", "secrets/**"])
+  })
+
+  it("merges global and project sensitiveFiles instead of overriding", () => {
+    const homeDir = makeHomeDir()
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ sensitiveFiles: ["global-secret.txt"] }),
+    )
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ sensitiveFiles: ["project-secret.txt"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
+    expect(result.sensitiveFiles).toEqual(["global-secret.txt", "project-secret.txt"])
+  })
+
+  it("falls back to global patterns when project has none", () => {
+    const homeDir = makeHomeDir()
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ sensitiveFiles: ["global-secret.txt"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
+    expect(result.sensitiveFiles).toEqual(["global-secret.txt"])
+  })
+
+  it("is absent when no config declares it", () => {
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.sensitiveFiles).toBeUndefined()
+  })
+})

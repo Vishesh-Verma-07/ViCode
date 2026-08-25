@@ -71,4 +71,20 @@ describe("search tool", () => {
     const result = await searchTool.execute({ query: "[invalid" }, ctx)
     expect(result).toContain("Error")
   })
+
+  it("excludes matches from sensitive files", async () => {
+    writeFileSync(join(tmpDir, "app.ts"), "const token = 'a'")
+    writeFileSync(join(tmpDir, ".env"), "SECRET_TOKEN=abc")
+    const result = await searchTool.execute({ query: "token" }, ctx)
+    expect(result).toContain("app.ts")
+    expect(result).not.toContain(".env")
+    expect(result).not.toContain("abc")
+  })
+
+  it("excludes nested sensitive files from results", async () => {
+    mkdirSync(join(tmpDir, ".ssh"), { recursive: true })
+    writeFileSync(join(tmpDir, ".ssh", "config"), "HOST known")
+    const result = await searchTool.execute({ query: "HOST" }, ctx)
+    expect(result).not.toContain(".ssh")
+  })
 })

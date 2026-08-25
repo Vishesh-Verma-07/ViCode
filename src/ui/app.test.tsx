@@ -287,7 +287,7 @@ describe("App command suggestion dropdown", () => {
 
       const hintIndex = frame.indexOf("Type a message to start chatting")
       const dropdownLineIndex = frame.indexOf("> /help")
-      const statusBarIndex = frame.indexOf("Tokens:")
+      const statusBarIndex = frame.indexOf("Tokens: 0 | Cost:")
       expect(hintIndex).toBeGreaterThanOrEqual(0)
       expect(dropdownLineIndex).toBeGreaterThan(hintIndex)
       expect(dropdownLineIndex).toBeLessThan(statusBarIndex)
@@ -878,13 +878,9 @@ describe("App /new command", () => {
       const frameAfterNew = lastFrame() ?? ""
       expect(frameAfterNew).not.toContain("hello seed conversation")
       expect(frameAfterNew).not.toContain("turn one question")
-      expect(frameAfterNew).toContain("No diffs yet")
       expect(frameAfterNew).toContain("Tokens: 0")
       expect(frameAfterNew).toContain("$0.00")
       expect(existsSync(join(sessionsDir, "sess_seed_one.json"))).toBe(true)
-
-      pressKey("\t")
-      await until(() => (lastFrame() ?? "").includes("No tool calls yet"))
 
       const resumable = loadSession("sess_seed_one", sessionsDir)
       expect(resumable).not.toBeNull()
@@ -1119,4 +1115,1069 @@ describe("App streaming guard for commands", () => {
       unmount()
     }
   }, 30000)
+})
+
+describe("App status bar indicator", () => {
+  function normalizeFrame(lastFrame: () => string | undefined): () => string {
+    return () =>
+      (lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+  }
+
+  function setupWithProvider(provider: Provider, tools: ToolDefinition[] = []) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={tools}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/status-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { ...instance, frameText: normalizeFrame(instance.lastFrame), typeAndSubmit }
+  }
+
+  it("shows Ready when idle", async () => {
+    const { lastFrame, unmount } = setupWithProvider(createStubProvider([]))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+      expect((lastFrame() ?? "")).toContain("Ready")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("shows Thinking while streaming, then Done with duration, then reverts to Ready after three seconds", async () => {
+    const delayedProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        yield { type: "text-delta", text: "hello" }
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(delayedProvider)
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first question")
+      await until(() => frameText().includes("Thinking"))
+
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      expect(frameText()).not.toContain("Thinking")
+
+      await until(() => frameText().includes("Ready") && !frameText().includes("Done in"), 6000)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("shows a persistent Error when the stream fails, cleared by the next send", async () => {
+    let calls = 0
+    const failingThenWorkingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(messages) {
+        calls++
+        if (calls === 1) {
+          throw new Error("boom")
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        for (const event of [
+          { type: "text-delta" as const, text: "recovered" },
+          { type: "finish" as const, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+        ]) {
+          yield event
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(failingThenWorkingProvider)
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("break it")
+      await until(() => frameText().includes("Error"))
+
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(frameText()).toContain("Error")
+
+      await typeAndSubmit("fix it")
+      await until(() => frameText().includes("Thinking"))
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      expect(frameText()).not.toContain("✗ Error")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("reverts straight to Ready when Esc aborts a turn mid-stream", async () => {
+    const hangingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, _tools, _systemPrompt, abortSignal) {
+        yield { type: "text-delta", text: "partial reply" }
+        await new Promise<void>((resolve) => {
+          if (abortSignal?.aborted) {
+            resolve()
+            return
+          }
+          abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+        })
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(hangingProvider)
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("slow question")
+      await until(() => frameText().includes("Thinking"))
+
+      stdin.write("\x1B")
+
+      await until(() => frameText().includes("Ready"), 5000)
+      expect(frameText()).not.toContain("Done in")
+      expect(frameText()).not.toContain("Error")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("shows Working with the tool name while a tool executes, then Thinking when the model resumes", async () => {
+    const echoTool: ToolDefinition = {
+      name: "echo",
+      description: "Echo input",
+      parameters: z.object({ input: z.string() }),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        return "echoed"
+      },
+      dangerous: false,
+    }
+    let step = 0
+    const toolCallingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "calling tool" }
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "echo" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "echo", args: { input: "hi" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "all done" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(toolCallingProvider, [echoTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("use the tool")
+      await until(() => frameText().includes("Thinking"))
+      await until(() => frameText().includes("Working: echo"))
+
+      await until(() => frameText().includes("Thinking") && !frameText().includes("Working"))
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("shows each sequential tool call under its own name", async () => {
+    const alphaTool: ToolDefinition = {
+      name: "alpha",
+      description: "Alpha",
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        return "alpha result"
+      },
+      dangerous: false,
+    }
+    const betaTool: ToolDefinition = {
+      name: "beta",
+      description: "Beta",
+      parameters: z.object({}),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        return "beta result"
+      },
+      dangerous: false,
+    }
+    let step = 0
+    const twoToolProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "alpha" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "alpha", args: {} }
+          yield { type: "tool-call-start", toolCallId: "call_2", toolName: "beta" }
+          yield { type: "tool-call-end", toolCallId: "call_2", toolName: "beta", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupWithProvider(twoToolProvider, [alphaTool, betaTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run both")
+      await until(() => frameText().includes("Working: alpha"))
+
+      await until(() => frameText().includes("Working: beta"))
+
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("shows Waiting for approval while a dangerous tool pauses, resuming Working after approve", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+        return "ran"
+      },
+      dangerous: true,
+    }
+    let step = 0
+    const approvalProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "bash" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "done now" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(approvalProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run ls")
+      await until(() => frameText().includes("Waiting for approval"))
+
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(frameText()).toContain("Waiting for approval")
+
+      stdin.write("y")
+
+      await until(() => frameText().includes("Working: bash"))
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("clears the waiting state and finishes the turn when the user rejects", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => "should not run",
+      dangerous: true,
+    }
+    let step = 0
+    const approvalProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "bash" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "bash", args: { command: "rm" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "text-delta", text: "moving on" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(approvalProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run rm")
+      await until(() => frameText().includes("Waiting for approval"))
+
+      stdin.write("n")
+
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      expect(frameText()).not.toContain("Waiting for approval")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("reaches Error after an approval pause when the resumed stream fails", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => "ran",
+      dangerous: true,
+    }
+    let step = 0
+    const approvalThenErrorProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "tool-call-start", toolCallId: "call_1", toolName: "bash" }
+          yield { type: "tool-call-end", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          yield { type: "error", error: new Error("stream blew up") }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(approvalThenErrorProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run ls then fail")
+      await until(() => frameText().includes("Waiting for approval"))
+
+      stdin.write("y")
+
+      await until(() => frameText().includes("✗ Error"))
+      expect(frameText()).not.toContain("Waiting for approval")
+      expect(frameText()).not.toContain("Done in")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  function makeSequentialToolProvider(
+    toolName: string,
+    args: Record<string, unknown>,
+    callsPerTurn: number,
+  ): Provider {
+    let callsMade = 0
+    return {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(messages) {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        const isTurnStart = messages[messages.length - 1]?.role === "user"
+        if (isTurnStart && callsMade < callsPerTurn) {
+          callsMade++
+          yield { type: "tool-call-start", toolCallId: `call_${callsMade}`, toolName }
+          yield { type: "tool-call-end", toolCallId: `call_${callsMade}`, toolName, args }
+        }
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+  }
+
+  it("auto-approves subsequent writes to the same file after one approval in a session", async () => {
+    const writeFileTool: ToolDefinition = {
+      name: "write_file",
+      description: "Write file",
+      parameters: z.object({ path: z.string(), content: z.string() }),
+      execute: async () => "written",
+      dangerous: true,
+    }
+    const twoWritesProvider = makeSequentialToolProvider("write_file", { path: ".env", content: "v" }, 3)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(twoWritesProvider, [writeFileTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first write")
+      await until(() => frameText().includes("Waiting for approval"))
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+
+      await typeAndSubmit("second write")
+      let sawApproval = false
+      await until(() => {
+        if (frameText().includes("Waiting for approval")) sawApproval = true
+        return /Done in [0-9]+\.[0-9]s/.test(frameText())
+      }, 8000)
+      expect(sawApproval).toBe(false)
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("asks again when the previous write to that file was rejected", async () => {
+    const writeFileTool: ToolDefinition = {
+      name: "write_file",
+      description: "Write file",
+      parameters: z.object({ path: z.string(), content: z.string() }),
+      execute: async () => "written",
+      dangerous: true,
+    }
+    const twoWritesProvider = makeSequentialToolProvider("write_file", { path: ".env", content: "v" }, 3)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(twoWritesProvider, [writeFileTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first write")
+      await until(() => frameText().includes("Waiting for approval"))
+      stdin.write("n")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+
+      await typeAndSubmit("second write")
+      await until(() => frameText().includes("Waiting for approval"), 8000)
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("does not extend the once-approved treatment to bash", async () => {
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => "ran",
+      dangerous: true,
+    }
+    const twoRunsProvider = makeSequentialToolProvider("bash", { command: "echo hi" }, 3)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(twoRunsProvider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("first run")
+      await until(() => frameText().includes("Waiting for approval"))
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+
+      await typeAndSubmit("second run")
+      await until(() => frameText().includes("Waiting for approval"), 8000)
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+    } finally {
+      unmount()
+    }
+  }, 20000)
+})
+
+describe("App chat scrolling", () => {
+  function setupScrolling(provider: Provider) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/scroll-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    function pressKey(sequence: string): void {
+      instance.stdin.write(sequence)
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    return { ...instance, typeAndSubmit, pressKey, frameText }
+  }
+
+  function bigStreamProvider(lines: number, chunkDelayMs = 0): Provider {
+    return {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        if (chunkDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, chunkDelayMs))
+        yield { type: "text-delta", text: "HEAD_MARKER\n" }
+        for (let i = 0; i < lines; i++) {
+          yield { type: "text-delta", text: `filler line ${i}\n` }
+          if (chunkDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, chunkDelayMs))
+        }
+        yield { type: "text-delta", text: "TAIL_MARKER" }
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+  }
+
+  it("auto-follows the stream so the latest output stays visible and the head is clipped", async () => {
+    const { lastFrame, typeAndSubmit, unmount } = setupScrolling(bigStreamProvider(300))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("write a lot")
+      await until(() => (lastFrame() ?? "").includes("TAIL_MARKER"), 20000)
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("TAIL_MARKER")
+      expect(frame).not.toContain("HEAD_MARKER")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("PageUp scrolls into history showing the hint, End returns to the live bottom", async () => {
+    const { lastFrame, frameText, typeAndSubmit, pressKey, unmount } = setupScrolling(bigStreamProvider(300))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("write a lot")
+      await until(() => (lastFrame() ?? "").includes("TAIL_MARKER"), 20000)
+      expect(frameText()).not.toContain("End to return")
+
+      let scrolledToTop = false
+      for (let i = 0; i < 60 && !scrolledToTop; i++) {
+        pressKey("\x1B[5~")
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        scrolledToTop = (lastFrame() ?? "").includes("HEAD_MARKER")
+      }
+      expect(scrolledToTop).toBe(true)
+
+      pressKey("\x1B[F")
+      await until(() => (lastFrame() ?? "").includes("TAIL_MARKER"))
+      expect(frameText()).not.toContain("End to return")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("pauses auto-follow while scrolled up during streaming", async () => {
+    const { lastFrame, frameText, typeAndSubmit, pressKey, unmount } = setupScrolling(bigStreamProvider(40, 150))
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("slowly write a lot")
+
+      let paused = false
+      for (let i = 0; i < 80 && !paused; i++) {
+        pressKey("\x1B[5~")
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        paused = frameText().includes("End to return")
+      }
+      expect(paused).toBe(true)
+
+      await until(() => frameText().includes("✓ Done in"), 30000)
+      expect(frameText()).not.toContain("TAIL_MARKER")
+      expect(frameText()).toMatch(/filler line \d+/)
+      expect(frameText()).toContain("End to return")
+    } finally {
+      unmount()
+    }
+  }, 45000)
+})
+
+describe("App mouse wheel scrolling", () => {
+  function setupWheel(provider: Provider) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/wheel-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    const anyFrameContaining = (needle: string) =>
+      instance.stdout.frames.some((f) => f.includes(needle))
+
+    return { ...instance, typeAndSubmit, frameText, anyFrameContaining }
+  }
+
+  it("enables mouse tracking on mount and disables it on unmount", async () => {
+    const { stdout, unmount } = setupWheel(createStubProvider([]))
+    try {
+      await until(() => stdout.frames.some((f) => f.includes("\u001B[?1000h")))
+    } finally {
+      unmount()
+    }
+    expect(stdout.frames.some((f) => f.includes("\u001B[?1000l"))).toBe(true)
+  })
+
+  it("scrolls history with wheel-up and returns with wheel-down without leaking junk into the input", async () => {
+    const provider = createStubProvider([], [
+      { type: "text-delta", text: Array.from({ length: 200 }, (_, i) => `wheel filler ${i}`).join("\n") },
+      { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ])
+    const { lastFrame, frameText, typeAndSubmit, stdin, anyFrameContaining, unmount } = setupWheel(provider)
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+
+      await typeAndSubmit("fill the screen")
+      await until(() => frameText().includes("✓ Done in"))
+
+      for (let i = 0; i < 25 && !frameText().includes("End to return"); i++) {
+        stdin.write("\u001B[<64;10;5M")
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(frameText()).toContain("End to return")
+
+      for (let i = 0; i < 40 && frameText().includes("End to return"); i++) {
+        stdin.write("\u001B[<65;10;5M")
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(frameText()).not.toContain("End to return")
+
+      expect(frameText()).not.toMatch(/<6[45];/)
+      expect(frameText()).not.toContain("<64")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+})
+
+describe("Inline tool bubbles in chat", () => {
+  function setupTools(provider: Provider, tools: ToolDefinition[]) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={tools}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/bubble-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    return { ...instance, typeAndSubmit, frameText }
+  }
+
+  const echoTool: ToolDefinition = {
+    name: "echo",
+    description: "Echo",
+    parameters: z.object({}),
+    execute: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return "echoed"
+    },
+    dangerous: false,
+  }
+
+  it("shows a dim running line while a tool executes, then the completed bubble with summary", async () => {
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 150))
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "echo" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [echoTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("use echo")
+      await until(() => frameText().includes("⚙ echo…"), 5000)
+
+      await until(() => /⚙ echo\b/.test(frameText()) && !frameText().includes("⚙ echo…"), 5000)
+      expect(frameText()).toContain("echoed")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("renders past tool activity from persisted history after the turn", async () => {
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "echo" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "text-delta", text: "all finished" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [echoTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("use echo")
+      await until(() => frameText().includes("all finished"), 10000)
+
+      expect(frameText()).toContain("⚙ echo")
+      expect(frameText()).toContain("echoed")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("truncates long results to three lines with an overflow marker", async () => {
+    const longTool: ToolDefinition = {
+      name: "spew",
+      description: "Spew lines",
+      parameters: z.object({}),
+      execute: async () => Array.from({ length: 10 }, (_, i) => `out ${i}`).join("\n"),
+      dangerous: false,
+    }
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "spew" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "spew", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [longTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("spew")
+      await until(() => frameText().includes("out 2"), 10000)
+
+      expect(frameText()).toContain("out 2")
+      expect(frameText()).toContain("more lines")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("renders diffs inline when the result contains diff markers", async () => {
+    const DIFF_START = "__DIFF_START__"
+    const DIFF_END = "__DIFF_END__"
+    const editTool: ToolDefinition = {
+      name: "edit-file",
+      description: "Edit",
+      parameters: z.object({}),
+      execute: async () =>
+        `Edited.\n${DIFF_START}\n--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-old line\n+new line\n${DIFF_END}`,
+      dangerous: false,
+    }
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        if (step === 1) {
+          yield { type: "tool-call-start", toolCallId: "c1", toolName: "edit-file" }
+          yield { type: "tool-call-end", toolCallId: "c1", toolName: "edit-file", args: {} }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        } else {
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        }
+      },
+    }
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupTools(provider, [editTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("edit it")
+      await until(() => frameText().includes("+new line"), 10000)
+
+      expect(frameText()).toContain("-old line")
+      expect(frameText()).toContain("@@ -1 +1 @@")
+    } finally {
+      unmount()
+    }
+  }, 20000)
+})
+
+describe("Usage panel", () => {
+  function setupUsage(provider: Provider) {
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/usage-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+
+    const anyFrameContaining = (needle: string) =>
+      instance.stdout.frames.some((f) => f.includes(needle))
+
+    return { ...instance, typeAndSubmit, frameText, anyFrameContaining }
+  }
+
+  it("shows model, token breakdown, cost and turn count, with no Tools/Diffs tabs", async () => {
+    let step = 0
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() { return [] },
+      async *streamChat() {
+        step++
+        yield { type: "text-delta", text: `reply ${step}` }
+        yield { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0.01 } }
+      },
+    }
+    const { frameText, typeAndSubmit, anyFrameContaining, unmount } = setupUsage(provider)
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+
+      expect(frameText()).not.toContain("Tools | Diffs")
+
+      await typeAndSubmit("first")
+      await until(() => frameText().includes("reply 1"), 10000)
+      await typeAndSubmit("second")
+      await until(() => frameText().includes("reply 2"), 10000)
+
+      const usageSection = frameText().split("Usage")[1] ?? ""
+      expect(frameText()).toContain("Usage")
+      expect(usageSection).toContain("stub-model")
+      expect(usageSection).toContain("Tokens: 30")
+      expect(usageSection).toContain("In: 20 / Out: 10")
+      expect(usageSection).toContain("$0.02")
+      expect(usageSection).toContain("Turns: 2")
+      expect(frameText()).not.toContain("No tool calls yet")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("ignores the Tab key entirely", async () => {
+    const { frameText, stdin, anyFrameContaining, unmount } = setupUsage(createStubProvider([]))
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+      stdin.write("\t")
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(frameText()).not.toContain("Diffs")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
+
+describe("Error surfacing", () => {
+  it("shows the API error message as chat feedback alongside the error status", async () => {
+    const failingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        yield { type: "error", error: new Error("Rate limit exceeded: free-models-per-day") }
+      },
+    }
+    const instance = render(
+      <App
+        provider={failingProvider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/err-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    try {
+      const frameText = () =>
+        (instance.lastFrame() ?? "")
+          .replace(/\u001B\[[0-9;]*m/g, "")
+          .replace(/\s+/g, " ")
+      await until(() => frameText().includes("Type your message"))
+      instance.stdin.write("h")
+      await new Promise((r) => setTimeout(r, 10))
+      instance.stdin.write("\r")
+
+      await until(() => frameText().includes("✗ Error"))
+      expect(frameText()).toContain("Rate limit exceeded")
+    } finally {
+      instance.unmount()
+    }
+  }, 15000)
+})
+
+describe("Chat input mouse-byte immunity", () => {
+  it("ignores X10-encoded mouse bytes while typing still works", async () => {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/x10-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    try {
+      const frameText = () =>
+        (instance.lastFrame() ?? "")
+          .replace(/\u001B\[[0-9;]*m/g, "")
+          .replace(/\s+/g, " ")
+      await until(() => frameText().includes("Type your message"))
+
+      instance.stdin.write("\u001B[M !!")
+      await new Promise((r) => setTimeout(r, 100))
+      expect(frameText()).not.toMatch(/!!/)
+
+      for (const char of "hello") {
+        instance.stdin.write(char)
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      expect(frameText()).toContain("hello")
+    } finally {
+      instance.unmount()
+    }
+  }, 15000)
+})
+
+describe("ChatInput word deletion", () => {
+  async function typedFrame(initialKeys: string[]): Promise<{ frameText: () => string; unmount: () => void }> {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/wdel-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    await until(() => frameText().includes("Type your message"))
+    for (const key of initialKeys) {
+      instance.stdin.write(key)
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    return { frameText, unmount: instance.unmount }
+  }
+
+  it("Ctrl+W deletes the previous word", async () => {
+    const { frameText, unmount } = await typedFrame([
+      ..."hello beautiful world",
+      "\u0017",
+    ])
+    try {
+      await until(() => frameText().includes("hello"))
+      expect(frameText()).not.toContain("world")
+      expect(frameText()).toContain("beautiful")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("Alt+Backspace deletes the previous word including trailing spaces", async () => {
+    const { frameText, unmount } = await typedFrame([
+      ..."foo bar   ",
+      "\u001B\u007F",
+    ])
+    try {
+      await until(() => frameText().includes("foo"))
+      expect(frameText()).toContain("foo")
+      expect(frameText()).not.toContain("bar")
+    } finally {
+      unmount()
+    }
+  }, 15000)
 })

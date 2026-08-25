@@ -22,6 +22,12 @@ You have access to the following tools:
 - When editing, preserve existing indentation and formatting.
 - Prefer edit_file over write_file for changes to existing files.
 
+## Permissions
+
+- File edits to normal project files are applied immediately, without asking for confirmation.
+- Sensitive files (like .env files, private keys, and credential stores) are protected: you cannot read them, and writing or editing them requires explicit user approval.
+- Every bash command requires the user's approval before it runs.
+
 ## Safety
 
 - Always read a file before writing to it.

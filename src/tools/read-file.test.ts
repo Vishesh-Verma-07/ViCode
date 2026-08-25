@@ -52,4 +52,26 @@ describe("read_file tool", () => {
     const result = await readFileTool.execute({ path: "empty.txt" }, ctx)
     expect(result).toBe("")
   })
+
+  it("refuses to read sensitive files", async () => {
+    writeFileSync(join(tmpDir, ".env"), "SECRET_KEY=hunter2")
+    const result = await readFileTool.execute({ path: ".env" }, ctx)
+    expect(result).toContain("Error")
+    expect(result).not.toContain("hunter2")
+  })
+
+  it("refuses to read nested sensitive files", async () => {
+    mkdirSync(join(tmpDir, ".ssh"), { recursive: true })
+    writeFileSync(join(tmpDir, ".ssh", "id_rsa"), "PRIVATE MATERIAL")
+    const result = await readFileTool.execute({ path: ".ssh/id_rsa" }, ctx)
+    expect(result).toContain("Error")
+    expect(result).not.toContain("PRIVATE MATERIAL")
+  })
+
+  it("honors extra sensitive patterns from context", async () => {
+    writeFileSync(join(tmpDir, "creds.json"), "{}")
+    const ctxExtra: ToolContext = { projectPath: tmpDir, sensitivePatterns: ["creds.json"] }
+    const result = await readFileTool.execute({ path: "creds.json" }, ctxExtra)
+    expect(result).toContain("Error")
+  })
 })

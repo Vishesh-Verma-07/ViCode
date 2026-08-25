@@ -7,6 +7,7 @@ export const configSchema = z
     apiKey: z.string().optional(),
     model: z.string().optional(),
     systemPrompt: z.string().optional(),
+    sensitiveFiles: z.array(z.string()).optional(),
   })
   .strict()
 
@@ -46,6 +47,14 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
   const merged: AppConfig = {
     ...globalConfig,
     ...projectConfig,
+  }
+
+  // sensitiveFiles merges across layers instead of overriding
+  if (globalConfig.sensitiveFiles || projectConfig.sensitiveFiles) {
+    merged.sensitiveFiles = [
+      ...(globalConfig.sensitiveFiles ?? []),
+      ...(projectConfig.sensitiveFiles ?? []),
+    ]
   }
 
   if (!merged.apiKey) {

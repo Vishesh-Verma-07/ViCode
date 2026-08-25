@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { readdirSync, readFileSync } from "fs"
 import { join, relative, extname } from "path"
+import { isSensitivePath } from "../core/sensitive-files"
 import type { ToolDefinition, ToolContext } from "../core/types"
 
 const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", "__pycache__"])
@@ -59,6 +60,7 @@ export const searchTool: ToolDefinition = {
 
       for (const filePath of files) {
         const relPath = relative(projectPath, filePath).replace(/\\/g, "/")
+        if (isSensitivePath(relPath, context.sensitivePatterns)) continue
         let content: string
         try {
           content = readFileSync(filePath, "utf-8")

@@ -1,6 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
-import { Box, Text, useInput, useApp, useWindowSize } from "ink"
-import { TextInput } from "@inkjs/ui"
+import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
+import { resolve } from "path"
+import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
+import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
@@ -22,14 +24,6 @@ interface ToolCallEntry {
   result?: string
 }
 
-interface DiffEntry {
-  id: string
-  filePath: string
-  diff: string
-  timestamp: number
-}
-
-type SidebarTab = "tools" | "diffs"
 
 export type FeedbackTone = "info" | "error"
 
@@ -46,6 +40,26 @@ interface PendingApproval {
 }
 
 export const STREAMING_COMMAND_NOTICE = "Still responding - press Esc to stop it, or /exit to quit."
+
+export type TurnStatus =
+  | { kind: "idle" }
+  | { kind: "thinking" }
+  | { kind: "working"; toolName: string }
+  | { kind: "waiting-approval" }
+  | { kind: "done"; durationMs: number }
+  | { kind: "error" }
+
+const DONE_REVERT_MS = 3000
+
+function makeSpinnerTheme(color: string) {
+  return extendTheme(defaultTheme, {
+    components: { Spinner: { styles: { frame: () => ({ color }) } } },
+  })
+}
+
+const yellowSpinnerTheme = makeSpinnerTheme("yellow")
+
+const cyanSpinnerTheme = makeSpinnerTheme("cyan")
 
 interface AppProps {
   provider: Provider
@@ -75,11 +89,11 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
   const [providerState, setProviderState] = useState<Provider>(provider)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [turnStatus, setTurnStatus] = useState<TurnStatus>({ kind: "idle" })
   const [currentText, setCurrentText] = useState("")
   const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
-  const [diffs, setDiffs] = useState<DiffEntry[]>([])
-  const [activeTab, setActiveTab] = useState<SidebarTab>("tools")
   const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+  const [turnCount, setTurnCount] = useState(0)
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
   const [showExitSummary, setShowExitSummary] = useState(false)
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
@@ -91,8 +105,25 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const [activeSkills, setActiveSkills] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
+  const approvedPathsRef = useRef<Set<string>>(new Set())
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
+  const { stdout } = useStdout()
+  const [, mouseSetupTick] = useState(0)
+
+  useEffect(() => {
+    stdout.write(MOUSE_TRACKING_ENABLE)
+    mouseSetupTick((n) => n + 1)
+    return () => {
+      stdout.write(MOUSE_TRACKING_DISABLE)
+    }
+  }, [stdout])
+
+  useEffect(() => {
+    if (turnStatus.kind !== "done") return
+    const timer = setTimeout(() => setTurnStatus({ kind: "idle" }), DONE_REVERT_MS)
+    return () => clearTimeout(timer)
+  }, [turnStatus])
 
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry()
@@ -186,6 +217,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
               dir: sessionsDir,
               getActiveSession: () => session,
               switchTo: (loaded) => {
+                approvedPathsRef.current.clear()
                 setSession(loaded)
                 setMessages(loaded.messages)
                 setUsage({
@@ -196,11 +228,12 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 })
               },
               startFresh: () => {
+                approvedPathsRef.current.clear()
                 setSession(null)
                 setMessages([])
                 setToolCalls([])
-                setDiffs([])
                 setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+                setTurnCount(0)
                 setActiveSkills([])
               },
             }
@@ -245,11 +278,19 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
 
       setMessages((prev) => [...prev, userMsg])
       setToolCalls([])
-      setDiffs([])
       setIsStreaming(true)
+      setTurnStatus({ kind: "thinking" })
 
       const controller = new AbortController()
       abortRef.current = controller
+      const turnStart = Date.now()
+      let hadError = false
+      let turnFailed = false
+      const pendingToolNames: string[] = []
+      const advanceToolStatus = () => {
+        const nextTool = pendingToolNames[0]
+        setTurnStatus(nextTool ? { kind: "working", toolName: nextTool } : { kind: "thinking" })
+      }
 
       const turn = (async () => {
         try {
@@ -267,6 +308,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 setCurrentText((prev) => prev + text)
               },
               onToolCallStart: (id, name) => {
+                pendingToolNames.push(name)
+                advanceToolStatus()
                 setToolCalls((prev) => [
                   ...prev,
                   { id, name, args: {} },
@@ -281,27 +324,48 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 )
               },
               onToolResult: (id, _name, result) => {
-                const { message, diff } = extractDiff(result)
+                pendingToolNames.shift()
+                advanceToolStatus()
+                const { message } = extractDiff(result)
                 setToolCalls((prev) =>
                   prev.map((tc) =>
                     tc.id === id ? { ...tc, result: message } : tc,
                   ),
                 )
-                if (diff) {
-                  const toolCall = toolCalls.find((tc) => tc.id === id)
-                  const filePath = toolCall?.args?.path as string ?? "unknown"
-                  setDiffs((prev) => [
-                    ...prev,
-                    { id, filePath, diff, timestamp: Date.now() },
-                  ])
-                }
               },
               onError: (error) => {
+                hadError = true
+                setTurnStatus({ kind: "error" })
+                const detail =
+                  error instanceof Error
+                    ? error.message
+                    : typeof error === "object" && error !== null && "message" in error
+                      ? String((error as { message: unknown }).message)
+                      : String(error)
+                appendFeedback(`Model error: ${detail.slice(0, 200)}`, "error")
                 console.error("Agent error:", error)
               },
               requestApproval: (toolName, args) => {
-                return new Promise<boolean>((resolve) => {
-                  setPendingApproval({ toolName, args, resolve })
+                const approvalKey =
+                  toolName === "write_file" || toolName === "edit_file"
+                    ? resolve(context.projectPath, String(args.path ?? ""))
+                    : null
+                if (approvalKey && approvedPathsRef.current.has(approvalKey)) {
+                  return Promise.resolve(true)
+                }
+                return new Promise<boolean>((resolveApproval) => {
+                  setTurnStatus({ kind: "waiting-approval" })
+                  setPendingApproval({
+                    toolName,
+                    args,
+                    resolve: (approved) => {
+                      if (approved && approvalKey) {
+                        approvedPathsRef.current.add(approvalKey)
+                      }
+                      advanceToolStatus()
+                      resolveApproval(approved)
+                    },
+                  })
                 })
               },
             },
@@ -336,13 +400,24 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
             setSession(savedSession)
           }
         } catch (error) {
-          if (error instanceof Error && error.name !== "AbortError") {
+          turnFailed = !(error instanceof Error && error.name === "AbortError")
+          if (turnFailed) {
             console.error("Loop error:", error)
           }
         } finally {
           setCurrentText("")
           setIsStreaming(false)
           abortRef.current = null
+          if (!turnFailed && controller.signal.aborted) {
+            setTurnStatus({ kind: "idle" })
+          } else {
+            setTurnCount((n) => n + 1)
+            if (hadError || turnFailed) {
+              setTurnStatus({ kind: "error" })
+            } else {
+              setTurnStatus({ kind: "done", durationMs: Date.now() - turnStart })
+            }
+          }
         }
       })()
       activeTurnRef.current = turn
@@ -399,11 +474,6 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         return
       }
 
-      if (key.tab) {
-        setActiveTab((prev) => (prev === "tools" ? "diffs" : "tools"))
-        return
-      }
-
       if (key.escape && isStreaming && abortRef.current) {
         abortRef.current.abort()
       }
@@ -422,24 +492,28 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       <Box flexDirection="row" flexGrow={1}>
         <ChatPanel
           width={chatWidth}
+          viewportHeight={Math.max(5, rows - CHAT_CHROME_LINES)}
+          scrollDisabled={pickerRequest !== null || pendingApproval !== null || showExitSummary}
+          runningTools={toolCalls.filter((tc) => !tc.result).map((tc) => ({ id: tc.id, name: tc.name }))}
           messages={messages}
           currentText={currentText}
           isStreaming={isStreaming}
           onSend={handleSend}
           feedbackEntries={feedbackEntries}
           inputKey={inputKey}
+          inputValue={inputValue}
           inputDisabled={pickerRequest !== null}
           onInputChange={handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
         />
-        <Sidebar
+        <UsagePanel
           width={sidebarWidth}
-          activeTab={activeTab}
-          toolCalls={toolCalls}
-          diffs={diffs}
+          model={providerState.getModelInfo().name}
+          usage={usage}
+          turns={turnCount}
         />
       </Box>
-      <StatusBar usage={usage} model={providerState.getModelInfo().name} />
+      <StatusBar usage={usage} model={providerState.getModelInfo().name} status={turnStatus} />
       {pickerRequest && (
         <Picker
           title={pickerRequest.title}
@@ -464,18 +538,218 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
 
 interface ChatPanelProps {
   width: number
+  viewportHeight: number
+  scrollDisabled?: boolean
+  runningTools: Array<{ id: string; name: string }>
   messages: Message[]
   currentText: string
   isStreaming: boolean
   onSend: (input: string) => void
   feedbackEntries: FeedbackEntry[]
   inputKey: number
+  inputValue: string
   inputDisabled?: boolean
   onInputChange?: (value: string) => void
   suggestion?: CommandSuggestionProps
 }
 
-function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
+const CHAT_CHROME_LINES = 7
+const WHEEL_STEP_LINES = 3
+
+function textContentOf(msg: Message): string {
+  return msg.content
+    .filter((c) => c.type === "text")
+    .map((c) => (c.type === "text" ? c.text : ""))
+    .join("")
+}
+
+function estimateLines(text: string, usableWidth: number): number {
+  return text
+    .split("\n")
+    .reduce((n, seg) => n + Math.max(1, Math.ceil(seg.length / usableWidth)), 0)
+}
+
+const RESULT_SUMMARY_LINES = 3
+
+function summarizeResult(result: string): { text: string; lines: number } {
+  const lines = result.replace(/\n+$/, "").split("\n")
+  if (lines.length <= RESULT_SUMMARY_LINES + 1) {
+    return { text: lines.join("\n"), lines: Math.max(1, lines.length) }
+  }
+  const head = lines.slice(0, RESULT_SUMMARY_LINES)
+  return { text: `${head.join("\n")}\n… +${lines.length - RESULT_SUMMARY_LINES} more lines`, lines: RESULT_SUMMARY_LINES + 1 }
+}
+
+function diffLabel(diff: string): string {
+  const line = diff.split("\n").find((l) => l.startsWith("+++ "))
+  return line ? line.replace(/^\+\+\+ \S?\s*/, "").trim() || "(diff)" : "(diff)"
+}
+
+function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
+  const [bottomOffset, setBottomOffset] = useState(0)
+
+  useInput((_input, key) => {
+    if (scrollDisabled) return
+    const wheel = parseWheelEvent(_input)
+    if (wheel === "up") {
+      setBottomOffset((prev) => prev + WHEEL_STEP_LINES)
+    } else if (wheel === "down") {
+      setBottomOffset((prev) => Math.max(0, prev - WHEEL_STEP_LINES))
+    } else if (key.pageUp) {
+      setBottomOffset((prev) => prev + viewportHeight)
+    } else if (key.pageDown) {
+      setBottomOffset((prev) => Math.max(0, prev - viewportHeight))
+    } else if (key.end) {
+      setBottomOffset(0)
+    }
+  })
+
+  const usableWidth = Math.max(10, width - 4)
+  const estimate = (text: string) => estimateLines(text, usableWidth)
+
+  type Block = { key: string; lines: number; node: React.ReactNode; text?: string }
+  const blocks: Block[] = []
+
+  const TEXT_CHUNK_LINES = 10
+
+  const addTextBlocks = (
+    keyBase: string,
+    text: string,
+    opts?: { prefix?: string; color?: "blue" | "green" },
+  ) => {
+    const prefix = opts?.prefix ?? ""
+    const full = prefix ? `${prefix}${text}` : text
+    const linesArr = full.split("\n")
+    for (let i = 0; i < linesArr.length; i += TEXT_CHUNK_LINES) {
+      const chunkText = linesArr.slice(i, i + TEXT_CHUNK_LINES).join("\n")
+      const key = `${keyBase}:${i}`
+      const isFirst = i === 0
+      const node =
+        isFirst && prefix ? (
+          <Text key={key}>
+            <Text color={opts?.color} bold>
+              {chunkText.slice(0, prefix.length)}
+            </Text>
+            {chunkText.slice(prefix.length)}
+          </Text>
+        ) : (
+          <Text key={key}>{chunkText}</Text>
+        )
+      blocks.push({ key, lines: estimate(chunkText), node, text: chunkText })
+    }
+  }
+
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      addTextBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: "blue" })
+    } else if (msg.role === "assistant") {
+      const text = textContentOf(msg)
+      if (text) {
+        addTextBlocks(msg.id, text, { prefix: "vicode: ", color: "green" })
+      }
+      for (const c of msg.content) {
+        if (c.type !== "tool-call") continue
+        blocks.push({
+          key: `${msg.id}:call:${c.toolCallId}`,
+          lines: 1,
+          node: (
+            <Text key={`${msg.id}:call:${c.toolCallId}`} color="gray">
+              ⚙ {c.toolName}
+            </Text>
+          ),
+          text: `⚙ ${c.toolName}`,
+        })
+      }
+    } else if (msg.role === "tool") {
+      for (const c of msg.content) {
+        if (c.type !== "tool-result") continue
+        const { diff, message } = extractDiff(c.result)
+        if (diff) {
+          const lines = diff.split("\n").length
+          blocks.push({
+            key: `${msg.id}:result:${c.toolCallId}`,
+            lines,
+            node: <DiffView key={`${msg.id}:result:${c.toolCallId}`} filePath={diffLabel(diff)} diff={diff} />,
+          })
+        } else {
+          const summary = summarizeResult(message)
+          blocks.push({
+            key: `${msg.id}:result:${c.toolCallId}`,
+            lines: summary.lines + 1,
+            node: (
+              <Text key={`${msg.id}:result:${c.toolCallId}`} color="gray">
+                ⚙ {c.toolName}
+                {"\n"}
+                {summary.text}
+              </Text>
+            ),
+            text: `⚙ ${c.toolName}\n${summary.text}`,
+          })
+        }
+      }
+    }
+  }
+  for (const tool of runningTools) {
+    blocks.push({
+      key: `running:${tool.id}`,
+      lines: 1,
+      node: (
+        <Text key={`running:${tool.id}`} color="gray">
+          ⚙ {tool.name}…
+        </Text>
+      ),
+      text: `⚙ ${tool.name}…`,
+    })
+  }
+  for (const entry of feedbackEntries) {
+    blocks.push({
+      key: entry.id,
+      lines: estimate(entry.text) + 1,
+      node: <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />,
+      text: entry.text,
+    })
+  }
+  if (currentText) {
+    addTextBlocks("current-stream", currentText)
+  }
+
+  const totalLines = blocks.reduce((n, b) => n + b.lines, 0)
+  const maxScroll = Math.max(0, totalLines - viewportHeight + 1)
+  const offset = Math.min(bottomOffset, maxScroll)
+  const hintLines = offset > 0 ? 1 : 0
+
+  const sliceBlockText = (block: Block, count: number, mode: "head" | "tail"): React.ReactNode => {
+    if (block.text === undefined) return block.node
+    const linesArr = block.text.split("\n")
+    const sliced = mode === "head" ? linesArr.slice(0, count) : linesArr.slice(-count)
+    return <Text key={`${block.key}:slice`}>{sliced.join("\n")}</Text>
+  }
+
+  let skip = offset
+  let budget = viewportHeight - hintLines
+  const visibleNodes: React.ReactNode[] = []
+  for (let i = blocks.length - 1; i >= 0 && budget > 0; i--) {
+    const block = blocks[i]!
+    if (skip > 0) {
+      if (block.lines <= skip) {
+        skip -= block.lines
+        continue
+      }
+      const show = Math.min(block.lines - skip, budget)
+      visibleNodes.unshift(sliceBlockText(block, show, "head"))
+      budget -= show
+      skip = 0
+      continue
+    }
+    const fit = Math.min(block.lines, budget)
+    if (fit < block.lines) {
+      visibleNodes.unshift(sliceBlockText(block, fit, "tail"))
+    } else {
+      visibleNodes.unshift(block.node)
+    }
+    budget -= fit
+  }
+
   return (
     <Box
       width={width}
@@ -485,23 +759,15 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedback
       paddingX={1}
     >
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {messages.length === 0 && feedbackEntries.length === 0 && (
+        {blocks.length === 0 && (
           <Text color="gray" italic>
             Type a message to start chatting...
           </Text>
         )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-        {feedbackEntries.map((entry) => (
-          <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />
-        ))}
-        {isStreaming && currentText && (
-          <Text>{currentText}</Text>
+        {offset > 0 && (
+          <Text color="gray">↑ {offset} lines — End to return</Text>
         )}
-        {isStreaming && !currentText && (
-          <Text color="yellow">Thinking...</Text>
-        )}
+        {visibleNodes}
       </Box>
       {suggestion && (
         <Box paddingBottom={1}>
@@ -512,19 +778,82 @@ function ChatPanel({ width, messages, currentText, isStreaming, onSend, feedback
         </Box>
       )}
       <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
-        <TextInput
-          key={inputKey}
+        <ChatInput
+          value={inputValue}
           placeholder={isStreaming ? "Responding - /exit to quit" : "Type your message..."}
           isDisabled={inputDisabled}
-          onChange={onInputChange}
+          onChange={onInputChange ?? (() => {})}
         />
       </Box>
     </Box>
   )
 }
 
-interface MessageBubbleProps {
-  message: Message
+const MOUSE_SGR_INPUT = /^\[?<\d+;\d+;\d+[Mm]$/
+const X10_PAYLOAD_IGNORE_MS = 60
+
+function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string) => void }) {
+  const ignoreUntilRef = useRef(0)
+  const valueRef = useRef(value)
+
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
+
+  const commit = (next: string) => {
+    valueRef.current = next
+    onChange(next)
+  }
+
+  const deleteWord = () => {
+    commit(valueRef.current.replace(/\s*\S+\s*$/, ""))
+  }
+
+  useInput((input, key) => {
+    if (isDisabled) return
+    if (
+      key.return ||
+      key.upArrow ||
+      key.downArrow ||
+      key.leftArrow ||
+      key.rightArrow ||
+      key.tab ||
+      key.escape ||
+      key.pageUp ||
+      key.pageDown ||
+      key.home ||
+      key.end
+    ) {
+      return
+    }
+    if (
+      (key.ctrl && (input === "w" || input === "\u0017")) ||
+      ((key.backspace || key.delete) && (key.ctrl || key.meta))
+    ) {
+      deleteWord()
+      return
+    }
+    if (key.backspace || key.delete) {
+      if (valueRef.current.length > 0) commit(valueRef.current.slice(0, -1))
+      return
+    }
+    if (!input) return
+    if (input === "[M") {
+      ignoreUntilRef.current = Date.now() + X10_PAYLOAD_IGNORE_MS
+      return
+    }
+    if (Date.now() < ignoreUntilRef.current) return
+    if (MOUSE_SGR_INPUT.test(input)) return
+    if (/[\x00-\x1f\x7f]/.test(input)) return
+    commit(valueRef.current + input)
+  })
+
+  return (
+    <Text>
+      {value ? <Text>{value}</Text> : <Text color="gray">{placeholder}</Text>}
+      {!isDisabled && <Text inverse> </Text>}
+    </Text>
+  )
 }
 
 export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone }) {
@@ -537,135 +866,26 @@ export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone 
   )
 }
 
-function MessageBubble({ message }: MessageBubbleProps) {
-  if (message.role === "user") {
-    const text = message.content
-      .filter((c) => c.type === "text")
-      .map((c) => (c.type === "text" ? c.text : ""))
-      .join("")
-    return (
-      <Box marginBottom={1}>
-        <Text color="blue" bold>
-          You:{" "}
-        </Text>
-        <Text>{text}</Text>
-      </Box>
-    )
-  }
-
-  if (message.role === "assistant") {
-    const text = message.content
-      .filter((c) => c.type === "text")
-      .map((c) => (c.type === "text" ? c.text : ""))
-      .join("")
-    if (!text) return null
-    return (
-      <Box marginBottom={1}>
-        <Text color="green" bold>
-          AI:{" "}
-        </Text>
-        <Text>{text}</Text>
-      </Box>
-    )
-  }
-
-  return null
-}
-
-interface SidebarProps {
+interface UsagePanelProps {
   width: number
-  activeTab: SidebarTab
-  toolCalls: ToolCallEntry[]
-  diffs: DiffEntry[]
+  model: string
+  usage: TokenUsage
+  turns: number
 }
 
-function Sidebar({ width, activeTab, toolCalls, diffs }: SidebarProps) {
+function UsagePanel({ width, model, usage, turns }: UsagePanelProps) {
   return (
-    <Box
-      width={width}
-      flexDirection="column"
-      borderStyle="single"
-      borderColor="gray"
-      paddingX={1}
-    >
-      <Box>
-        <Text
-          color={activeTab === "tools" ? "cyan" : "gray"}
-          bold={activeTab === "tools"}
-        >
-          Tools
-        </Text>
-        <Text color="gray"> | </Text>
-        <Text
-          color={activeTab === "diffs" ? "cyan" : "gray"}
-          bold={activeTab === "diffs"}
-        >
-          Diffs{diffs.length > 0 ? ` (${diffs.length})` : ""}
-        </Text>
+    <Box width={width} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+      <Text bold color="cyan">
+        Usage
+      </Text>
+      <Box marginTop={1} flexDirection="column" gap={0}>
+        <Text color="gray">Model: {model}</Text>
+        <Text color="gray">Tokens: {formatTokens(usage.totalTokens)}</Text>
+        <Text color="gray">  In: {formatTokens(usage.inputTokens)} / Out: {formatTokens(usage.outputTokens)}</Text>
+        <Text color="gray">Cost: {formatCost(usage.cost)}</Text>
+        <Text color="gray">Turns: {turns}</Text>
       </Box>
-      {activeTab === "tools" && (
-        <ToolsTab toolCalls={toolCalls} />
-      )}
-      {activeTab === "diffs" && (
-        <DiffsTab diffs={diffs} />
-      )}
-    </Box>
-  )
-}
-
-function ToolsTab({ toolCalls }: { toolCalls: ToolCallEntry[] }) {
-  if (toolCalls.length === 0) {
-    return (
-      <Text color="gray" italic>
-        No tool calls yet
-      </Text>
-    )
-  }
-  return (
-    <Box flexDirection="column">
-      {toolCalls.map((tc) => {
-        const argsStr = Object.keys(tc.args).length > 0
-          ? JSON.stringify(tc.args)
-          : ""
-        const maxLines = 500
-        const resultDisplay = tc.result
-          ? truncateLines(tc.result, maxLines)
-          : ""
-        return (
-          <Box key={tc.id} flexDirection="column" marginBottom={1}>
-            <Text color="yellow">
-              {tc.name}
-            </Text>
-            {argsStr && (
-              <Text color="gray" wrap="wrap">
-                {argsStr}
-              </Text>
-            )}
-            {resultDisplay && (
-              <Text color="gray" wrap="wrap">
-                {resultDisplay}
-              </Text>
-            )}
-          </Box>
-        )
-      })}
-    </Box>
-  )
-}
-
-function DiffsTab({ diffs }: { diffs: DiffEntry[] }) {
-  if (diffs.length === 0) {
-    return (
-      <Text color="gray" italic>
-        No diffs yet
-      </Text>
-    )
-  }
-  return (
-    <Box flexDirection="column">
-      {diffs.map((entry) => (
-        <DiffView key={entry.id} filePath={entry.filePath} diff={entry.diff} />
-      ))}
     </Box>
   )
 }
@@ -693,19 +913,13 @@ function DiffView({ filePath, diff }: { filePath: string; diff: string }) {
   )
 }
 
-function truncateLines(text: string, maxLines: number): string {
-  const lines = text.split("\n")
-  if (lines.length <= maxLines) return text
-  const truncated = lines.slice(0, maxLines).join("\n")
-  return truncated + `\n... (${lines.length - maxLines} more lines)`
-}
-
 interface StatusBarProps {
   usage: TokenUsage
   model: string
+  status: TurnStatus
 }
 
-function StatusBar({ usage, model }: StatusBarProps) {
+function StatusBar({ usage, model, status }: StatusBarProps) {
   return (
     <Box
       justifyContent="space-between"
@@ -713,14 +927,42 @@ function StatusBar({ usage, model }: StatusBarProps) {
       borderStyle="single"
       borderColor="gray"
     >
-      <Text color="gray">
-        {model}
-      </Text>
+      <Box gap={2}>
+        <Text color="gray">
+          {model}
+        </Text>
+        <StatusIndicator status={status} />
+      </Box>
       <Text color="gray">
         Tokens: {formatTokens(usage.totalTokens)} | Cost: {formatCost(usage.cost)}
       </Text>
     </Box>
   )
+}
+
+export function StatusIndicator({ status }: { status: TurnStatus }) {
+  switch (status.kind) {
+    case "idle":
+      return <Text color="gray">Ready</Text>
+    case "thinking":
+      return (
+        <ThemeProvider theme={yellowSpinnerTheme}>
+          <Spinner label="Thinking…" />
+        </ThemeProvider>
+      )
+    case "working":
+      return (
+        <ThemeProvider theme={cyanSpinnerTheme}>
+          <Spinner label={`Working: ${status.toolName}…`} />
+        </ThemeProvider>
+      )
+    case "waiting-approval":
+      return <Text color="gray">Waiting for approval</Text>
+    case "done":
+      return <Text color="green">✓ Done in {(status.durationMs / 1000).toFixed(1)}s</Text>
+    case "error":
+      return <Text color="red">✗ Error</Text>
+  }
 }
 
 interface ApprovalPromptProps {
