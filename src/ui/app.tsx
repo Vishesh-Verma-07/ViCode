@@ -3,6 +3,7 @@ import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
 import { resolve } from "path"
 import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
 import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
+import { COLORS, ICONS, BORDER, ASCII_BANNER } from "./theme"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
@@ -13,6 +14,7 @@ import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/comma
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import { Picker } from "./picker"
+import { WelcomeScreen } from "./welcome"
 import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
 import { log } from "../utils/logger"
 import { discoverSkills } from "../core/skills"
@@ -57,9 +59,9 @@ function makeSpinnerTheme(color: string) {
   })
 }
 
-const yellowSpinnerTheme = makeSpinnerTheme("yellow")
+const yellowSpinnerTheme = makeSpinnerTheme(COLORS.warning)
 
-const cyanSpinnerTheme = makeSpinnerTheme("cyan")
+const cyanSpinnerTheme = makeSpinnerTheme(COLORS.primary)
 
 interface AppProps {
   provider: Provider
@@ -84,7 +86,11 @@ export function extractDiff(result: string): { message: string; diff: string | n
   return { message, diff }
 }
 
+type View = "home" | "chat"
+
 export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, sessionsDir, commands }: AppProps) {
+  const [view, setView] = useState<View>("chat")
+  const [showWelcome, setShowWelcome] = useState(!initialSession)
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
   const [providerState, setProviderState] = useState<Provider>(provider)
@@ -103,6 +109,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const [suggestionDismissed, setSuggestionDismissed] = useState(false)
   const [suggestionHighlight, setSuggestionHighlight] = useState(0)
   const [activeSkills, setActiveSkills] = useState<string[]>([])
+  const [atMode, setAtMode] = useState(false)
+  const [atHighlight, setAtHighlight] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
   const approvedPathsRef = useRef<Set<string>>(new Set())
@@ -146,9 +154,25 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     !pickerRequest &&
     !pendingApproval &&
     !showExitSummary &&
+    view === "chat" &&
     firstWord.startsWith("/") &&
     !suggestionDismissed
+  const atVisible = !isStreaming && !pickerRequest && !pendingApproval && !showExitSummary && view === "chat" && firstWord.startsWith("@") && !suggestionDismissed
   const clampedSuggestionHighlight = Math.min(suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
+  const atFiles = useMemo(() => {
+    const fs = require("fs")
+    const path = require("path")
+    const projectDir = context.projectPath
+    try {
+      const entries = fs.readdirSync(projectDir, { withFileTypes: true })
+      return entries
+        .filter((e) => e.isFile())
+        .map((e) => e.name)
+    } catch {
+      return []
+    }
+  }, [context.projectPath])
+  const clampedAtHighlight = Math.min(atHighlight, Math.max(0, atFiles.length - 1))
 
   const handleInputChange = useCallback((value: string) => {
     setInputValue(value)
@@ -191,9 +215,21 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     exit()
   }, [exit])
 
+  const enterChat = useCallback(() => {
+    setView("chat")
+  }, [])
+
+  const goHome = useCallback(() => {
+    setView("home")
+  }, [])
+
   const handleSend = useCallback(
     async (input: string) => {
       if (!input.trim()) return
+
+      if (view === "home") {
+        setView("chat")
+      }
 
       if (isStreaming) {
         if (!isCommandAttempt(input)) return
@@ -220,6 +256,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
                 approvedPathsRef.current.clear()
                 setSession(loaded)
                 setMessages(loaded.messages)
+                setView("chat")
                 setUsage({
                   inputTokens: 0,
                   outputTokens: 0,
@@ -427,7 +464,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills],
+    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, view],
   )
 
   useInput(
@@ -484,6 +521,35 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     { isActive: true },
   )
 
+  if (view === "home") {
+    return (
+      <Box flexDirection="column" width={columns} height={rows}>
+        <WelcomeScreen
+          provider={providerState}
+          onNewChat={enterChat}
+          onResumeSession={enterChat}
+          hasResumableSession={!!initialSession}
+          onSendFirstMessage={(text) => {
+            setInputValue(text)
+            setView("chat")
+            setTimeout(() => {
+              void handleSend(text)
+            }, 50)
+          }}
+        />
+        {pickerRequest && (
+          <Picker
+            title={pickerRequest.title}
+            items={pickerRequest.items}
+            onSelect={(index) => closePicker(index)}
+            onCancel={() => closePicker(null)}
+            rows={rows}
+          />
+        )}
+      </Box>
+    )
+  }
+
   const sidebarWidth = Math.max(30, Math.floor(columns * 0.3))
   const chatWidth = columns - sidebarWidth - 1
 
@@ -505,12 +571,14 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           inputDisabled={pickerRequest !== null}
           onInputChange={handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
+          modelName={providerState.getModelInfo().name}
         />
         <UsagePanel
           width={sidebarWidth}
           model={providerState.getModelInfo().name}
           usage={usage}
           turns={turnCount}
+          status={turnStatus}
         />
       </Box>
       <StatusBar usage={usage} model={providerState.getModelInfo().name} status={turnStatus} />
@@ -551,6 +619,7 @@ interface ChatPanelProps {
   inputDisabled?: boolean
   onInputChange?: (value: string) => void
   suggestion?: CommandSuggestionProps
+  modelName?: string
 }
 
 const CHAT_CHROME_LINES = 7
@@ -585,7 +654,7 @@ function diffLabel(diff: string): string {
   return line ? line.replace(/^\+\+\+ \S?\s*/, "").trim() || "(diff)" : "(diff)"
 }
 
-function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion }: ChatPanelProps) {
+function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
   useInput((_input, key) => {
@@ -604,7 +673,7 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
     }
   })
 
-  const usableWidth = Math.max(10, width - 4)
+  const usableWidth = Math.max(10, width - 6)
   const estimate = (text: string) => estimateLines(text, usableWidth)
 
   type Block = { key: string; lines: number; node: React.ReactNode; text?: string }
@@ -641,11 +710,11 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
 
   for (const msg of messages) {
     if (msg.role === "user") {
-      addTextBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: "blue" })
+      addTextBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
     } else if (msg.role === "assistant") {
       const text = textContentOf(msg)
       if (text) {
-        addTextBlocks(msg.id, text, { prefix: "vicode: ", color: "green" })
+        addTextBlocks(msg.id, text, { prefix: "vicode: ", color: COLORS.success })
       }
       for (const c of msg.content) {
         if (c.type !== "tool-call") continue
@@ -653,11 +722,11 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
           key: `${msg.id}:call:${c.toolCallId}`,
           lines: 1,
           node: (
-            <Text key={`${msg.id}:call:${c.toolCallId}`} color="gray">
-              ⚙ {c.toolName}
+            <Text key={`${msg.id}:call:${c.toolCallId}`} color={COLORS.muted}>
+              <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
             </Text>
           ),
-          text: `⚙ ${c.toolName}`,
+          text: `${ICONS.tool} ${c.toolName}`,
         })
       }
     } else if (msg.role === "tool") {
@@ -677,13 +746,14 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
             key: `${msg.id}:result:${c.toolCallId}`,
             lines: summary.lines + 1,
             node: (
-              <Text key={`${msg.id}:result:${c.toolCallId}`} color="gray">
-                ⚙ {c.toolName}
-                {"\n"}
-                {summary.text}
-              </Text>
+              <Box key={`${msg.id}:result:${c.toolCallId}`} flexDirection="column">
+                <Text color={COLORS.muted}>
+                  <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
+                </Text>
+                <Text color={COLORS.dimText}>{summary.text}</Text>
+              </Box>
             ),
-            text: `⚙ ${c.toolName}\n${summary.text}`,
+            text: `${ICONS.tool} ${c.toolName}\n${summary.text}`,
           })
         }
       }
@@ -694,11 +764,11 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
       key: `running:${tool.id}`,
       lines: 1,
       node: (
-        <Text key={`running:${tool.id}`} color="gray">
-          ⚙ {tool.name}…
+        <Text key={`running:${tool.id}`} color={COLORS.muted}>
+          <Text color={COLORS.primary}>{ICONS.tool}</Text> {tool.name}…
         </Text>
       ),
-      text: `⚙ ${tool.name}…`,
+      text: `${ICONS.tool} ${tool.name}…`,
     })
   }
   for (const entry of feedbackEntries) {
@@ -755,17 +825,34 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
       width={width}
       flexDirection="column"
       borderStyle="single"
-      borderColor="gray"
+      borderColor={COLORS.border}
       paddingX={1}
     >
       <Box flexGrow={1} flexDirection="column" overflow="hidden">
         {blocks.length === 0 && (
-          <Text color="gray" italic>
-            Type a message to start chatting...
-          </Text>
+          <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
+            <Text color={COLORS.primary} bold>
+              {ICONS.logo} ViCode
+            </Text>
+            <Box marginTop={0}>
+              <Text color={COLORS.muted}>
+                AI-Powered Coding Assistant
+              </Text>
+            </Box>
+            <Box marginTop={1}>
+              <Text color={COLORS.dimText}>
+                Model: <Text color={COLORS.text}>{modelName ?? "unknown"}</Text>
+              </Text>
+            </Box>
+            <Box marginTop={1}>
+              <Text color={COLORS.muted}>
+                Type a message to start chatting...
+              </Text>
+            </Box>
+          </Box>
         )}
         {offset > 0 && (
-          <Text color="gray">↑ {offset} lines — End to return</Text>
+          <Text color={COLORS.muted}>↑ {offset} lines — End to return</Text>
         )}
         {visibleNodes}
       </Box>
@@ -777,10 +864,10 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
           />
         </Box>
       )}
-      <Box borderTop={true} borderTopColor="gray" paddingTop={1}>
+      <Box borderTop={true} borderTopColor={COLORS.border} paddingTop={1}>
         <ChatInput
           value={inputValue}
-          placeholder={isStreaming ? "Responding - /exit to quit" : "Type your message..."}
+          placeholder={isStreaming ? "Responding..." : "Type your message..."}
           isDisabled={inputDisabled}
           onChange={onInputChange ?? (() => {})}
         />
@@ -850,7 +937,8 @@ function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string
 
   return (
     <Text>
-      {value ? <Text>{value}</Text> : <Text color="gray">{placeholder}</Text>}
+      <Text color={COLORS.primary} bold>{ICONS.arrow} </Text>
+      {value ? <Text>{value}</Text> : <Text color={COLORS.muted}>{placeholder}</Text>}
       {!isDisabled && <Text inverse> </Text>}
     </Text>
   )
@@ -859,8 +947,8 @@ function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string
 export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone }) {
   return (
     <Box marginBottom={1}>
-      <Text color={tone === "error" ? "red" : "cyan"} wrap="wrap">
-        {text}
+      <Text color={tone === "error" ? COLORS.error : COLORS.primary} wrap="wrap">
+        {tone === "error" ? `${ICONS.cross} ` : `${ICONS.check} `}{text}
       </Text>
     </Box>
   )
@@ -871,20 +959,41 @@ interface UsagePanelProps {
   model: string
   usage: TokenUsage
   turns: number
+  status: TurnStatus
 }
 
-function UsagePanel({ width, model, usage, turns }: UsagePanelProps) {
+function UsagePanel({ width, model, usage, turns, status }: UsagePanelProps) {
   return (
-    <Box width={width} flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
-      <Text bold color="cyan">
-        Usage
-      </Text>
-      <Box marginTop={1} flexDirection="column" gap={0}>
-        <Text color="gray">Model: {model}</Text>
-        <Text color="gray">Tokens: {formatTokens(usage.totalTokens)}</Text>
-        <Text color="gray">  In: {formatTokens(usage.inputTokens)} / Out: {formatTokens(usage.outputTokens)}</Text>
-        <Text color="gray">Cost: {formatCost(usage.cost)}</Text>
-        <Text color="gray">Turns: {turns}</Text>
+    <Box width={width} flexDirection="column" borderStyle="single" borderColor={COLORS.border} paddingX={1}>
+      <Box borderBottom={true} borderBottomColor={COLORS.border} paddingBottom={0} marginBottom={1}>
+        <Text bold color={COLORS.primary}>
+          {ICONS.sparkle} Usage
+        </Text>
+      </Box>
+      <Box flexDirection="column" gap={0}>
+        <Box justifyContent="space-between">
+          <Text color={COLORS.muted}>Model:</Text>
+          <Text color={COLORS.text}>{model}</Text>
+        </Box>
+        <Box justifyContent="space-between">
+          <Text color={COLORS.muted}>Tokens:</Text>
+          <Text color={COLORS.text}>{formatTokens(usage.totalTokens)}</Text>
+        </Box>
+        <Box justifyContent="space-between">
+          <Text color={COLORS.dimText}>In:</Text>
+          <Text color={COLORS.muted}>{formatTokens(usage.inputTokens)} / Out: {formatTokens(usage.outputTokens)}</Text>
+        </Box>
+        <Box justifyContent="space-between">
+          <Text color={COLORS.muted}>Cost:</Text>
+          <Text color={COLORS.success}>{formatCost(usage.cost)}</Text>
+        </Box>
+        <Box justifyContent="space-between">
+          <Text color={COLORS.muted}>Turns:</Text>
+          <Text color={COLORS.text}>{turns}</Text>
+        </Box>
+      </Box>
+      <Box marginTop={1} borderTop={true} borderTopColor={COLORS.border} paddingTop={0}>
+        <Text color={COLORS.dimText} italic>Ctrl+C to exit</Text>
       </Box>
     </Box>
   )
@@ -894,20 +1003,20 @@ function DiffView({ filePath, diff }: { filePath: string; diff: string }) {
   const lines = diff.split("\n")
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color="blue" bold>
-        {filePath}
+      <Text color={COLORS.accent} bold>
+        {ICONS.arrow} {filePath}
       </Text>
       {lines.map((line, i) => {
         if (line.startsWith("+") && !line.startsWith("+++")) {
-          return <Text key={i} color="green">{line}</Text>
+          return <Text key={i} color={COLORS.success}>{line}</Text>
         }
         if (line.startsWith("-") && !line.startsWith("---")) {
-          return <Text key={i} color="red">{line}</Text>
+          return <Text key={i} color={COLORS.error}>{line}</Text>
         }
         if (line.startsWith("@@")) {
-          return <Text key={i} color="cyan">{line}</Text>
+          return <Text key={i} color={COLORS.primary}>{line}</Text>
         }
-        return <Text key={i}>{line}</Text>
+        return <Text key={i} color={COLORS.dimText}>{line}</Text>
       })}
     </Box>
   )
@@ -925,15 +1034,16 @@ function StatusBar({ usage, model, status }: StatusBarProps) {
       justifyContent="space-between"
       paddingX={1}
       borderStyle="single"
-      borderColor="gray"
+      borderColor={COLORS.border}
     >
       <Box gap={2}>
-        <Text color="gray">
+        <Text color={COLORS.primary} bold>{ICONS.logo}</Text>
+        <Text color={COLORS.muted}>
           {model}
         </Text>
         <StatusIndicator status={status} />
       </Box>
-      <Text color="gray">
+      <Text color={COLORS.muted}>
         Tokens: {formatTokens(usage.totalTokens)} | Cost: {formatCost(usage.cost)}
       </Text>
     </Box>
@@ -943,7 +1053,7 @@ function StatusBar({ usage, model, status }: StatusBarProps) {
 export function StatusIndicator({ status }: { status: TurnStatus }) {
   switch (status.kind) {
     case "idle":
-      return <Text color="gray">Ready</Text>
+      return <Text color={COLORS.success}>{ICONS.check} Ready</Text>
     case "thinking":
       return (
         <ThemeProvider theme={yellowSpinnerTheme}>
@@ -957,11 +1067,11 @@ export function StatusIndicator({ status }: { status: TurnStatus }) {
         </ThemeProvider>
       )
     case "waiting-approval":
-      return <Text color="gray">Waiting for approval</Text>
+      return <Text color={COLORS.warning}>{ICONS.warning} Waiting for approval</Text>
     case "done":
-      return <Text color="green">✓ Done in {(status.durationMs / 1000).toFixed(1)}s</Text>
+      return <Text color={COLORS.success}>{ICONS.check} Done in {(status.durationMs / 1000).toFixed(1)}s</Text>
     case "error":
-      return <Text color="red">✗ Error</Text>
+      return <Text color={COLORS.error}>{ICONS.cross} Error</Text>
   }
 }
 
@@ -979,32 +1089,32 @@ function ApprovalPrompt({ toolName, args }: ApprovalPromptProps) {
     <Box
       flexDirection="column"
       borderStyle="double"
-      borderColor="yellow"
+      borderColor={COLORS.warning}
       paddingX={1}
       paddingY={1}
     >
-      <Text color="yellow" bold>
-        ⚠ Tool Approval Required
+      <Text color={COLORS.warning} bold>
+        {ICONS.warning} Tool Approval Required
       </Text>
       <Box marginTop={1}>
-        <Text color="white" bold>
+        <Text color={COLORS.text} bold>
           Tool:{" "}
         </Text>
-        <Text color="cyan">{toolName}</Text>
+        <Text color={COLORS.primary}>{toolName}</Text>
       </Box>
       {argsStr && (
         <Box marginTop={1}>
-          <Text color="white" bold>
+          <Text color={COLORS.text} bold>
             Args:{" "}
           </Text>
-          <Text color="gray" wrap="wrap">{argsStr}</Text>
+          <Text color={COLORS.muted} wrap="wrap">{argsStr}</Text>
         </Box>
       )}
       <Box marginTop={1}>
-        <Text color="green">[y]</Text>
-        <Text color="gray"> Approve </Text>
-        <Text color="red">[n]</Text>
-        <Text color="gray"> Reject</Text>
+        <Text color={COLORS.success}>[y]</Text>
+        <Text color={COLORS.muted}> Approve </Text>
+        <Text color={COLORS.error}>[n]</Text>
+        <Text color={COLORS.muted}> Reject</Text>
       </Box>
     </Box>
   )
@@ -1020,35 +1130,35 @@ function ExitSummary({ usage, model }: ExitSummaryProps) {
     <Box
       flexDirection="column"
       borderStyle="double"
-      borderColor="cyan"
+      borderColor={COLORS.primary}
       paddingX={1}
       paddingY={1}
     >
-      <Text color="cyan" bold>
-        Session Summary
+      <Text color={COLORS.primary} bold>
+        {ICONS.logo} Session Summary
       </Text>
       <Box marginTop={1}>
-        <Text color="white" bold>
+        <Text color={COLORS.text} bold>
           Model:{" "}
         </Text>
-        <Text color="gray">{model}</Text>
+        <Text color={COLORS.muted}>{model}</Text>
       </Box>
       <Box marginTop={1}>
-        <Text color="white" bold>
+        <Text color={COLORS.text} bold>
           Tokens:{" "}
         </Text>
-        <Text color="gray">
+        <Text color={COLORS.muted}>
           {formatTokens(usage.totalTokens)} total ({formatTokens(usage.inputTokens)} in / {formatTokens(usage.outputTokens)} out)
         </Text>
       </Box>
       <Box marginTop={1}>
-        <Text color="white" bold>
+        <Text color={COLORS.text} bold>
           Cost:{" "}
         </Text>
-        <Text color="green">{formatCost(usage.cost)}</Text>
+        <Text color={COLORS.success}>{formatCost(usage.cost)}</Text>
       </Box>
       <Box marginTop={1}>
-        <Text color="gray" italic>
+        <Text color={COLORS.muted} italic>
           Press any key to exit
         </Text>
       </Box>
