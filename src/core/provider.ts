@@ -21,6 +21,7 @@ export interface TokenUsage {
 export interface ModelInfo {
   id: string
   name: string
+  contextLength?: number
 }
 
 export type ModelListingPricing =
@@ -31,6 +32,7 @@ export interface ModelListing {
   id: string
   name: string
   pricing: ModelListingPricing
+  contextLength?: number
 }
 
 export interface Provider {

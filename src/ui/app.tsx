@@ -244,6 +244,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       setInputValue("")
       setSuggestionDismissed(false)
       setSuggestionHighlight(0)
+      setFeedbackEntries((prev) => prev.filter((e) => e.tone !== "error"))
 
       const commandContext: CommandContext = {
         projectPath: context.projectPath,
@@ -576,6 +577,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         <UsagePanel
           width={sidebarWidth}
           model={providerState.getModelInfo().name}
+          contextLength={providerState.getModelInfo().contextLength}
           usage={usage}
           turns={turnCount}
           status={turnStatus}
@@ -957,12 +959,17 @@ export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone 
 interface UsagePanelProps {
   width: number
   model: string
+  contextLength?: number
   usage: TokenUsage
   turns: number
   status: TurnStatus
 }
 
-function UsagePanel({ width, model, usage, turns, status }: UsagePanelProps) {
+function UsagePanel({ width, model, contextLength, usage, turns, status }: UsagePanelProps) {
+  const contextPct =
+    contextLength && contextLength > 0
+      ? Math.min(100, (usage.totalTokens / contextLength) * 100)
+      : 0
   return (
     <Box width={width} flexDirection="column" borderStyle="single" borderColor={COLORS.border} paddingX={1}>
       <Box borderBottom={true} borderBottomColor={COLORS.border} paddingBottom={0} marginBottom={1}>
@@ -983,6 +990,14 @@ function UsagePanel({ width, model, usage, turns, status }: UsagePanelProps) {
           <Text color={COLORS.dimText}>In:</Text>
           <Text color={COLORS.muted}>{formatTokens(usage.inputTokens)} / Out: {formatTokens(usage.outputTokens)}</Text>
         </Box>
+        {contextLength && contextLength > 0 && (
+          <Box justifyContent="space-between">
+            <Text color={COLORS.muted}>Context:</Text>
+            <Text color={contextPct >= 80 ? COLORS.error : contextPct >= 60 ? COLORS.warning : COLORS.text}>
+              {formatTokens(contextLength)} ({contextPct.toFixed(1)}%)
+            </Text>
+          </Box>
+        )}
         <Box justifyContent="space-between">
           <Text color={COLORS.muted}>Cost:</Text>
           <Text color={COLORS.success}>{formatCost(usage.cost)}</Text>

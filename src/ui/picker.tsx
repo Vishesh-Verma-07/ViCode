@@ -9,16 +9,18 @@ interface PickerProps extends PickerRequest {
   rows?: number
 }
 
-export function Picker({ title, items, onSelect, onCancel, rows = 24 }: PickerProps) {
-  const [highlighted, setHighlighted] = useState(0)
+export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultIndex = 0 }: PickerProps) {
+  const [highlighted, setHighlighted] = useState(defaultIndex)
   const [query, setQuery] = useState("")
-  const [scrollOffset, setScrollOffset] = useState(0)
+  const maxVisible = Math.max(1, Math.floor(rows * 0.18))
+  const [scrollOffset, setScrollOffset] = useState(
+    defaultIndex >= maxVisible ? defaultIndex - maxVisible + 1 : 0,
+  )
 
   const matches = items
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => item.label.toLowerCase().includes(query.toLowerCase()))
 
-  const maxVisible = Math.max(1, Math.floor(rows * 0.18))
   const clampedStart = Math.max(
     0,
     Math.min(scrollOffset, Math.max(0, Math.min(highlighted, highlighted - maxVisible + 1))),

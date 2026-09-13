@@ -34,7 +34,7 @@ export function discoverSkills(projectPath: string, globalSkillsDir?: string): S
   if (existsSync(projectSkillsDir)) {
     const projectFiles = getSkillFiles(projectSkillsDir)
     for (const file of projectFiles) {
-      const content = readSkillFile(file)
+      const content = readSkillFile(join(projectSkillsDir, file))
       if (content && isValidSkillContent(content)) {
         const name = extractSkillName(content)
         if (name) {
@@ -47,7 +47,7 @@ export function discoverSkills(projectPath: string, globalSkillsDir?: string): S
   if (existsSync(globalDir)) {
     const globalFiles = getSkillFiles(globalDir)
     for (const file of globalFiles) {
-      const content = readSkillFile(file)
+      const content = readSkillFile(join(globalDir, file))
       if (content && isValidSkillContent(content)) {
         const name = extractSkillName(content)
         if (name) {

@@ -61,6 +61,7 @@ export interface PickerItem {
 export interface PickerRequest {
   title: string
   items: PickerItem[]
+  defaultIndex?: number
 }
 
 export type OpenPicker = (request: PickerRequest) => Promise<number | null>

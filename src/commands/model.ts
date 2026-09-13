@@ -29,6 +29,7 @@ export function createModelCommand(): Command {
       }
 
       const currentModelId = ctx.models.getCurrentModelId()
+      const currentIndex = models.findIndex((m) => m.id === currentModelId)
       const selectedIndex = await ctx.openPicker({
         title: "Switch model",
         items: models.map((model) => ({
@@ -38,6 +39,7 @@ export function createModelCommand(): Command {
               : model.name,
           metadata: `${model.id} · ${formatModelPricing(model.pricing)}`,
         })),
+        defaultIndex: currentIndex >= 0 ? currentIndex : 0,
       })
       if (selectedIndex === null) return ""
 

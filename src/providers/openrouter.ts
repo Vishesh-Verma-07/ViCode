@@ -93,7 +93,13 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig, optio
     },
 
     getModelInfo(): ModelInfo {
-      return { id: modelId, name: modelId }
+      const info: ModelInfo = { id: modelId, name: modelId }
+      const cached = readModelsCache(options?.cachePath ?? defaultModelsCachePath())
+      if (cached) {
+        const match = cached.find((m) => m.id === modelId)
+        if (match?.contextLength) info.contextLength = match.contextLength
+      }
+      return info
     },
 
     listModels(): Promise<ModelListing[]> {
@@ -193,6 +199,7 @@ function parseOpenRouterModels(payload: unknown): ModelListing[] {
     const model = entry as {
       id?: unknown
       name?: unknown
+      context_length?: unknown
       pricing?: { prompt?: unknown; completion?: unknown }
     }
     if (typeof model.id !== "string" || model.id === "") continue
@@ -206,11 +213,16 @@ function parseOpenRouterModels(payload: unknown): ModelListing[] {
       pricing = { kind: "paid", inputPricePerToken, outputPricePerToken }
     }
 
-    listings.push({
+    const listing: ModelListing = {
       id: model.id,
       name: typeof model.name === "string" && model.name !== "" ? model.name : model.id,
       pricing,
-    })
+    }
+    if (typeof model.context_length === "number" && Number.isFinite(model.context_length) && model.context_length > 0) {
+      listing.contextLength = model.context_length
+    }
+
+    listings.push(listing)
   }
 
   return listings
@@ -227,16 +239,20 @@ function toPricePerToken(value: unknown): number {
 
 function isValidModelListing(value: unknown): value is ModelListing {
   if (typeof value !== "object" || value === null) return false
-  const listing = value as { id?: unknown; name?: unknown; pricing?: unknown }
+  const listing = value as { id?: unknown; name?: unknown; pricing?: unknown; contextLength?: unknown }
   if (typeof listing.id !== "string" || typeof listing.name !== "string") return false
   if (typeof listing.pricing !== "object" || listing.pricing === null) return false
   const pricing = listing.pricing as { kind?: unknown }
-  if (pricing.kind === "free") return true
-  if (pricing.kind === "paid") {
-    const rates = listing.pricing as { inputPricePerToken?: unknown; outputPricePerToken?: unknown }
-    return typeof rates.inputPricePerToken === "number" && typeof rates.outputPricePerToken === "number"
+  const validPricing =
+    pricing.kind === "free" ||
+    (pricing.kind === "paid" &&
+      typeof (listing.pricing as { inputPricePerToken?: unknown }).inputPricePerToken === "number" &&
+      typeof (listing.pricing as { outputPricePerToken?: unknown }).outputPricePerToken === "number")
+  if (!validPricing) return false
+  if (listing.contextLength !== undefined && (typeof listing.contextLength !== "number" || listing.contextLength <= 0)) {
+    return false
   }
-  return false
+  return true
 }
 
 function readModelsCache(cachePath: string): ModelListing[] | null {
