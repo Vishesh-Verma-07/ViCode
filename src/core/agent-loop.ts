@@ -2,6 +2,7 @@ import type { Message, ToolDefinition, ToolContext } from "./types"
 import type { Provider, StreamEvent, TokenUsage } from "./provider"
 import { ToolRegistry } from "./tool-registry"
 import { capResult } from "./cap-result"
+import { project, contextBudget } from "./project-context"
 import { log } from "../utils/logger"
 
 const DOOM_LOOP_THRESHOLD = 3
@@ -69,6 +70,7 @@ export async function runAgentLoop(
 ): Promise<AgentLoopResult> {
   const allMessages = [...messages]
   const toolCallHistory: string[] = []
+  const budget = contextBudget(provider)
   let totalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
   let doomLoopDetected = false
 
@@ -86,7 +88,8 @@ export async function runAgentLoop(
     let stepUsage: TokenUsage | undefined
 
     try {
-      for await (const event of provider.streamChat(allMessages, tools, systemPrompt, abortSignal)) {
+      const modelContext = project(allMessages, budget)
+      for await (const event of provider.streamChat(modelContext, tools, systemPrompt, abortSignal)) {
         if (abortSignal?.aborted) break
 
         //@ts-ignore

@@ -8,6 +8,8 @@ import { join } from "path"
 import { writeFileTool } from "../tools/write-file"
 import { bashTool } from "../tools/bash"
 import { MAX_TOOL_RESULT_BYTES, VICODE_TRUNCATION_SENTINEL } from "./cap-result"
+import { CONTEXT_BUDGET_RATIO } from "./constants"
+import { project } from "./project-context"
 
 function byteLength(s: string): number {
   return new TextEncoder().encode(s).length
@@ -695,6 +697,79 @@ describe("agent-loop", () => {
       expect(leaked).toHaveLength(1)
       expect(byteLength(leaked[0]!)).toBeLessThanOrEqual(MAX_TOOL_RESULT_BYTES)
       expect(leaked[0]!).toContain(VICODE_TRUNCATION_SENTINEL)
+    })
+
+    it("gives the provider a context that fits the budget when history exceeds it", async () => {
+      const giantResult = "z".repeat(40_000)
+      const contextLength = 8_000
+      const budget = Math.floor(contextLength * CONTEXT_BUDGET_RATIO)
+
+      const giantTool: ToolDefinition = {
+        name: "leak",
+        description: "returns a giant blob",
+        parameters: z.object({}),
+        dangerous: false,
+        execute: async () => giantResult,
+      }
+
+      const receivedHistory: Message[][] = []
+      const capturingProvider: Provider = {
+        async *streamChat(messages: Message[]): AsyncIterable<StreamEvent> {
+          receivedHistory.push([...messages])
+          const turn = receivedHistory.length
+          if (turn === 1) {
+            yield { type: "tool-call-start", toolCallId: "c1", toolName: "leak" }
+            yield { type: "tool-call-end", toolCallId: "c1", toolName: "leak", args: {} }
+            yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+          } else {
+            yield { type: "text-delta", text: "done" }
+            yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+          }
+        },
+        getModelInfo() {
+          return { id: "mock", name: "Mock", contextLength }
+        },
+        async listModels() {
+          return []
+        },
+      }
+
+      await runAgentLoop(
+        [userMessage("run")],
+        capturingProvider,
+        [giantTool],
+        "system",
+        mockContext,
+        createMockCallbacks(),
+      )
+
+      expect(receivedHistory.length).toBeGreaterThanOrEqual(2)
+
+      const secondTurn = receivedHistory[1]!
+      const projectedAgain = project(secondTurn, budget)
+      expect(secondTurn).toEqual(projectedAgain)
+
+      const trimmedMarkerSeen = secondTurn.some((m) =>
+        m.content.some(
+          (c) => c.type === "text" && (c as { text: string }).text.includes("tokens omitted"),
+        ),
+      )
+      expect(trimmedMarkerSeen).toBe(true)
+
+      const turn1 = receivedHistory[0]!
+      expect(project(turn1, budget)).toEqual(turn1)
+
+      function estimateTokens(m: { content: Array<{ type: string; text?: string; result?: string; args?: unknown }> }): number {
+        let t = 4
+        for (const p of m.content) {
+          if (p.type === "text" && p.text) t += Math.ceil(byteLength(p.text) / 4)
+          else if (p.type === "tool-result" && p.result) t += Math.ceil(byteLength(p.result) / 4)
+        }
+        return t
+      }
+      let totalTokens = 0
+      for (const m of secondTurn) totalTokens += estimateTokens(m)
+      expect(totalTokens).toBeLessThanOrEqual(budget)
     })
   })
 })
