@@ -1,6 +1,7 @@
 import type { Message, ToolDefinition, ToolContext } from "./types"
 import type { Provider, StreamEvent, TokenUsage } from "./provider"
 import { ToolRegistry } from "./tool-registry"
+import { capResult } from "./cap-result"
 import { log } from "../utils/logger"
 
 const DOOM_LOOP_THRESHOLD = 3
@@ -196,6 +197,7 @@ export async function runAgentLoop(
         result = await executeTool(toolDef, tc.args, context)
       }
 
+      result = capResult(result)
       callbacks.onToolResult(tc.toolCallId, tc.toolName, result)
 
       allMessages.push({
