@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "fs"
 import { join } from "path"
+import { MAX_TOOL_RESULT_BYTES } from "./cap-result"
 
 const BASE_SYSTEM_PROMPT = `You are ViCode, an interactive terminal AI coding agent. You help developers write, understand, and modify code.
 
@@ -34,6 +35,14 @@ You have access to the following tools:
 - When using bash, prefer read-only commands first (ls, cat, grep) before destructive ones.
 - Be careful with rm, git push, and other irreversible commands.
 - Explain what you're about to do before doing it.
+
+## Truncation Markers
+
+Tool results are capped at ${MAX_TOOL_RESULT_BYTES} bytes and the model context is budgeted. When content is cut, the result carries a truncation marker — lines ringed by \`VICODE_TRUNCATION_SENTINEL\` naming how much was omitted. A marker means the text you see is not the full result; do not rely on it as exact text.
+
+When you see a truncation marker, re-query narrowly before relying on the content — with a narrower search or a targeted command.
+
+Before edit_file, if the region you intend to change was covered by a marked read, re-read the file fully first so your oldText matches the on-disk bytes exactly — edit_file only replaces a verbatim substring.
 
 ## Response Format
 

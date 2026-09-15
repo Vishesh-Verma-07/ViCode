@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { assembleSystemPrompt } from "./system-prompt"
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs"
 import { join } from "path"
+import { VICODE_TRUNCATION_SENTINEL } from "./cap-result"
+
+const TRUNCATION_MARKER_NAME = VICODE_TRUNCATION_SENTINEL.replace(/\u0000/g, "")
 
 const tmpDir = join(import.meta.dir, "__tmp_system_prompt_test")
 
@@ -90,5 +93,24 @@ describe("assembleSystemPrompt", () => {
   it("does not throw when .vicode/system.md does not exist", () => {
     const result = assembleSystemPrompt({ projectPath: tmpDir })
     expect(result).toBeDefined()
+  })
+
+  it("explains that a truncation marker means content was cut and states the re-query response", () => {
+    const result = assembleSystemPrompt({ projectPath: tmpDir })
+    const section = result.toLowerCase().slice(result.toLowerCase().indexOf("truncation markers"))
+    expect(result).toContain(TRUNCATION_MARKER_NAME)
+    expect(section).toContain("truncation marker")
+    expect(section).toMatch(/cut|omitted/)
+    expect(section).toMatch(/re-?quer/)
+    expect(section).toContain("narrow")
+  })
+
+  it("guides the model to re-read exactly before edit_file when relevant content was marked", () => {
+    const result = assembleSystemPrompt({ projectPath: tmpDir })
+    const section = result.toLowerCase().slice(result.toLowerCase().indexOf("truncation markers"))
+    expect(section).toContain("edit_file")
+    expect(section).toMatch(/re-?read/)
+    expect(section).toMatch(/mark/)
+    expect(section).toMatch(/oldtext/)
   })
 })
