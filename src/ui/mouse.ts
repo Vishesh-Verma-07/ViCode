@@ -26,7 +26,7 @@ export interface MouseInputFilterState {
 export const MOUSE_INPUT_FILTER_INITIAL: MouseInputFilterState = { payloadRemaining: 0 }
 
 export interface MouseInputFilterResult {
-  readonly drop: boolean
+  readonly keptInput: string
   readonly state: MouseInputFilterState
 }
 
@@ -35,13 +35,16 @@ export function filterMouseInput(
   state: MouseInputFilterState = MOUSE_INPUT_FILTER_INITIAL,
 ): MouseInputFilterResult {
   if (state.payloadRemaining > 0) {
-    return { drop: true, state: { payloadRemaining: state.payloadRemaining - 1 } }
+    if (input.length > state.payloadRemaining) {
+      return { keptInput: "", state: MOUSE_INPUT_FILTER_INITIAL }
+    }
+    return { keptInput: "", state: { payloadRemaining: state.payloadRemaining - input.length } }
   }
   if (input === X10_PREFIX) {
-    return { drop: true, state: { payloadRemaining: X10_PAYLOAD_BYTES } }
+    return { keptInput: "", state: { payloadRemaining: X10_PAYLOAD_BYTES } }
   }
   if (MOUSE_SGR_INPUT.test(input) || CONTROL_CHARACTERS.test(input)) {
-    return { drop: true, state }
+    return { keptInput: "", state }
   }
-  return { drop: false, state }
+  return { keptInput: input, state }
 }

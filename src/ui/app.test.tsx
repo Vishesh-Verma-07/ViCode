@@ -2098,7 +2098,7 @@ describe("Error surfacing", () => {
 })
 
 describe("Chat input mouse-byte immunity", () => {
-  it("ignores X10-encoded mouse bytes while typing still works", async () => {
+  function setup() {
     const instance = render(
       <App
         provider={createStubProvider([])}
@@ -2108,26 +2108,143 @@ describe("Chat input mouse-byte immunity", () => {
         commands={createTestCommands()}
       />,
     )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    return { ...instance, frameText }
+  }
+
+  it("ignores a coalesced X10 click (all payload bytes in one burst) while typing still works", async () => {
+    const { frameText, stdin, unmount } = setup()
     try {
-      const frameText = () =>
-        (instance.lastFrame() ?? "")
-          .replace(/\u001B\[[0-9;]*m/g, "")
-          .replace(/\s+/g, " ")
       await until(() => frameText().includes("Type your message"))
 
-      instance.stdin.write("\u001B[M !!")
+      stdin.write("\u001B[M !!")
       await new Promise((r) => setTimeout(r, 100))
-      expect(frameText()).not.toMatch(/!!/)
+      expect(frameText()).not.toContain("!")
+      expect(frameText()).not.toContain("&")
 
       for (const char of "hello") {
-        instance.stdin.write(char)
+        stdin.write(char)
         await new Promise((r) => setTimeout(r, 5))
       }
       expect(frameText()).toContain("hello")
+      expect(frameText()).not.toContain("!")
     } finally {
-      instance.unmount()
+      unmount()
     }
   }, 15000)
+
+  it("drops split X10 clicks delivered byte-by-byte after the [M prefix", async () => {
+    const { frameText, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      stdin.write("\x1B[M")
+      await new Promise((r) => setTimeout(r, 30))
+      stdin.write("!")
+      await new Promise((r) => setTimeout(r, 30))
+      stdin.write("&")
+      await new Promise((r) => setTimeout(r, 30))
+
+      expect(frameText()).not.toContain("!")
+      expect(frameText()).not.toContain("&")
+
+      for (const char of "ok") {
+        stdin.write(char)
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      expect(frameText()).toContain("ok")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("drops repeated X10 clicks (bundled and split) without leaking junk or swallowing the next keystroke", async () => {
+    const { frameText, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      for (let i = 0; i < 3; i++) {
+        stdin.write("\u001B[M !!")
+        await new Promise((r) => setTimeout(r, 10))
+      }
+      stdin.write("\x1B[M")
+      await new Promise((r) => setTimeout(r, 10))
+      stdin.write("!")
+      await new Promise((r) => setTimeout(r, 10))
+      stdin.write("&")
+      await new Promise((r) => setTimeout(r, 10))
+      stdin.write("\u001B[M !!")
+      await new Promise((r) => setTimeout(r, 10))
+
+      expect(frameText()).not.toContain("!")
+      expect(frameText()).not.toContain("&")
+
+      for (const char of "hi") {
+        stdin.write(char)
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      expect(frameText()).toContain("hi")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("wheel-up SGR press scrolls chat; click SGR does not type characters", async () => {
+    const provider = createStubProvider([], [
+      { type: "text-delta", text: Array.from({ length: 200 }, (_, i) => `filler ${i}`).join("\n") },
+      { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ])
+    const { frameText, typeAndSubmit, stdin, lastFrame, unmount } = (() => {
+      const instance = render(
+        <App
+          provider={provider}
+          tools={[]}
+          systemPrompt=""
+          context={{ projectPath: "/tmp/wheel-click-test" }}
+          commands={createTestCommands()}
+        />,
+      )
+      const ft = () =>
+        (instance.lastFrame() ?? "")
+          .replace(/\u001B\[[0-9;]*m/g, "")
+          .replace(/\s+/g, " ")
+      async function ts(text: string) {
+        for (const c of text) { instance.stdin.write(c); await new Promise((r) => setTimeout(r, 5)) }
+        instance.stdin.write("\r")
+      }
+      return { ...instance, frameText: ft, typeAndSubmit: ts }
+    })()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeAndSubmit("fill screen")
+      await until(() => frameText().includes("Done in"), 15000)
+
+      let scrolledUp = false
+      for (let i = 0; i < 25 && !scrolledUp; i++) {
+        stdin.write("\u001B[<64;10;5M")
+        await new Promise((r) => setTimeout(r, 20))
+        scrolledUp = frameText().includes("End to return")
+      }
+      expect(scrolledUp).toBe(true)
+
+      stdin.write("\u001B[<0;10;5M")
+      await new Promise((r) => setTimeout(r, 50))
+      const frameAfterClick = frameText()
+      expect(frameAfterClick).not.toContain("<0;10;5M")
+
+      for (const char of "typed after click") {
+        stdin.write(char)
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      expect(frameText()).toContain("typed after click")
+      expect(frameText()).not.toMatch(/<\d+;\d+;\d+M/)
+    } finally {
+      unmount()
+    }
+  }, 30000)
 })
 
 describe("ChatInput word deletion", () => {

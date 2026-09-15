@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
 import { resolve } from "path"
 import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
-import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
+import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { COLORS, ICONS, BORDER, ASCII_BANNER } from "./theme"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
@@ -878,11 +878,8 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
   )
 }
 
-const MOUSE_SGR_INPUT = /^\[?<\d+;\d+;\d+[Mm]$/
-const X10_PAYLOAD_IGNORE_MS = 60
-
 function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string) => void }) {
-  const ignoreUntilRef = useRef(0)
+  const filterStateRef = useRef<MouseInputFilterState>(MOUSE_INPUT_FILTER_INITIAL)
   const valueRef = useRef(value)
 
   useEffect(() => {
@@ -927,14 +924,11 @@ function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string
       return
     }
     if (!input) return
-    if (input === "[M") {
-      ignoreUntilRef.current = Date.now() + X10_PAYLOAD_IGNORE_MS
-      return
+    const result = filterMouseInput(input, filterStateRef.current)
+    filterStateRef.current = result.state
+    if (result.keptInput.length > 0) {
+      commit(valueRef.current + result.keptInput)
     }
-    if (Date.now() < ignoreUntilRef.current) return
-    if (MOUSE_SGR_INPUT.test(input)) return
-    if (/[\x00-\x1f\x7f]/.test(input)) return
-    commit(valueRef.current + input)
   })
 
   return (

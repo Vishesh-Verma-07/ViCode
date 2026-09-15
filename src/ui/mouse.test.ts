@@ -48,57 +48,82 @@ describe("filterMouseInput", () => {
     for (const input of inputs) {
       const result = filterMouseInput(input, state)
       state = result.state
-      if (!result.drop) kept.push(input)
+      kept.push(result.keptInput)
     }
     return { kept, state }
   }
 
+  function keptCat(inputs: string[], initial = MOUSE_INPUT_FILTER_INITIAL) {
+    return feed(inputs, initial).kept.join("")
+  }
+
   it("drops the [M prefix and the two X10 payload bytes that follow it", () => {
     const prefix = filterMouseInput("[M", MOUSE_INPUT_FILTER_INITIAL)
-    expect(prefix.drop).toBe(true)
+    expect(prefix.keptInput).toBe("")
     expect(prefix.state.payloadRemaining).toBe(2)
 
     const byte1 = filterMouseInput("!", prefix.state)
-    expect(byte1.drop).toBe(true)
+    expect(byte1.keptInput).toBe("")
     expect(byte1.state.payloadRemaining).toBe(1)
 
     const byte2 = filterMouseInput("!", byte1.state)
-    expect(byte2.drop).toBe(true)
+    expect(byte2.keptInput).toBe("")
     expect(byte2.state.payloadRemaining).toBe(0)
   })
 
   it("rejects SGR-form mouse sequences", () => {
     for (const sgr of ["<0;10;5M", "[<0;10;5M", "\u001B[<0;10;5M", "<64;10;5M"]) {
       const result = filterMouseInput(sgr, MOUSE_INPUT_FILTER_INITIAL)
-      expect(result.drop).toBe(true)
+      expect(result.keptInput).toBe("")
     }
   })
 
   it("rejects control characters", () => {
     for (const control of ["\r", "\n", "\u0000", "\u001b", "\u007f"]) {
       const result = filterMouseInput(control, MOUSE_INPUT_FILTER_INITIAL)
-      expect(result.drop).toBe(true)
+      expect(result.keptInput).toBe("")
     }
   })
 
   it("passes ordinary printable keystrokes through when not armed", () => {
     const { kept, state } = feed(["h", "e", "l", "l", "o"])
-    expect(kept).toEqual(["h", "e", "l", "l", "o"])
+    expect(kept.join("")).toBe("hello")
     expect(state).toEqual(MOUSE_INPUT_FILTER_INITIAL)
   })
 
   it("preserves a real keystroke interleaved among payload bytes once the arm is spent", () => {
-    const { kept } = feed(["[M", "q", "w", "t"])
-    expect(kept).toEqual(["t"])
+    expect(keptCat(["[M", "q", "w", "t"])).toBe("t")
   })
 
   it("consumes a real keystroke arriving while a payload byte is still armed", () => {
-    const { kept } = feed(["[M", "a", "!", "."])
-    expect(kept).toEqual(["."])
+    expect(keptCat(["[M", "a", "!", "."])).toBe(".")
   })
 
   it("fully ignores multiple consecutive clicks while preserving typed characters", () => {
-    const { kept } = feed(["[M", "a", "b", "h", "i", "[M", "c", "d", "x", "y"])
-    expect(kept).toEqual(["h", "i", "x", "y"])
+    expect(keptCat(["[M", "a", "b", "h", "i", "[M", "c", "d", "x", "y"])).toBe("hixy")
+  })
+
+  it("consumes bundles no larger than the arm and keeps later typing", () => {
+    const bundled = filterMouseInput("[M", MOUSE_INPUT_FILTER_INITIAL)
+    expect(bundled.keptInput).toBe("")
+    expect(bundled.state.payloadRemaining).toBe(2)
+
+    const chunk = filterMouseInput("!!", bundled.state)
+    expect(chunk.keptInput).toBe("")
+    expect(chunk.state.payloadRemaining).toBe(0)
+  })
+
+  it("drops a coalesced payload bundle larger than the arm in full", () => {
+    const chunk = filterMouseInput(" !!", { payloadRemaining: 2 })
+    expect(chunk.keptInput).toBe("")
+    expect(chunk.state).toEqual(MOUSE_INPUT_FILTER_INITIAL)
+    const chunkSpent = filterMouseInput("\\x1b", { payloadRemaining: 1 })
+    expect(chunkSpent.keptInput).toBe("")
+    expect(chunkSpent.state).toEqual(MOUSE_INPUT_FILTER_INITIAL)
+  })
+
+  it("passes nothing through once the arm is exhausted by a bundle", () => {
+    expect(keptCat(["[M", "!!", "x"])).toBe("x")
+    expect(keptCat(["[M", " !!", "x"])).toBe("x")
   })
 })
