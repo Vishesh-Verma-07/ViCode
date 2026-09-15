@@ -7,6 +7,11 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 import { writeFileTool } from "../tools/write-file"
 import { bashTool } from "../tools/bash"
+import { MAX_TOOL_RESULT_BYTES, VICODE_TRUNCATION_SENTINEL } from "./cap-result"
+
+function byteLength(s: string): number {
+  return new TextEncoder().encode(s).length
+}
 
 function createMockProvider(events: StreamEvent[][]): Provider {
   let callIndex = 0
@@ -668,6 +673,28 @@ describe("agent-loop", () => {
         }),
       )
       expect(approvals).toEqual(["bash"])
+    })
+
+    it("caps a giant tool result to 64 KiB before it reaches onToolResult", async () => {
+      const leaked: string[] = []
+      const giantTool: ToolDefinition = {
+        name: "leak",
+        description: "returns a giant blob",
+        parameters: z.object({}),
+        dangerous: false,
+        execute: async () => "z".repeat(MAX_TOOL_RESULT_BYTES * 3),
+      }
+      await runAgentLoop(
+        [userMessage("run")],
+        toolCallProvider("leak", {}),
+        [giantTool],
+        "system",
+        mockContext,
+        createMockCallbacks({ onToolResult: (_id, _name, result) => { leaked.push(result) } }),
+      )
+      expect(leaked).toHaveLength(1)
+      expect(byteLength(leaked[0]!)).toBeLessThanOrEqual(MAX_TOOL_RESULT_BYTES)
+      expect(leaked[0]!).toContain(VICODE_TRUNCATION_SENTINEL)
     })
   })
 })
