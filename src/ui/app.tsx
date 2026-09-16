@@ -16,6 +16,7 @@ import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import { Picker } from "./picker"
 import { CodeBlock } from "./code-block"
+import { DiffView } from "./diff-view"
 import { WelcomeScreen } from "./welcome"
 import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
 import { log } from "../utils/logger"
@@ -652,11 +653,6 @@ function summarizeResult(result: string): { text: string; lines: number } {
   return { text: `${head.join("\n")}\n… +${lines.length - RESULT_SUMMARY_LINES} more lines`, lines: RESULT_SUMMARY_LINES + 1 }
 }
 
-function diffLabel(diff: string): string {
-  const line = diff.split("\n").find((l) => l.startsWith("+++ "))
-  return line ? line.replace(/^\+\+\+ \S?\s*/, "").trim() || "(diff)" : "(diff)"
-}
-
 function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
@@ -776,7 +772,7 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
           blocks.push({
             key: `${msg.id}:result:${c.toolCallId}`,
             lines,
-            node: <DiffView key={`${msg.id}:result:${c.toolCallId}`} filePath={diffLabel(diff)} diff={diff} />,
+            node: <DiffView key={`${msg.id}:result:${c.toolCallId}`} diff={diff} />,
           })
         } else {
           const summary = summarizeResult(message)
@@ -1039,37 +1035,6 @@ function UsagePanel({ width, model, contextLength, usage, turns, status }: Usage
       </Box>
       <Box marginTop={1} borderTop={true} borderTopColor={COLORS.border} paddingTop={0}>
         <Text color={COLORS.dimText} italic>Ctrl+C to exit</Text>
-      </Box>
-    </Box>
-  )
-}
-
-function DiffView({ filePath, diff }: { filePath: string; diff: string }) {
-  const lines = diff.split("\n")
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color={COLORS.accent} bold>
-        {ICONS.arrow} {filePath}
-      </Text>
-      <Box
-        flexDirection="column"
-        backgroundColor={COLORS.codeBlockShade}
-        borderStyle="single"
-        borderColor={COLORS.codeBlockBorder}
-        paddingX={1}
-      >
-        {lines.map((line, i) => {
-          if (line.startsWith("+") && !line.startsWith("+++")) {
-            return <Text key={i} color={COLORS.success}>{line}</Text>
-          }
-          if (line.startsWith("-") && !line.startsWith("---")) {
-            return <Text key={i} color={COLORS.error}>{line}</Text>
-          }
-          if (line.startsWith("@@")) {
-            return <Text key={i} color={COLORS.primary}>{line}</Text>
-          }
-          return <Text key={i} color={COLORS.dimText}>{line}</Text>
-        })}
       </Box>
     </Box>
   )
