@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
 import { resolve } from "path"
+import { readdirSync } from "fs"
 import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
 import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { COLORS, ICONS } from "./theme"
@@ -14,10 +15,12 @@ import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/comma
 import { createSession, saveSession } from "../core/session"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import { Picker } from "./picker"
+import { CodeBlock } from "./code-block"
 import { WelcomeScreen } from "./welcome"
 import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
 import { log } from "../utils/logger"
 import { discoverSkills } from "../core/skills"
+import { tokenizeCodeText } from "../core/code-tokenizer"
 
 interface ToolCallEntry {
   id: string
@@ -160,11 +163,9 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const atVisible = !isStreaming && !pickerRequest && !pendingApproval && !showExitSummary && view === "chat" && firstWord.startsWith("@") && !suggestionDismissed
   const clampedSuggestionHighlight = Math.min(suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
   const atFiles = useMemo(() => {
-    const fs = require("fs")
-    const path = require("path")
     const projectDir = context.projectPath
     try {
-      const entries = fs.readdirSync(projectDir, { withFileTypes: true })
+      const entries = readdirSync(projectDir, { withFileTypes: true })
       return entries
         .filter((e) => e.isFile())
         .map((e) => e.name)
@@ -710,13 +711,48 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
     }
   }
 
+  const addCodeAwareBlocks = (
+    keyBase: string,
+    text: string,
+    opts?: { prefix?: string; color?: "blue" | "green" },
+  ) => {
+    const segments = tokenizeCodeText(text)
+    let proseAcc = ""
+    let firstTextDone = false
+    let nodeIdx = 0
+    const flushProse = () => {
+      if (!proseAcc) return
+      addTextBlocks(`${keyBase}:p${nodeIdx}`, proseAcc, {
+        prefix: firstTextDone ? undefined : opts?.prefix,
+        color: opts?.color,
+      })
+      firstTextDone = true
+      proseAcc = ""
+    }
+    for (const seg of segments) {
+      if (seg.kind === "fenced") {
+        flushProse()
+        nodeIdx++
+        blocks.push({
+          key: `${keyBase}:code${nodeIdx}`,
+          lines: estimate(seg.text) + (seg.language ? 1 : 0) + 2,
+          text: seg.text,
+          node: <CodeBlock key={`${keyBase}:code${nodeIdx}`} code={seg.text} language={seg.language} />,
+        })
+      } else {
+        proseAcc += seg.text
+      }
+    }
+    flushProse()
+  }
+
   for (const msg of messages) {
     if (msg.role === "user") {
       addTextBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
     } else if (msg.role === "assistant") {
       const text = textContentOf(msg)
       if (text) {
-        addTextBlocks(msg.id, text, { prefix: "vicode: ", color: COLORS.success })
+        addCodeAwareBlocks(msg.id, text, { prefix: "vicode: ", color: COLORS.success })
       }
       for (const c of msg.content) {
         if (c.type !== "tool-call") continue
@@ -782,7 +818,7 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
     })
   }
   if (currentText) {
-    addTextBlocks("current-stream", currentText)
+    addCodeAwareBlocks("current-stream", currentText)
   }
 
   const totalLines = blocks.reduce((n, b) => n + b.lines, 0)

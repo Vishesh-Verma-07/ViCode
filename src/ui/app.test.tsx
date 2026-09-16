@@ -69,6 +69,13 @@ function createTestCommands(): Command[] {
   return registry.getAll()
 }
 
+function normalizeFrame(lastFrame: () => string | undefined): () => string {
+  return () =>
+    (lastFrame() ?? "")
+      .replace(/\u001B\[[0-9;]*m/g, "")
+      .replace(/\s+/g, " ")
+}
+
 describe("extractDiff", () => {
   it("returns result as-is when no diff markers present", () => {
     const result = "File edited successfully: app.ts"
@@ -1118,13 +1125,6 @@ describe("App streaming guard for commands", () => {
 })
 
 describe("App status bar indicator", () => {
-  function normalizeFrame(lastFrame: () => string | undefined): () => string {
-    return () =>
-      (lastFrame() ?? "")
-        .replace(/\u001B\[[0-9;]*m/g, "")
-        .replace(/\s+/g, " ")
-  }
-
   function setupWithProvider(provider: Provider, tools: ToolDefinition[] = []) {
     const instance = render(
       <App
@@ -1725,7 +1725,80 @@ describe("App chat scrolling", () => {
     } finally {
       unmount()
     }
-  }, 45000)
+  }, 15000)
+})
+
+describe("App fenced code block rendering", () => {
+  function setupFencedAssistant(text: string) {
+    const events: StreamEvent[] = [
+      { type: "text-delta", text },
+      { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ]
+    const provider = createStubProvider([], events)
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/code-block-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { ...instance, frameText, typeAndSubmit }
+  }
+
+  it("renders fenced assistant text as a framed Code Block with no literal backticks and a border in the frame", async () => {
+    const fencedText = "Here is a snippet:\n```bash\necho hi\n```\nDone."
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupFencedAssistant(fencedText)
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("show me code")
+      await until(() => frameText().includes("echo hi"))
+
+      const out = frameText()
+      expect(out).not.toContain("```")
+      expect(/[┌└]/.test(out)).toBe(true)
+      expect(out).toContain("bash")
+      expect(out).toContain("echo hi")
+      expect(out).toContain("Done.")
+      expect(out).toContain("Here is a snippet:")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("shows fenced code from stored assistant messages (after turn completes)", async () => {
+    const fencedText = "Run this:\n```js\nconst x = 1\n```\nDone"
+    const { lastFrame, frameText, typeAndSubmit, unmount } = setupFencedAssistant(fencedText)
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("run it")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      await until(() => frameText().includes("Done"))
+
+      const out = frameText()
+      expect(out).not.toContain("```")
+      expect(out).toContain("const x = 1")
+      expect(out).toContain("js")
+      expect(/[┌└]/.test(out)).toBe(true)
+      expect(out).toContain("vicode:")
+    } finally {
+      unmount()
+    }
+  }, 30000)
 })
 
 describe("App mouse wheel scrolling", () => {
