@@ -7,10 +7,10 @@ export const COLORS = {
   muted: "gray",
   text: "white",
   dimText: "#666666",
-  highlight: "cyanBright",
   border: "#444444",
-  borderFocused: "cyan",
-  surface: "#1a1a2e",
+  appBackground: "#000000",
+  codeBlockShade: "#1a1a1a",
+  codeBlockBorder: "#333333",
 } as const
 
 export const ICONS = {
@@ -28,12 +28,6 @@ export const ICONS = {
   cross: "✗",
   hourglass: "⏳",
   sparkle: "✦",
-} as const
-
-export const BORDER = {
-  style: "round" as const,
-  color: COLORS.border,
-  focusedColor: COLORS.borderFocused,
 } as const
 
 export const ASCII_BANNER = [

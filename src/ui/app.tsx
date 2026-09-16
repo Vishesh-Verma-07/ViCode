@@ -3,7 +3,7 @@ import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
 import { resolve } from "path"
 import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
 import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
-import { COLORS, ICONS, BORDER, ASCII_BANNER } from "./theme"
+import { COLORS, ICONS } from "./theme"
 import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
@@ -524,7 +524,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
 
   if (view === "home") {
     return (
-      <Box flexDirection="column" width={columns} height={rows}>
+      <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
         <WelcomeScreen
           provider={providerState}
           onNewChat={enterChat}
@@ -555,7 +555,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
   const chatWidth = columns - sidebarWidth - 1
 
   return (
-    <Box flexDirection="column" width={columns} height={rows}>
+    <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
       <Box flexDirection="row" flexGrow={1}>
         <ChatPanel
           width={chatWidth}
@@ -1015,18 +1015,26 @@ function DiffView({ filePath, diff }: { filePath: string; diff: string }) {
       <Text color={COLORS.accent} bold>
         {ICONS.arrow} {filePath}
       </Text>
-      {lines.map((line, i) => {
-        if (line.startsWith("+") && !line.startsWith("+++")) {
-          return <Text key={i} color={COLORS.success}>{line}</Text>
-        }
-        if (line.startsWith("-") && !line.startsWith("---")) {
-          return <Text key={i} color={COLORS.error}>{line}</Text>
-        }
-        if (line.startsWith("@@")) {
-          return <Text key={i} color={COLORS.primary}>{line}</Text>
-        }
-        return <Text key={i} color={COLORS.dimText}>{line}</Text>
-      })}
+      <Box
+        flexDirection="column"
+        backgroundColor={COLORS.codeBlockShade}
+        borderStyle="single"
+        borderColor={COLORS.codeBlockBorder}
+        paddingX={1}
+      >
+        {lines.map((line, i) => {
+          if (line.startsWith("+") && !line.startsWith("+++")) {
+            return <Text key={i} color={COLORS.success}>{line}</Text>
+          }
+          if (line.startsWith("-") && !line.startsWith("---")) {
+            return <Text key={i} color={COLORS.error}>{line}</Text>
+          }
+          if (line.startsWith("@@")) {
+            return <Text key={i} color={COLORS.primary}>{line}</Text>
+          }
+          return <Text key={i} color={COLORS.dimText}>{line}</Text>
+        })}
+      </Box>
     </Box>
   )
 }
