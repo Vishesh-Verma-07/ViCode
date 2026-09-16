@@ -203,7 +203,7 @@ describe("App command interception", () => {
     }
   })
 
-  it("renders command feedback as display-only entries excluded from provider messages and saved session JSON", async () => {
+  it("renders command feedback as display-only entries excluded from provider messages and saved session JSON, and does not repeat it in later responses", async () => {
     const { stdin, lastFrame, capturedMessages, sessionsDir, typeAndSubmit, unmount } = setup()
     try {
       await until(() => (lastFrame() ?? "").includes("Type your message"))
@@ -216,7 +216,7 @@ describe("App command interception", () => {
       await until(() => (lastFrame() ?? "").includes("hello world"))
 
       const frame = lastFrame() ?? ""
-      expect(frame).toContain("noop done")
+      expect(frame).not.toContain("noop done")
       expect(frame).toContain("hello world")
 
       for (const messages of capturedMessages) {

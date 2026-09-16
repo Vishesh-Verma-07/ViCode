@@ -244,7 +244,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       setInputValue("")
       setSuggestionDismissed(false)
       setSuggestionHighlight(0)
-      setFeedbackEntries((prev) => prev.filter((e) => e.tone !== "error"))
+      setFeedbackEntries([])
 
       const commandContext: CommandContext = {
         projectPath: context.projectPath,
