@@ -2,6 +2,7 @@ import React, { useState } from "react"
 import { Box, Text, useInput } from "ink"
 import type { PickerRequest } from "../core/types"
 import { moveHighlight } from "./command-suggestion"
+import { COLORS } from "./theme"
 
 interface PickerProps extends PickerRequest {
   onSelect: (index: number) => void
@@ -52,15 +53,15 @@ export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultInd
   })
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
-      <Text bold color="cyan">
+    <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={1}>
+      <Text bold color={COLORS.primary}>
         {title}
       </Text>
-      <Text color={query ? "cyan" : "gray"} wrap="truncate-end">
+      <Text color={query ? COLORS.primary : COLORS.muted} wrap="truncate-end">
         {query ? `Search: ${query}` : "Type to search | Up/Down | Enter | Esc"}
       </Text>
       {matches.length === 0 ? (
-        <Text color="gray" italic>
+        <Text color={COLORS.muted} italic>
           No matching items
         </Text>
       ) : (
@@ -69,16 +70,16 @@ export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultInd
             const isHighlighted = clampedStart + i === highlighted
             return (
               <Box key={`${item.label}_${index}`} flexDirection="column">
-                <Text color={isHighlighted ? "cyan" : undefined} bold={isHighlighted}>
+                <Text color={isHighlighted ? COLORS.primary : undefined} bold={isHighlighted}>
                   {isHighlighted ? "> " : "  "}
                   {item.label}
                 </Text>
-                {item.metadata && <Text color="gray">  {item.metadata}</Text>}
+                {item.metadata && <Text color={COLORS.muted}>  {item.metadata}</Text>}
               </Box>
             )
           })}
           {matches.length > maxVisible && (
-            <Text color="gray">
+            <Text color={COLORS.muted}>
               ({clampedStart + 1}-{Math.min(clampedStart + maxVisible, matches.length)} of {matches.length})
             </Text>
           )}

@@ -1,7 +1,10 @@
 import React from "react"
 import { describe, it, expect } from "bun:test"
 import { render } from "ink-testing-library"
+import { renderToString } from "ink"
 import { CommandSuggestion, filterCommands, moveHighlight, NO_COMMANDS_MATCH_MESSAGE } from "./command-suggestion"
+import { COLORS } from "./theme"
+import { ansiCode } from "./ansi-test"
 import type { Command } from "../core/types"
 
 const commands: Command[] = [
@@ -78,5 +81,15 @@ describe("CommandSuggestion", () => {
     const { lastFrame } = render(<CommandSuggestion items={[]} highlightIndex={0} />)
     const frame = lastFrame() ?? ""
     expect(frame).toContain(NO_COMMANDS_MATCH_MESSAGE)
+  })
+
+  it("colors the highlight and description from the palette tokens", () => {
+    const frame = renderToString(
+      <CommandSuggestion items={commands} highlightIndex={2} />,
+      { columns: 100 },
+    )
+    expect(frame).toContain("> /session")
+    expect(frame).toContain(ansiCode(COLORS.primary))
+    expect(frame).toContain(ansiCode(COLORS.muted))
   })
 })

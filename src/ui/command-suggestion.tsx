@@ -1,6 +1,7 @@
 import React from "react"
 import { Box, Text } from "ink"
 import type { Command } from "../core/types"
+import { COLORS } from "./theme"
 
 export const NO_COMMANDS_MATCH_MESSAGE = "no commands match"
 
@@ -20,9 +21,9 @@ export interface CommandSuggestionProps {
 
 export function CommandSuggestion({ items, highlightIndex }: CommandSuggestionProps) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={1}>
       {items.length === 0 ? (
-        <Text color="gray" italic>
+        <Text color={COLORS.muted} italic>
           {NO_COMMANDS_MATCH_MESSAGE}
         </Text>
       ) : (
@@ -30,10 +31,10 @@ export function CommandSuggestion({ items, highlightIndex }: CommandSuggestionPr
           const highlighted = i === highlightIndex
           return (
             <Box key={command.name}>
-              <Text color={highlighted ? "cyan" : undefined} bold={highlighted}>
+              <Text color={highlighted ? COLORS.primary : undefined} bold={highlighted}>
                 {highlighted ? "> " : "  "}
                 /{command.name}
-                <Text color="gray"> - {command.description}</Text>
+                <Text color={COLORS.muted}> - {command.description}</Text>
               </Text>
             </Box>
           )

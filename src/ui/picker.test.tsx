@@ -1,7 +1,10 @@
 import React from "react"
 import { describe, it, expect } from "bun:test"
 import { render } from "ink-testing-library"
+import { renderToString } from "ink"
 import { Picker } from "./picker"
+import { COLORS } from "./theme"
+import { ansiCode } from "./ansi-test"
 import type { PickerItem } from "../core/types"
 
 const items: PickerItem[] = [
@@ -157,6 +160,15 @@ describe("Picker", () => {
     expect(frame).toContain("(4-7 of 20)")
     expect(frame).not.toContain("model_1\n")
     instance.unmount()
+  })
+
+  it("colors highlights, title, and metadata from the palette tokens", () => {
+    const frame = renderToString(
+      <Picker title="Switch to session" items={items} onSelect={() => {}} onCancel={() => {}} />,
+      { columns: 100 },
+    )
+    expect(frame).toContain(ansiCode(COLORS.primary))
+    expect(frame).toContain(ansiCode(COLORS.muted))
   })
 
   it("renders a no-items state and ignores Enter", async () => {
