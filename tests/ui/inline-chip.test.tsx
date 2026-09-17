@@ -1,8 +1,11 @@
 import React from "react"
 import { describe, it, expect } from "bun:test"
 import { render } from "ink-testing-library"
+import chalk from "../../node_modules/ink/node_modules/chalk/source/index.js"
 import { InlineChip, InlineCodeText } from "@/ui/inline-chip"
 import type { CodeSegment } from "@/core/code-tokenizer"
+
+chalk.level = 3
 
 function frame(instance: { lastFrame: () => string | undefined }): string {
   return instance.lastFrame() ?? ""

@@ -27,3 +27,7 @@
 | **Code Block** | A framed region — border plus a dark background shade lighter than the App Background — used to render fenced model output and executed command output. |
 | **Inline Chip** | A short code snippet inside prose (single-backtick `` `cmd` ``) rendered with a dark background and no border, so it reads as embedded code without a full frame. |
 | **Command Line** | The first line inside a tool-result Code Block — `$ npm run dev` — painted in the primary color to show which command was executed. |
+| **Turn** | One user message plus the agent's complete response cycle — reasoning, tool calls, and tool results — until it stops and yields the floor. |
+| **Turn Status** | The Status Bar's live indication of agent activity: idle, thinking, running a tool, waiting for approval, done (with elapsed time), or errored. |
+| **Approval Prompt** | The overlay shown while a Tool Call awaits user consent, displaying the tool name and arguments and accepting `y`/`n`. |
+| **Usage Panel** | The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count. |

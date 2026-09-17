@@ -1,72 +1,27 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from "react"
-import { Box, Text, useInput, useApp, useWindowSize, useStdout } from "ink"
-import { resolve } from "path"
-import { readdirSync } from "fs"
-import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
-import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
-import { COLORS, ICONS } from "./theme"
-import type { Message, ToolDefinition, ToolContext, Command, CommandContext, PickerRequest } from "../core/types"
+import { useEffect, useMemo, useState } from "react"
+import { Box, useApp, useInput, useStdout, useWindowSize } from "ink"
+import { MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
+import { COLORS } from "./theme"
+import type { Command, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
-import type { Provider, TokenUsage } from "../core/provider"
-import { DIFF_START_MARKER, DIFF_END_MARKER } from "../core/constants"
-import { runAgentLoop } from "../core/agent-loop"
+import type { Provider } from "../core/provider"
 import { CommandRegistry } from "../core/command-registry"
-import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
-import { createSession, saveSession } from "../core/session"
-import { formatCost, formatTokens } from "../core/cost-calculator"
+import { filterCommands, moveHighlight } from "./command-suggestion"
 import { Picker } from "./picker"
-import { CodeBlock } from "./code-block"
-import { DiffView } from "./diff-view"
-import { InlineCodeText } from "./inline-chip"
 import { WelcomeScreen } from "./welcome"
-import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
-import { log } from "../utils/logger"
-import { discoverSkills } from "../core/skills"
-import { tokenizeCodeText, type CodeSegment } from "../core/code-tokenizer"
+import { ChatPanel, CHAT_CHROME_LINES } from "./chat-panel"
+import { UsagePanel } from "./usage-panel"
+import { StatusBar } from "./status-bar"
+import { ApprovalPrompt } from "./approval-prompt"
+import { ExitSummary } from "./exit-summary"
+import { useChatDrafting } from "./use-chat-drafting"
+import { useAgentSession } from "./use-agent-session"
 
-interface ToolCallEntry {
-  id: string
-  name: string
-  args: Record<string, unknown>
-  result?: string
-}
-
-
-export type FeedbackTone = "info" | "error"
-
-export interface FeedbackEntry {
-  id: string
-  text: string
-  tone: FeedbackTone
-}
-
-interface PendingApproval {
-  toolName: string
-  args: Record<string, unknown>
-  resolve: (approved: boolean) => void
-}
-
-export const STREAMING_COMMAND_NOTICE = "Still responding - press Esc to stop it, or /exit to quit."
-
-export type TurnStatus =
-  | { kind: "idle" }
-  | { kind: "thinking" }
-  | { kind: "working"; toolName: string }
-  | { kind: "waiting-approval" }
-  | { kind: "done"; durationMs: number }
-  | { kind: "error" }
-
-const DONE_REVERT_MS = 3000
-
-function makeSpinnerTheme(color: string) {
-  return extendTheme(defaultTheme, {
-    components: { Spinner: { styles: { frame: () => ({ color }) } } },
-  })
-}
-
-const yellowSpinnerTheme = makeSpinnerTheme(COLORS.warning)
-
-const cyanSpinnerTheme = makeSpinnerTheme(COLORS.primary)
+export { STREAMING_COMMAND_NOTICE } from "./use-agent-session"
+export type { FeedbackTone, FeedbackEntry } from "./feedback-line"
+export { FeedbackLine } from "./feedback-line"
+export { StatusIndicator } from "./status-bar"
+export { extractDiff } from "./format"
 
 interface AppProps {
   provider: Provider
@@ -80,45 +35,10 @@ interface AppProps {
   onSkillActivate?: (content: string) => void
 }
 
-export function extractDiff(result: string): { message: string; diff: string | null } {
-  const startIdx = result.indexOf(DIFF_START_MARKER)
-  const endIdx = result.indexOf(DIFF_END_MARKER)
-  if (startIdx === -1 || endIdx === -1) {
-    return { message: result, diff: null }
-  }
-  const message = result.slice(0, startIdx).trimEnd()
-  const diff = result.slice(startIdx + DIFF_START_MARKER.length, endIdx).replace(/^\n/, "")
-  return { message, diff }
-}
-
 type View = "home" | "chat"
 
 export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, sessionsDir, commands }: AppProps) {
   const [view, setView] = useState<View>("chat")
-  const [showWelcome, setShowWelcome] = useState(!initialSession)
-  const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
-  const [session, setSession] = useState<Session | null>(initialSession ?? null)
-  const [providerState, setProviderState] = useState<Provider>(provider)
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [turnStatus, setTurnStatus] = useState<TurnStatus>({ kind: "idle" })
-  const [currentText, setCurrentText] = useState("")
-  const [toolCalls, setToolCalls] = useState<ToolCallEntry[]>([])
-  const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
-  const [turnCount, setTurnCount] = useState(0)
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null)
-  const [showExitSummary, setShowExitSummary] = useState(false)
-  const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
-  const [inputKey, setInputKey] = useState(0)
-  const [pickerRequest, setPickerRequest] = useState<PickerRequest | null>(null)
-  const [inputValue, setInputValue] = useState("")
-  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
-  const [suggestionHighlight, setSuggestionHighlight] = useState(0)
-  const [activeSkills, setActiveSkills] = useState<string[]>([])
-  const [atMode, setAtMode] = useState(false)
-  const [atHighlight, setAtHighlight] = useState(0)
-  const abortRef = useRef<AbortController | null>(null)
-  const activeTurnRef = useRef<Promise<void> | null>(null)
-  const approvedPathsRef = useRef<Set<string>>(new Set())
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
   const { stdout } = useStdout()
@@ -132,374 +52,70 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     }
   }, [stdout])
 
-  useEffect(() => {
-    if (turnStatus.kind !== "done") return
-    const timer = setTimeout(() => setTurnStatus({ kind: "idle" }), DONE_REVERT_MS)
-    return () => clearTimeout(timer)
-  }, [turnStatus])
-
   const commandRegistry = useMemo(() => {
     const registry = new CommandRegistry()
     if (commands) registry.registerAll(commands)
     return registry
   }, [commands])
 
-  const appendFeedback = useCallback((text: string, tone: FeedbackTone) => {
-    setFeedbackEntries((prev) => [
-      ...prev,
-      { id: `feedback_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, text, tone },
-    ])
-  }, [])
+  const drafting = useChatDrafting()
+
+  const session = useAgentSession({
+    provider,
+    createProvider,
+    tools,
+    systemPrompt,
+    context,
+    initialSession,
+    sessionsDir,
+    commands,
+    openPicker: drafting.openPicker,
+    resetDraft: drafting.resetInput,
+    view,
+    enterChat: () => setView("chat"),
+  })
 
   const allCommands = commandRegistry.getAll()
-  const firstWord = inputValue.trim().split(/\s+/)[0] ?? ""
+  const firstWord = drafting.inputValue.trim().split(/\s+/)[0] ?? ""
   const suggestedCommands = firstWord.startsWith("/") ? filterCommands(allCommands, firstWord) : []
   const suggestionVisible =
-    !isStreaming &&
-    !pickerRequest &&
-    !pendingApproval &&
-    !showExitSummary &&
+    !session.isStreaming &&
+    !drafting.pickerRequest &&
+    !session.pendingApproval &&
+    !session.showExitSummary &&
     view === "chat" &&
     firstWord.startsWith("/") &&
-    !suggestionDismissed
-  const atVisible = !isStreaming && !pickerRequest && !pendingApproval && !showExitSummary && view === "chat" && firstWord.startsWith("@") && !suggestionDismissed
-  const clampedSuggestionHighlight = Math.min(suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
-  const atFiles = useMemo(() => {
-    const projectDir = context.projectPath
-    try {
-      const entries = readdirSync(projectDir, { withFileTypes: true })
-      return entries
-        .filter((e) => e.isFile())
-        .map((e) => e.name)
-    } catch {
-      return []
-    }
-  }, [context.projectPath])
-  const clampedAtHighlight = Math.min(atHighlight, Math.max(0, atFiles.length - 1))
-
-  const handleInputChange = useCallback((value: string) => {
-    setInputValue(value)
-    setSuggestionDismissed(false)
-    setSuggestionHighlight(0)
-  }, [])
-
-  const pickerResolveRef = useRef<((index: number | null) => void) | null>(null)
-
-  const openPicker = useCallback((request: PickerRequest) => {
-    return new Promise<number | null>((resolve) => {
-      pickerResolveRef.current = resolve
-      setPickerRequest(request)
-    })
-  }, [])
-
-  const closePicker = useCallback((index: number | null) => {
-    pickerResolveRef.current?.(index)
-    pickerResolveRef.current = null
-    setPickerRequest(null)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      pickerResolveRef.current?.(null)
-      pickerResolveRef.current = null
-    }
-  }, [])
-
-  const performExit = useCallback(async () => {
-    abortRef.current?.abort()
-    const turn = activeTurnRef.current
-    if (turn) {
-      try {
-        await turn
-      } catch {
-        // The turn already reports its own errors; never let one block exiting.
-      }
-    }
-    exit()
-  }, [exit])
-
-  const enterChat = useCallback(() => {
-    setView("chat")
-  }, [])
-
-  const goHome = useCallback(() => {
-    setView("home")
-  }, [])
-
-  const handleSend = useCallback(
-    async (input: string) => {
-      if (!input.trim()) return
-
-      if (view === "home") {
-        setView("chat")
-      }
-
-      if (isStreaming) {
-        if (!isCommandAttempt(input)) return
-        if (getCommandName(input) !== "exit") {
-          appendFeedback(STREAMING_COMMAND_NOTICE, "info")
-          return
-        }
-      }
-
-      setCurrentText("")
-      setInputKey((prev) => prev + 1)
-      setInputValue("")
-      setSuggestionDismissed(false)
-      setSuggestionHighlight(0)
-      setFeedbackEntries([])
-
-      const commandContext: CommandContext = {
-        projectPath: context.projectPath,
-        openPicker,
-        sessions: sessionsDir
-          ? {
-              dir: sessionsDir,
-              getActiveSession: () => session,
-              switchTo: (loaded) => {
-                approvedPathsRef.current.clear()
-                setSession(loaded)
-                setMessages(loaded.messages)
-                setView("chat")
-                setUsage({
-                  inputTokens: 0,
-                  outputTokens: 0,
-                  totalTokens: loaded.totalTokens,
-                  cost: loaded.totalCost,
-                })
-              },
-              startFresh: () => {
-                approvedPathsRef.current.clear()
-                setSession(null)
-                setMessages([])
-                setToolCalls([])
-                setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
-                setTurnCount(0)
-                setActiveSkills([])
-              },
-            }
-          : undefined,
-        exit: {
-          requestExit: () => performExit(),
-        },
-        models: createProvider
-          ? {
-              list: () => providerState.listModels(),
-              getCurrentModelId: () => providerState.getModelInfo().id,
-              switchTo: (modelId) => setProviderState(createProvider(modelId)),
-            }
-          : undefined,
-        skills: {
-          list: async () => discoverSkills(context.projectPath),
-        },
-        onSkillActivate: (content: string) => {
-          setActiveSkills((prev) => {
-            if (prev.some((s) => s === content)) return prev
-            return [...prev, content]
-          })
-        },
-      }
-      const dispatch = await dispatchCommand(input, commandRegistry, commandContext)
-
-      if (dispatch.kind !== "pass-through") {
-        if (dispatch.kind === "executed") {
-          if (dispatch.output) appendFeedback(dispatch.output, "info")
-        } else {
-          appendFeedback(dispatch.error, "error")
-        }
-        return
-      }
-
-      const userMsg: Message = {
-        id: `user_${Date.now()}`,
-        role: "user",
-        content: [{ type: "text", text: input }],
-        timestamp: Date.now(),
-      }
-
-      setMessages((prev) => [...prev, userMsg])
-      setToolCalls([])
-      setIsStreaming(true)
-      setTurnStatus({ kind: "thinking" })
-
-      const controller = new AbortController()
-      abortRef.current = controller
-      const turnStart = Date.now()
-      let hadError = false
-      let turnFailed = false
-      const pendingToolNames: string[] = []
-      const advanceToolStatus = () => {
-        const nextTool = pendingToolNames[0]
-        setTurnStatus(nextTool ? { kind: "working", toolName: nextTool } : { kind: "thinking" })
-      }
-
-      const turn = (async () => {
-        try {
-          const effectiveSystemPrompt = `${systemPrompt}\n\n${activeSkills.filter(
-            (s) => s
-          ).join("\n\n")}`
-          const result = await runAgentLoop(
-            [...messages, userMsg],
-            providerState,
-            tools,
-            effectiveSystemPrompt,
-            context,
-            {
-              onTextDelta: (text) => {
-                setCurrentText((prev) => prev + text)
-              },
-              onToolCallStart: (id, name) => {
-                pendingToolNames.push(name)
-                advanceToolStatus()
-                setToolCalls((prev) => [
-                  ...prev,
-                  { id, name, args: {} },
-                ])
-              },
-              onToolCallDelta: () => {},
-              onToolCallEnd: (id, _name, args) => {
-                setToolCalls((prev) =>
-                  prev.map((tc) =>
-                    tc.id === id ? { ...tc, args } : tc,
-                  ),
-                )
-              },
-              onToolResult: (id, _name, result) => {
-                pendingToolNames.shift()
-                advanceToolStatus()
-                const { message } = extractDiff(result)
-                setToolCalls((prev) =>
-                  prev.map((tc) =>
-                    tc.id === id ? { ...tc, result: message } : tc,
-                  ),
-                )
-              },
-              onError: (error) => {
-                hadError = true
-                setTurnStatus({ kind: "error" })
-                const detail =
-                  error instanceof Error
-                    ? error.message
-                    : typeof error === "object" && error !== null && "message" in error
-                      ? String((error as { message: unknown }).message)
-                      : String(error)
-                appendFeedback(`Model error: ${detail.slice(0, 200)}`, "error")
-                console.error("Agent error:", error)
-              },
-              requestApproval: (toolName, args) => {
-                const approvalKey =
-                  toolName === "write_file" || toolName === "edit_file"
-                    ? resolve(context.projectPath, String(args.path ?? ""))
-                    : null
-                if (approvalKey && approvedPathsRef.current.has(approvalKey)) {
-                  return Promise.resolve(true)
-                }
-                return new Promise<boolean>((resolveApproval) => {
-                  setTurnStatus({ kind: "waiting-approval" })
-                  setPendingApproval({
-                    toolName,
-                    args,
-                    resolve: (approved) => {
-                      if (approved && approvalKey) {
-                        approvedPathsRef.current.add(approvalKey)
-                      }
-                      advanceToolStatus()
-                      resolveApproval(approved)
-                    },
-                  })
-                })
-              },
-            },
-            controller.signal,
-          )
-
-          log(result)
-
-          setMessages(result.messages)
-          setUsage((prev) => ({
-            inputTokens: prev.inputTokens + result.totalUsage.inputTokens,
-            outputTokens: prev.outputTokens + result.totalUsage.outputTokens,
-            totalTokens: prev.totalTokens + result.totalUsage.totalTokens,
-            cost: prev.cost + result.totalUsage.cost,
-          }))
-
-          if (sessionsDir) {
-            const activeSession = session ?? createSession({
-              projectPath: context.projectPath,
-              model: providerState.getModelInfo().name,
-              messages: result.messages,
-            })
-            const savedSession: Session = {
-              ...activeSession,
-              messages: result.messages,
-              model: providerState.getModelInfo().name,
-              updatedAt: new Date().toISOString(),
-              totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
-              totalCost: activeSession.totalCost + result.totalUsage.cost,
-            }
-            saveSession(savedSession, sessionsDir)
-            setSession(savedSession)
-          }
-        } catch (error) {
-          turnFailed = !(error instanceof Error && error.name === "AbortError")
-          if (turnFailed) {
-            console.error("Loop error:", error)
-          }
-        } finally {
-          setCurrentText("")
-          setIsStreaming(false)
-          abortRef.current = null
-          if (!turnFailed && controller.signal.aborted) {
-            setTurnStatus({ kind: "idle" })
-          } else {
-            setTurnCount((n) => n + 1)
-            if (hadError || turnFailed) {
-              setTurnStatus({ kind: "error" })
-            } else {
-              setTurnStatus({ kind: "done", durationMs: Date.now() - turnStart })
-            }
-          }
-        }
-      })()
-      activeTurnRef.current = turn
-      try {
-        await turn
-      } finally {
-        if (activeTurnRef.current === turn) activeTurnRef.current = null
-      }
-    },
-    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, toolCalls, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, view],
-  )
+    !drafting.suggestionDismissed
+  const clampedSuggestionHighlight = Math.min(drafting.suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
 
   useInput(
     (input, key) => {
-      if (pickerRequest) return
+      if (drafting.pickerRequest) return
 
-      if (pendingApproval) {
+      if (session.pendingApproval) {
         const lower = input.toLowerCase()
         if (lower === "y" || lower === "n") {
-          pendingApproval.resolve(lower === "y")
-          setPendingApproval(null)
+          session.resolveApproval(lower === "y")
         }
         return
       }
 
-      if (showExitSummary) {
+      if (session.showExitSummary) {
         exit()
         return
       }
 
       if (suggestionVisible) {
         if (key.upArrow) {
-          setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, -1))
+          drafting.setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, -1))
           return
         }
         if (key.downArrow) {
-          setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, 1))
+          drafting.setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, 1))
           return
         }
         if (key.escape) {
-          setSuggestionDismissed(true)
+          drafting.setSuggestionDismissed(true)
           return
         }
       }
@@ -507,19 +123,19 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       if (key.return) {
         const suggestedCommand = suggestionVisible ? suggestedCommands[clampedSuggestionHighlight] : undefined
         if (suggestedCommand) {
-          const typedRest = inputValue.trim().slice(firstWord.length)
-          void handleSend(`/${suggestedCommand.name}${typedRest}`)
-        } else if (inputValue.trim()) {
-          void handleSend(inputValue)
+          const typedRest = drafting.inputValue.trim().slice(firstWord.length)
+          void session.handleSend(`/${suggestedCommand.name}${typedRest}`)
+        } else if (drafting.inputValue.trim()) {
+          void session.handleSend(drafting.inputValue)
         }
         return
       }
 
-      if (key.escape && isStreaming && abortRef.current) {
-        abortRef.current.abort()
+      if (key.escape && session.isStreaming) {
+        session.abortCurrent()
       }
       if (key.ctrl && input === "c") {
-        setShowExitSummary(true)
+        session.requestExitSummary()
       }
     },
     { isActive: true },
@@ -529,24 +145,24 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     return (
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
         <WelcomeScreen
-          provider={providerState}
-          onNewChat={enterChat}
-          onResumeSession={enterChat}
+          provider={session.providerState}
+          onNewChat={() => setView("chat")}
+          onResumeSession={() => setView("chat")}
           hasResumableSession={!!initialSession}
           onSendFirstMessage={(text) => {
-            setInputValue(text)
+            drafting.setInputValue(text)
             setView("chat")
             setTimeout(() => {
-              void handleSend(text)
+              void session.handleSend(text)
             }, 50)
           }}
         />
-        {pickerRequest && (
+        {drafting.pickerRequest && (
           <Picker
-            title={pickerRequest.title}
-            items={pickerRequest.items}
-            onSelect={(index) => closePicker(index)}
-            onCancel={() => closePicker(null)}
+            title={drafting.pickerRequest.title}
+            items={drafting.pickerRequest.items}
+            onSelect={(index) => drafting.closePicker(index)}
+            onCancel={() => drafting.closePicker(null)}
             rows={rows}
           />
         )}
@@ -563,659 +179,48 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         <ChatPanel
           width={chatWidth}
           viewportHeight={Math.max(5, rows - CHAT_CHROME_LINES)}
-          scrollDisabled={pickerRequest !== null || pendingApproval !== null || showExitSummary}
-          runningTools={toolCalls.filter((tc) => !tc.result).map((tc) => ({ id: tc.id, name: tc.name }))}
-          messages={messages}
-          currentText={currentText}
-          isStreaming={isStreaming}
-          onSend={handleSend}
-          feedbackEntries={feedbackEntries}
-          inputKey={inputKey}
-          inputValue={inputValue}
-          inputDisabled={pickerRequest !== null}
-          onInputChange={handleInputChange}
+          scrollDisabled={drafting.pickerRequest !== null || session.pendingApproval !== null || session.showExitSummary}
+          runningTools={session.toolCalls.filter((tc) => !tc.result).map((tc) => ({ id: tc.id, name: tc.name }))}
+          messages={session.messages}
+          currentText={session.currentText}
+          isStreaming={session.isStreaming}
+          onSend={session.handleSend}
+          feedbackEntries={session.feedbackEntries}
+          inputKey={drafting.inputKey}
+          inputValue={drafting.inputValue}
+          inputDisabled={drafting.pickerRequest !== null}
+          onInputChange={drafting.handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
-          modelName={providerState.getModelInfo().name}
+          modelName={session.providerState.getModelInfo().name}
         />
         <UsagePanel
           width={sidebarWidth}
-          model={providerState.getModelInfo().name}
-          contextLength={providerState.getModelInfo().contextLength}
-          usage={usage}
-          turns={turnCount}
-          status={turnStatus}
+          model={session.providerState.getModelInfo().name}
+          contextLength={session.providerState.getModelInfo().contextLength}
+          usage={session.usage}
+          turns={session.turnCount}
+          status={session.turnStatus}
         />
       </Box>
-      <StatusBar usage={usage} model={providerState.getModelInfo().name} status={turnStatus} />
-      {pickerRequest && (
+      <StatusBar usage={session.usage} model={session.providerState.getModelInfo().name} status={session.turnStatus} />
+      {drafting.pickerRequest && (
         <Picker
-          title={pickerRequest.title}
-          items={pickerRequest.items}
-          onSelect={(index) => closePicker(index)}
-          onCancel={() => closePicker(null)}
+          title={drafting.pickerRequest.title}
+          items={drafting.pickerRequest.items}
+          onSelect={(index) => drafting.closePicker(index)}
+          onCancel={() => drafting.closePicker(null)}
           rows={rows}
         />
       )}
-      {pendingApproval && (
+      {session.pendingApproval && (
         <ApprovalPrompt
-          toolName={pendingApproval.toolName}
-          args={pendingApproval.args}
+          toolName={session.pendingApproval.toolName}
+          args={session.pendingApproval.args}
         />
       )}
-      {showExitSummary && (
-        <ExitSummary usage={usage} model={providerState.getModelInfo().name} />
+      {session.showExitSummary && (
+        <ExitSummary usage={session.usage} model={session.providerState.getModelInfo().name} />
       )}
-    </Box>
-  )
-}
-
-interface ChatPanelProps {
-  width: number
-  viewportHeight: number
-  scrollDisabled?: boolean
-  runningTools: Array<{ id: string; name: string }>
-  messages: Message[]
-  currentText: string
-  isStreaming: boolean
-  onSend: (input: string) => void
-  feedbackEntries: FeedbackEntry[]
-  inputKey: number
-  inputValue: string
-  inputDisabled?: boolean
-  onInputChange?: (value: string) => void
-  suggestion?: CommandSuggestionProps
-  modelName?: string
-}
-
-const CHAT_CHROME_LINES = 7
-const WHEEL_STEP_LINES = 3
-
-function textContentOf(msg: Message): string {
-  return msg.content
-    .filter((c) => c.type === "text")
-    .map((c) => (c.type === "text" ? c.text : ""))
-    .join("")
-}
-
-function estimateLines(text: string, usableWidth: number): number {
-  return text
-    .split("\n")
-    .reduce((n, seg) => n + Math.max(1, Math.ceil(seg.length / usableWidth)), 0)
-}
-
-const RESULT_SUMMARY_LINES = 3
-
-function summarizeResult(result: string): { text: string; lines: number } {
-  const lines = result.replace(/\n+$/, "").split("\n")
-  if (lines.length <= RESULT_SUMMARY_LINES + 1) {
-    return { text: lines.join("\n"), lines: Math.max(1, lines.length) }
-  }
-  const head = lines.slice(0, RESULT_SUMMARY_LINES)
-  return { text: `${head.join("\n")}\n… +${lines.length - RESULT_SUMMARY_LINES} more lines`, lines: RESULT_SUMMARY_LINES + 1 }
-}
-
-function commandFromArgs(args: Record<string, unknown>): string | undefined {
-  const command = args["command"]
-  if (typeof command === "string") {
-    const trimmed = command.trim()
-    return trimmed ? trimmed : undefined
-  }
-  return undefined
-}
-
-function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName }: ChatPanelProps) {
-  const [bottomOffset, setBottomOffset] = useState(0)
-
-  useInput((_input, key) => {
-    if (scrollDisabled) return
-    const wheel = parseWheelEvent(_input)
-    if (wheel === "up") {
-      setBottomOffset((prev) => prev + WHEEL_STEP_LINES)
-    } else if (wheel === "down") {
-      setBottomOffset((prev) => Math.max(0, prev - WHEEL_STEP_LINES))
-    } else if (key.pageUp) {
-      setBottomOffset((prev) => prev + viewportHeight)
-    } else if (key.pageDown) {
-      setBottomOffset((prev) => Math.max(0, prev - viewportHeight))
-    } else if (key.end) {
-      setBottomOffset(0)
-    }
-  })
-
-  const usableWidth = Math.max(10, width - 6)
-  const estimate = (text: string) => estimateLines(text, usableWidth)
-
-  type Block = { key: string; lines: number; node: React.ReactNode; text?: string }
-  const blocks: Block[] = []
-
-  const TEXT_CHUNK_LINES = 10
-
-  const addCodeAwareBlocks = (
-    keyBase: string,
-    text: string,
-    opts?: { prefix?: string; color?: "blue" | "green" },
-  ) => {
-    const segments = tokenizeCodeText(text)
-    let nodeIdx = 0
-    let textIdx = 0
-    let firstTextDone = false
-    let mixed: CodeSegment[] = []
-
-    const splitMixedLines = (run: CodeSegment[]): CodeSegment[][] => {
-      const lines: CodeSegment[][] = []
-      let current: CodeSegment[] = []
-      for (const seg of run) {
-        const parts = seg.text.split("\n")
-        for (let p = 0; p < parts.length; p++) {
-          if (p > 0) {
-            lines.push(current)
-            current = []
-          }
-          const part = parts[p]!
-          if (part) current.push(part === seg.text ? seg : { ...seg, text: part })
-        }
-      }
-      lines.push(current)
-      return lines
-    }
-
-    const flushMixed = () => {
-      if (mixed.length === 0) return
-      const lines = splitMixedLines(mixed)
-      const padded = (seg: CodeSegment) => (seg.kind === "inline-code" ? ` ${seg.text} ` : seg.text)
-      for (let i = 0; i < lines.length; i += TEXT_CHUNK_LINES) {
-        const chunkLines = lines.slice(i, i + TEXT_CHUNK_LINES)
-        textIdx++
-        const key = `${keyBase}:t${textIdx}`
-        const usePrefix = i === 0 && !firstTextDone && opts?.prefix
-        const node = (
-          <InlineCodeText
-            key={key}
-            lines={chunkLines}
-            prefix={usePrefix ? opts?.prefix : undefined}
-            prefixColor={usePrefix ? opts?.color : undefined}
-          />
-        )
-        const plain = chunkLines.map((line) => line.map((s) => s.text).join("")).join("\n")
-        const estimateText = chunkLines.map((line) => line.map(padded).join("")).join("\n")
-        blocks.push({
-          key,
-          lines: estimate(usePrefix ? `${opts?.prefix ?? ""}${estimateText}` : estimateText),
-          text: usePrefix ? `${opts?.prefix ?? ""}${plain}` : plain,
-          node,
-        })
-      }
-      firstTextDone = true
-      mixed = []
-    }
-
-    for (const seg of segments) {
-      if (seg.kind === "fenced") {
-        flushMixed()
-        nodeIdx++
-        blocks.push({
-          key: `${keyBase}:code${nodeIdx}`,
-          lines: estimate(seg.text) + (seg.language ? 1 : 0) + 2,
-          text: seg.text,
-          node: <CodeBlock key={`${keyBase}:code${nodeIdx}`} code={seg.text} language={seg.language} />,
-        })
-      } else {
-        mixed.push(seg)
-      }
-    }
-    flushMixed()
-  }
-
-  const callArgsByToolCallId = new Map<string, Record<string, unknown>>()
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue
-    for (const c of msg.content) {
-      if (c.type === "tool-call") callArgsByToolCallId.set(c.toolCallId, c.args)
-    }
-  }
-
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      addCodeAwareBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
-    } else if (msg.role === "assistant") {
-      const text = textContentOf(msg)
-      if (text) {
-        addCodeAwareBlocks(msg.id, text, { prefix: "vicode: ", color: COLORS.success })
-      }
-      for (const c of msg.content) {
-        if (c.type !== "tool-call") continue
-        blocks.push({
-          key: `${msg.id}:call:${c.toolCallId}`,
-          lines: 1,
-          node: (
-            <Text key={`${msg.id}:call:${c.toolCallId}`} color={COLORS.muted}>
-              <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
-            </Text>
-          ),
-          text: `${ICONS.tool} ${c.toolName}`,
-        })
-      }
-    } else if (msg.role === "tool") {
-      for (const c of msg.content) {
-        if (c.type !== "tool-result") continue
-        const { diff, message } = extractDiff(c.result)
-        if (diff) {
-          const lines = diff.split("\n").length
-          blocks.push({
-            key: `${msg.id}:result:${c.toolCallId}`,
-            lines,
-            node: <DiffView key={`${msg.id}:result:${c.toolCallId}`} diff={diff} />,
-          })
-        } else {
-          const summary = summarizeResult(message)
-          const command = commandFromArgs(callArgsByToolCallId.get(c.toolCallId) ?? {})
-          const key = `${msg.id}:result:${c.toolCallId}`
-          blocks.push({
-            key,
-            lines: 1 + summary.lines + 2 + (command ? 1 : 0),
-            node: (
-              <Box key={key} flexDirection="column">
-                <Text color={COLORS.muted}>
-                  <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
-                </Text>
-                <CodeBlock key={`${key}:code`} code={summary.text} commandLine={command} />
-              </Box>
-            ),
-            text: command
-              ? `${ICONS.tool} ${c.toolName}\n$ ${command}\n${summary.text}`
-              : `${ICONS.tool} ${c.toolName}\n${summary.text}`,
-          })
-        }
-      }
-    }
-  }
-  for (const tool of runningTools) {
-    blocks.push({
-      key: `running:${tool.id}`,
-      lines: 1,
-      node: (
-        <Text key={`running:${tool.id}`} color={COLORS.muted}>
-          <Text color={COLORS.primary}>{ICONS.tool}</Text> {tool.name}…
-        </Text>
-      ),
-      text: `${ICONS.tool} ${tool.name}…`,
-    })
-  }
-  for (const entry of feedbackEntries) {
-    blocks.push({
-      key: entry.id,
-      lines: estimate(entry.text) + 1,
-      node: <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />,
-      text: entry.text,
-    })
-  }
-  if (currentText) {
-    addCodeAwareBlocks("current-stream", currentText)
-  }
-
-  const totalLines = blocks.reduce((n, b) => n + b.lines, 0)
-  const maxScroll = Math.max(0, totalLines - viewportHeight + 1)
-  const offset = Math.min(bottomOffset, maxScroll)
-  const hintLines = offset > 0 ? 1 : 0
-
-  const sliceBlockText = (block: Block, count: number, mode: "head" | "tail"): React.ReactNode => {
-    if (block.text === undefined) return block.node
-    const linesArr = block.text.split("\n")
-    const sliced = mode === "head" ? linesArr.slice(0, count) : linesArr.slice(-count)
-    return <Text key={`${block.key}:slice`}>{sliced.join("\n")}</Text>
-  }
-
-  let skip = offset
-  let budget = viewportHeight - hintLines
-  const visibleNodes: React.ReactNode[] = []
-  for (let i = blocks.length - 1; i >= 0 && budget > 0; i--) {
-    const block = blocks[i]!
-    if (skip > 0) {
-      if (block.lines <= skip) {
-        skip -= block.lines
-        continue
-      }
-      const show = Math.min(block.lines - skip, budget)
-      visibleNodes.unshift(sliceBlockText(block, show, "head"))
-      budget -= show
-      skip = 0
-      continue
-    }
-    const fit = Math.min(block.lines, budget)
-    if (fit < block.lines) {
-      visibleNodes.unshift(sliceBlockText(block, fit, "tail"))
-    } else {
-      visibleNodes.unshift(block.node)
-    }
-    budget -= fit
-  }
-
-  return (
-    <Box
-      width={width}
-      flexDirection="column"
-      borderStyle="single"
-      borderColor={COLORS.border}
-      paddingX={1}
-    >
-      <Box flexGrow={1} flexDirection="column" overflow="hidden">
-        {blocks.length === 0 && (
-          <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
-            <Text color={COLORS.primary} bold>
-              {ICONS.logo} ViCode
-            </Text>
-            <Box marginTop={0}>
-              <Text color={COLORS.muted}>
-                AI-Powered Coding Assistant
-              </Text>
-            </Box>
-            <Box marginTop={1}>
-              <Text color={COLORS.dimText}>
-                Model: <Text color={COLORS.text}>{modelName ?? "unknown"}</Text>
-              </Text>
-            </Box>
-            <Box marginTop={1}>
-              <Text color={COLORS.muted}>
-                Type a message to start chatting...
-              </Text>
-            </Box>
-          </Box>
-        )}
-        {offset > 0 && (
-          <Text color={COLORS.muted}>↑ {offset} lines — End to return</Text>
-        )}
-        {visibleNodes}
-      </Box>
-      {suggestion && (
-        <Box paddingBottom={1}>
-          <CommandSuggestion
-            items={suggestion.items}
-            highlightIndex={suggestion.highlightIndex}
-          />
-        </Box>
-      )}
-      <Box borderTop={true} borderTopColor={COLORS.border} paddingTop={1}>
-        <ChatInput
-          value={inputValue}
-          placeholder={isStreaming ? "Responding..." : "Type your message..."}
-          isDisabled={inputDisabled}
-          onChange={onInputChange ?? (() => {})}
-        />
-      </Box>
-    </Box>
-  )
-}
-
-function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string) => void }) {
-  const filterStateRef = useRef<MouseInputFilterState>(MOUSE_INPUT_FILTER_INITIAL)
-  const valueRef = useRef(value)
-
-  useEffect(() => {
-    valueRef.current = value
-  }, [value])
-
-  const commit = (next: string) => {
-    valueRef.current = next
-    onChange(next)
-  }
-
-  const deleteWord = () => {
-    commit(valueRef.current.replace(/\s*\S+\s*$/, ""))
-  }
-
-  useInput((input, key) => {
-    if (isDisabled) return
-    if (
-      key.return ||
-      key.upArrow ||
-      key.downArrow ||
-      key.leftArrow ||
-      key.rightArrow ||
-      key.tab ||
-      key.escape ||
-      key.pageUp ||
-      key.pageDown ||
-      key.home ||
-      key.end
-    ) {
-      return
-    }
-    if (
-      (key.ctrl && (input === "w" || input === "\u0017")) ||
-      ((key.backspace || key.delete) && (key.ctrl || key.meta))
-    ) {
-      deleteWord()
-      return
-    }
-    if (key.backspace || key.delete) {
-      if (valueRef.current.length > 0) commit(valueRef.current.slice(0, -1))
-      return
-    }
-    if (!input) return
-    const result = filterMouseInput(input, filterStateRef.current)
-    filterStateRef.current = result.state
-    if (result.keptInput.length > 0) {
-      commit(valueRef.current + result.keptInput)
-    }
-  })
-
-  return (
-    <Text>
-      <Text color={COLORS.primary} bold>{ICONS.arrow} </Text>
-      {value ? <Text>{value}</Text> : <Text color={COLORS.muted}>{placeholder}</Text>}
-      {!isDisabled && <Text inverse> </Text>}
-    </Text>
-  )
-}
-
-export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone }) {
-  return (
-    <Box marginBottom={1}>
-      <Text color={tone === "error" ? COLORS.error : COLORS.primary} wrap="wrap">
-        {tone === "error" ? `${ICONS.cross} ` : `${ICONS.check} `}{text}
-      </Text>
-    </Box>
-  )
-}
-
-interface UsagePanelProps {
-  width: number
-  model: string
-  contextLength?: number
-  usage: TokenUsage
-  turns: number
-  status: TurnStatus
-}
-
-function UsagePanel({ width, model, contextLength, usage, turns, status }: UsagePanelProps) {
-  const contextPct =
-    contextLength && contextLength > 0
-      ? Math.min(100, (usage.totalTokens / contextLength) * 100)
-      : 0
-  return (
-    <Box width={width} flexDirection="column" borderStyle="single" borderColor={COLORS.border} paddingX={1}>
-      <Box borderBottom={true} borderBottomColor={COLORS.border} paddingBottom={0} marginBottom={1}>
-        <Text bold color={COLORS.primary}>
-          {ICONS.sparkle} Usage
-        </Text>
-      </Box>
-      <Box flexDirection="column" gap={0}>
-        <Box justifyContent="space-between">
-          <Text color={COLORS.muted}>Model:</Text>
-          <Text color={COLORS.text}>{model}</Text>
-        </Box>
-        <Box justifyContent="space-between">
-          <Text color={COLORS.muted}>Tokens:</Text>
-          <Text color={COLORS.text}>{formatTokens(usage.totalTokens)}</Text>
-        </Box>
-        <Box justifyContent="space-between">
-          <Text color={COLORS.dimText}>In:</Text>
-          <Text color={COLORS.muted}>{formatTokens(usage.inputTokens)} / Out: {formatTokens(usage.outputTokens)}</Text>
-        </Box>
-        {contextLength && contextLength > 0 && (
-          <Box justifyContent="space-between">
-            <Text color={COLORS.muted}>Context:</Text>
-            <Text color={contextPct >= 80 ? COLORS.error : contextPct >= 60 ? COLORS.warning : COLORS.text}>
-              {formatTokens(contextLength)} ({contextPct.toFixed(1)}%)
-            </Text>
-          </Box>
-        )}
-        <Box justifyContent="space-between">
-          <Text color={COLORS.muted}>Cost:</Text>
-          <Text color={COLORS.success}>{formatCost(usage.cost)}</Text>
-        </Box>
-        <Box justifyContent="space-between">
-          <Text color={COLORS.muted}>Turns:</Text>
-          <Text color={COLORS.text}>{turns}</Text>
-        </Box>
-      </Box>
-      <Box marginTop={1} borderTop={true} borderTopColor={COLORS.border} paddingTop={0}>
-        <Text color={COLORS.dimText} italic>Ctrl+C to exit</Text>
-      </Box>
-    </Box>
-  )
-}
-
-interface StatusBarProps {
-  usage: TokenUsage
-  model: string
-  status: TurnStatus
-}
-
-function StatusBar({ usage, model, status }: StatusBarProps) {
-  return (
-    <Box
-      justifyContent="space-between"
-      paddingX={1}
-      borderStyle="single"
-      borderColor={COLORS.border}
-    >
-      <Box gap={2}>
-        <Text color={COLORS.primary} bold>{ICONS.logo}</Text>
-        <Text color={COLORS.muted}>
-          {model}
-        </Text>
-        <StatusIndicator status={status} />
-      </Box>
-      <Text color={COLORS.muted}>
-        Tokens: {formatTokens(usage.totalTokens)} | Cost: {formatCost(usage.cost)}
-      </Text>
-    </Box>
-  )
-}
-
-export function StatusIndicator({ status }: { status: TurnStatus }) {
-  switch (status.kind) {
-    case "idle":
-      return <Text color={COLORS.success}>{ICONS.check} Ready</Text>
-    case "thinking":
-      return (
-        <ThemeProvider theme={yellowSpinnerTheme}>
-          <Spinner label="Thinking…" />
-        </ThemeProvider>
-      )
-    case "working":
-      return (
-        <ThemeProvider theme={cyanSpinnerTheme}>
-          <Spinner label={`Working: ${status.toolName}…`} />
-        </ThemeProvider>
-      )
-    case "waiting-approval":
-      return <Text color={COLORS.warning}>{ICONS.warning} Waiting for approval</Text>
-    case "done":
-      return <Text color={COLORS.success}>{ICONS.check} Done in {(status.durationMs / 1000).toFixed(1)}s</Text>
-    case "error":
-      return <Text color={COLORS.error}>{ICONS.cross} Error</Text>
-  }
-}
-
-interface ApprovalPromptProps {
-  toolName: string
-  args: Record<string, unknown>
-}
-
-function ApprovalPrompt({ toolName, args }: ApprovalPromptProps) {
-  const argsStr = Object.keys(args).length > 0
-    ? JSON.stringify(args, null, 2)
-    : ""
-
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor={COLORS.warning}
-      paddingX={1}
-      paddingY={1}
-    >
-      <Text color={COLORS.warning} bold>
-        {ICONS.warning} Tool Approval Required
-      </Text>
-      <Box marginTop={1}>
-        <Text color={COLORS.text} bold>
-          Tool:{" "}
-        </Text>
-        <Text color={COLORS.primary}>{toolName}</Text>
-      </Box>
-      {argsStr && (
-        <Box marginTop={1}>
-          <Text color={COLORS.text} bold>
-            Args:{" "}
-          </Text>
-          <Text color={COLORS.muted} wrap="wrap">{argsStr}</Text>
-        </Box>
-      )}
-      <Box marginTop={1}>
-        <Text color={COLORS.success}>[y]</Text>
-        <Text color={COLORS.muted}> Approve </Text>
-        <Text color={COLORS.error}>[n]</Text>
-        <Text color={COLORS.muted}> Reject</Text>
-      </Box>
-    </Box>
-  )
-}
-
-interface ExitSummaryProps {
-  usage: TokenUsage
-  model: string
-}
-
-function ExitSummary({ usage, model }: ExitSummaryProps) {
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="double"
-      borderColor={COLORS.primary}
-      paddingX={1}
-      paddingY={1}
-    >
-      <Text color={COLORS.primary} bold>
-        {ICONS.logo} Session Summary
-      </Text>
-      <Box marginTop={1}>
-        <Text color={COLORS.text} bold>
-          Model:{" "}
-        </Text>
-        <Text color={COLORS.muted}>{model}</Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text color={COLORS.text} bold>
-          Tokens:{" "}
-        </Text>
-        <Text color={COLORS.muted}>
-          {formatTokens(usage.totalTokens)} total ({formatTokens(usage.inputTokens)} in / {formatTokens(usage.outputTokens)} out)
-        </Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text color={COLORS.text} bold>
-          Cost:{" "}
-        </Text>
-        <Text color={COLORS.success}>{formatCost(usage.cost)}</Text>
-      </Box>
-      <Box marginTop={1}>
-        <Text color={COLORS.muted} italic>
-          Press any key to exit
-        </Text>
-      </Box>
     </Box>
   )
 }
