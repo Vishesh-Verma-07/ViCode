@@ -23,13 +23,19 @@ export function CodeFrame({ children }: CodeFrameProps) {
 interface CodeBlockProps {
   code: string
   language?: string
+  commandLine?: string
 }
 
-export function CodeBlock({ code, language }: CodeBlockProps) {
+export function CodeBlock({ code, language, commandLine }: CodeBlockProps) {
   return (
     <Box flexDirection="column" marginBottom={1}>
       {language && <Text color={COLORS.dimText}>{language}</Text>}
       <CodeFrame>
+        {commandLine && (
+          <Text color={COLORS.primary} wrap="wrap">
+            {"$ "}{commandLine}
+          </Text>
+        )}
         {(code || " ").split("\n").map((line, i) => (
           <Text key={i} color={COLORS.text} wrap="wrap">
             {line || " "}

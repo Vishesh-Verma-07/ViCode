@@ -11,6 +11,7 @@ export const COLORS = {
   appBackground: "#000000",
   codeBlockShade: "#1a1a1a",
   codeBlockBorder: "#333333",
+  inlineChipShade: "#2a2a2a",
 } as const
 
 export const ICONS = {

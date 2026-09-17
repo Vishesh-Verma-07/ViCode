@@ -22,3 +22,8 @@
 | **Command Suggestion** | The dropdown rendered above the chat input listing matching Commands as the user types after `/`. Shows a "no commands match" state when nothing matches. |
 | **Config Layering** | Configuration priority: project config (.vicode.json) > global config (~/.vicode/config.json). Runtime changes (model, skills) happen via Commands, not CLI flags. |
 | **Project Hash** | A truncated SHA-256 hash of the project directory's absolute path, used to namespace session storage. |
+| **App Background** | The color painted behind the entire TUI — applied via a background token on the root container, filling every panel and overlay. |
+| **Design Token** | A named value in the central palette (`COLORS`, `ICONS`) that all UI styling references, so visual language stays consistent instead of using scattered hardcoded colors. |
+| **Code Block** | A framed region — border plus a dark background shade lighter than the App Background — used to render fenced model output and executed command output. |
+| **Inline Chip** | A short code snippet inside prose (single-backtick `` `cmd` ``) rendered with a dark background and no border, so it reads as embedded code without a full frame. |
+| **Command Line** | The first line inside a tool-result Code Block — `$ npm run dev` — painted in the primary color to show which command was executed. |

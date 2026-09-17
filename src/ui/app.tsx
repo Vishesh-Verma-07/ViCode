@@ -17,11 +17,12 @@ import { formatCost, formatTokens } from "../core/cost-calculator"
 import { Picker } from "./picker"
 import { CodeBlock } from "./code-block"
 import { DiffView } from "./diff-view"
+import { InlineCodeText } from "./inline-chip"
 import { WelcomeScreen } from "./welcome"
 import { CommandSuggestion, filterCommands, moveHighlight, type CommandSuggestionProps } from "./command-suggestion"
 import { log } from "../utils/logger"
 import { discoverSkills } from "../core/skills"
-import { tokenizeCodeText } from "../core/code-tokenizer"
+import { tokenizeCodeText, type CodeSegment } from "../core/code-tokenizer"
 
 interface ToolCallEntry {
   id: string
@@ -653,6 +654,15 @@ function summarizeResult(result: string): { text: string; lines: number } {
   return { text: `${head.join("\n")}\n… +${lines.length - RESULT_SUMMARY_LINES} more lines`, lines: RESULT_SUMMARY_LINES + 1 }
 }
 
+function commandFromArgs(args: Record<string, unknown>): string | undefined {
+  const command = args["command"]
+  if (typeof command === "string") {
+    const trimmed = command.trim()
+    return trimmed ? trimmed : undefined
+  }
+  return undefined
+}
+
 function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
@@ -680,54 +690,68 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
 
   const TEXT_CHUNK_LINES = 10
 
-  const addTextBlocks = (
-    keyBase: string,
-    text: string,
-    opts?: { prefix?: string; color?: "blue" | "green" },
-  ) => {
-    const prefix = opts?.prefix ?? ""
-    const full = prefix ? `${prefix}${text}` : text
-    const linesArr = full.split("\n")
-    for (let i = 0; i < linesArr.length; i += TEXT_CHUNK_LINES) {
-      const chunkText = linesArr.slice(i, i + TEXT_CHUNK_LINES).join("\n")
-      const key = `${keyBase}:${i}`
-      const isFirst = i === 0
-      const node =
-        isFirst && prefix ? (
-          <Text key={key}>
-            <Text color={opts?.color} bold>
-              {chunkText.slice(0, prefix.length)}
-            </Text>
-            {chunkText.slice(prefix.length)}
-          </Text>
-        ) : (
-          <Text key={key}>{chunkText}</Text>
-        )
-      blocks.push({ key, lines: estimate(chunkText), node, text: chunkText })
-    }
-  }
-
   const addCodeAwareBlocks = (
     keyBase: string,
     text: string,
     opts?: { prefix?: string; color?: "blue" | "green" },
   ) => {
     const segments = tokenizeCodeText(text)
-    let proseAcc = ""
-    let firstTextDone = false
     let nodeIdx = 0
-    const flushProse = () => {
-      if (!proseAcc) return
-      addTextBlocks(`${keyBase}:p${nodeIdx}`, proseAcc, {
-        prefix: firstTextDone ? undefined : opts?.prefix,
-        color: opts?.color,
-      })
-      firstTextDone = true
-      proseAcc = ""
+    let textIdx = 0
+    let firstTextDone = false
+    let mixed: CodeSegment[] = []
+
+    const splitMixedLines = (run: CodeSegment[]): CodeSegment[][] => {
+      const lines: CodeSegment[][] = []
+      let current: CodeSegment[] = []
+      for (const seg of run) {
+        const parts = seg.text.split("\n")
+        for (let p = 0; p < parts.length; p++) {
+          if (p > 0) {
+            lines.push(current)
+            current = []
+          }
+          const part = parts[p]!
+          if (part) current.push(part === seg.text ? seg : { ...seg, text: part })
+        }
+      }
+      lines.push(current)
+      return lines
     }
+
+    const flushMixed = () => {
+      if (mixed.length === 0) return
+      const lines = splitMixedLines(mixed)
+      const padded = (seg: CodeSegment) => (seg.kind === "inline-code" ? ` ${seg.text} ` : seg.text)
+      for (let i = 0; i < lines.length; i += TEXT_CHUNK_LINES) {
+        const chunkLines = lines.slice(i, i + TEXT_CHUNK_LINES)
+        textIdx++
+        const key = `${keyBase}:t${textIdx}`
+        const usePrefix = i === 0 && !firstTextDone && opts?.prefix
+        const node = (
+          <InlineCodeText
+            key={key}
+            lines={chunkLines}
+            prefix={usePrefix ? opts?.prefix : undefined}
+            prefixColor={usePrefix ? opts?.color : undefined}
+          />
+        )
+        const plain = chunkLines.map((line) => line.map((s) => s.text).join("")).join("\n")
+        const estimateText = chunkLines.map((line) => line.map(padded).join("")).join("\n")
+        blocks.push({
+          key,
+          lines: estimate(usePrefix ? `${opts?.prefix ?? ""}${estimateText}` : estimateText),
+          text: usePrefix ? `${opts?.prefix ?? ""}${plain}` : plain,
+          node,
+        })
+      }
+      firstTextDone = true
+      mixed = []
+    }
+
     for (const seg of segments) {
       if (seg.kind === "fenced") {
-        flushProse()
+        flushMixed()
         nodeIdx++
         blocks.push({
           key: `${keyBase}:code${nodeIdx}`,
@@ -736,15 +760,23 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
           node: <CodeBlock key={`${keyBase}:code${nodeIdx}`} code={seg.text} language={seg.language} />,
         })
       } else {
-        proseAcc += seg.text
+        mixed.push(seg)
       }
     }
-    flushProse()
+    flushMixed()
+  }
+
+  const callArgsByToolCallId = new Map<string, Record<string, unknown>>()
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue
+    for (const c of msg.content) {
+      if (c.type === "tool-call") callArgsByToolCallId.set(c.toolCallId, c.args)
+    }
   }
 
   for (const msg of messages) {
     if (msg.role === "user") {
-      addTextBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
+      addCodeAwareBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
     } else if (msg.role === "assistant") {
       const text = textContentOf(msg)
       if (text) {
@@ -776,18 +808,22 @@ function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messag
           })
         } else {
           const summary = summarizeResult(message)
+          const command = commandFromArgs(callArgsByToolCallId.get(c.toolCallId) ?? {})
+          const key = `${msg.id}:result:${c.toolCallId}`
           blocks.push({
-            key: `${msg.id}:result:${c.toolCallId}`,
-            lines: summary.lines + 1,
+            key,
+            lines: 1 + summary.lines + 2 + (command ? 1 : 0),
             node: (
-              <Box key={`${msg.id}:result:${c.toolCallId}`} flexDirection="column">
+              <Box key={key} flexDirection="column">
                 <Text color={COLORS.muted}>
                   <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
                 </Text>
-                <Text color={COLORS.dimText}>{summary.text}</Text>
+                <CodeBlock key={`${key}:code`} code={summary.text} commandLine={command} />
               </Box>
             ),
-            text: `${ICONS.tool} ${c.toolName}\n${summary.text}`,
+            text: command
+              ? `${ICONS.tool} ${c.toolName}\n$ ${command}\n${summary.text}`
+              : `${ICONS.tool} ${c.toolName}\n${summary.text}`,
           })
         }
       }
