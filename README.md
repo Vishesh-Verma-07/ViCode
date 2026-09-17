@@ -62,6 +62,7 @@ vicode/
 │   ├── tools/                # read_file, list_files, search, write_file, edit_file, bash
 │   ├── commands/             # /help, /model, /skill, /session, /new, /exit
 │   └── ui/                   # Ink React components (app, panels, picker, theme, mouse)
+├── tests/                    # Mirrors src/ (core, config, commands, tools, ui; uses @/ alias)
 ├── SPEC.md                   # Full product spec and design decisions
 ├── GLOSSARY.md               # Domain glossary
 └── AGENTS.md                 # Agent skills (issue tracker, labels, domain docs)
@@ -189,7 +190,7 @@ Run the test suite with Bun's built-in test runner:
 bun test
 ```
 
-Tests live alongside the source (`src/**/*.test.ts`) and cover the provider seam, tool execution, config layering, session persistence, the agent loop, and UI components via `ink-testing-library`.
+Tests live in a top-level `tests/` tree that mirrors `src/` (e.g. `tests/core/agent-loop.test.ts`), importing source through the `@/` path alias. They cover the provider seam, tool execution, config layering, session persistence, the agent loop, and UI components via `ink-testing-library`.
 
 ## Roadmap / Future Improvements
 

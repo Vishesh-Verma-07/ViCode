@@ -1,0 +1,184 @@
+import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { loadConfig } from "@/config/config"
+import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs"
+import { join } from "path"
+
+const tmpDir = join(import.meta.dir, "__tmp_config_test")
+
+let savedApiKey: string | undefined
+
+beforeEach(() => {
+  if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
+  mkdirSync(tmpDir, { recursive: true })
+  savedApiKey = process.env.OPENROUTER_API_KEY
+  delete process.env.OPENROUTER_API_KEY
+})
+
+afterEach(() => {
+  if (savedApiKey === undefined) delete process.env.OPENROUTER_API_KEY
+  else process.env.OPENROUTER_API_KEY = savedApiKey
+  if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
+})
+
+describe("config schema", () => {
+  it("accepts empty config", () => {
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.apiKey).toBeUndefined()
+    expect(result.model).toBeUndefined()
+  })
+
+  it("accepts valid config with all fields", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({
+        apiKey: "test-key",
+        model: "anthropic/claude-sonnet-4",
+        systemPrompt: "Be helpful",
+      })
+    )
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.apiKey).toBe("test-key")
+    expect(result.model).toBe("anthropic/claude-sonnet-4")
+    expect(result.systemPrompt).toBe("Be helpful")
+  })
+
+  it("rejects invalid config with unknown fields", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ invalidField: true })
+    )
+    expect(() => loadConfig({ projectPath: tmpDir })).toThrow()
+  })
+})
+
+describe("config merge priority", () => {
+  it("project config overrides global config", () => {
+    const homeDir = join(tmpDir, "home")
+    mkdirSync(homeDir, { recursive: true })
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ model: "global-model", apiKey: "global-key" })
+    )
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ model: "project-model" })
+    )
+    const result = loadConfig({
+      projectPath: tmpDir,
+      globalConfigPath: join(homeDir, "config.json"),
+    })
+    expect(result.model).toBe("project-model")
+    expect(result.apiKey).toBe("global-key")
+  })
+
+  it("full two-layer merge: project overrides global", () => {
+    const homeDir = join(tmpDir, "home")
+    mkdirSync(homeDir, { recursive: true })
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ apiKey: "global-key", model: "global-model" })
+    )
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ model: "project-model", systemPrompt: "project-prompt" })
+    )
+    const result = loadConfig({
+      projectPath: tmpDir,
+      globalConfigPath: join(homeDir, "config.json"),
+    })
+    expect(result.apiKey).toBe("global-key")
+    expect(result.model).toBe("project-model")
+    expect(result.systemPrompt).toBe("project-prompt")
+  })
+})
+
+describe("API key fallback", () => {
+  it("uses OPENROUTER_API_KEY env var when no config key", () => {
+    const original = process.env.OPENROUTER_API_KEY
+    process.env.OPENROUTER_API_KEY = "env-key"
+    try {
+      const result = loadConfig({ projectPath: tmpDir })
+      expect(result.apiKey).toBe("env-key")
+    } finally {
+      if (original === undefined) delete process.env.OPENROUTER_API_KEY
+      else process.env.OPENROUTER_API_KEY = original
+    }
+  })
+
+  it("config key takes precedence over env var", () => {
+    const original = process.env.OPENROUTER_API_KEY
+    process.env.OPENROUTER_API_KEY = "env-key"
+    try {
+      writeFileSync(
+        join(tmpDir, ".vicode.json"),
+        JSON.stringify({ apiKey: "config-key" })
+      )
+      const result = loadConfig({ projectPath: tmpDir })
+      expect(result.apiKey).toBe("config-key")
+    } finally {
+      if (original === undefined) delete process.env.OPENROUTER_API_KEY
+      else process.env.OPENROUTER_API_KEY = original
+    }
+  })
+})
+
+describe("missing config files", () => {
+  it("does not throw when no config files exist", () => {
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result).toBeDefined()
+  })
+
+  it("does not throw when global config dir does not exist", () => {
+    const result = loadConfig({
+      projectPath: tmpDir,
+      globalConfigPath: "/nonexistent/path/config.json",
+    })
+    expect(result).toBeDefined()
+  })
+})
+
+describe("sensitiveFiles config", () => {
+  function makeHomeDir(): string {
+    const homeDir = join(tmpDir, "home")
+    mkdirSync(homeDir, { recursive: true })
+    return homeDir
+  }
+
+  it("accepts sensitiveFiles in project config", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ sensitiveFiles: ["service-account.json", "secrets/**"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.sensitiveFiles).toEqual(["service-account.json", "secrets/**"])
+  })
+
+  it("merges global and project sensitiveFiles instead of overriding", () => {
+    const homeDir = makeHomeDir()
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ sensitiveFiles: ["global-secret.txt"] }),
+    )
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ sensitiveFiles: ["project-secret.txt"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
+    expect(result.sensitiveFiles).toEqual(["global-secret.txt", "project-secret.txt"])
+  })
+
+  it("falls back to global patterns when project has none", () => {
+    const homeDir = makeHomeDir()
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ sensitiveFiles: ["global-secret.txt"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
+    expect(result.sensitiveFiles).toEqual(["global-secret.txt"])
+  })
+
+  it("is absent when no config declares it", () => {
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.sensitiveFiles).toBeUndefined()
+  })
+})
