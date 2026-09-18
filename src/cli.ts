@@ -12,6 +12,7 @@ import { allTools } from "./tools"
 import { CommandRegistry } from "./core/command-registry"
 import { createBuiltinCommands } from "./commands"
 import { App } from "./ui/app"
+import { createBackspaceRewritingStdin } from "./ui/backspace-encoding"
 import {
   getSessionsDir,
   loadSession,
@@ -65,7 +66,7 @@ if (!config.apiKey) {
   process.exit(1)
 }
 
-const model = config.model ?? "z-ai/glm-5.2:free"
+const model = config.model ?? "deepseek/deepseek-v4-flash-0731:free"
 log("component mounted ", model);
 
 const apiKey: string = config.apiKey
@@ -99,4 +100,5 @@ render(
     sessionsDir,
     commands: commandRegistry.getAll(),
   }),
+  { stdin: createBackspaceRewritingStdin(process.stdin) },
 )

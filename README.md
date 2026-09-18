@@ -96,7 +96,7 @@ ViCode reads a layered configuration (project wins over global):
 ```json
 {
   "apiKey": "your-openrouter-key",
-  "model": "z-ai/glm-5.2:free",
+  "model": "deepseek/deepseek-v4-flash-0731:free",
   "systemPrompt": "Optional extra system prompt text or path to a .md file",
   "sensitiveFiles": ["extra-patterns/**.env.custom"]
 }
@@ -137,6 +137,7 @@ Once running, just type a message. The agent reads files, searches your code, ed
 | `/model` | Switch LLM model mid-session (from OpenRouter's model list) |
 | `/skill` | Load a skill Markdown file as a system-prompt layer |
 | `/session` | List or resume saved sessions |
+| `/home` | Return to the welcome screen |
 | `/new` | Save the current session and start fresh |
 | `/exit` | Exit ViCode |
 

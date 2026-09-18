@@ -31,3 +31,5 @@
 | **Turn Status** | The Status Bar's live indication of agent activity: idle, thinking, running a tool, waiting for approval, done (with elapsed time), or errored. |
 | **Approval Prompt** | The overlay shown while a Tool Call awaits user consent, displaying the tool name and arguments and accepting `y`/`n`. |
 | **Usage Panel** | The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count. |
+| **Welcome Screen** | The "home" view shown at startup (and returned to via `/home`): banner, model info, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections. |
+| **New Chat** | The Welcome Screen action that begins a fresh conversation. It is identical in behaviour to the `/new` command: the current Session (if any) is saved, then messages, usage, unit counters and active Skills are cleared and the chat view opens empty. |

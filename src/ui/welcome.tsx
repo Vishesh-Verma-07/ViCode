@@ -1,8 +1,10 @@
-import React, { useState, useCallback, useRef, useEffect } from "react"
+import React, { useState, useRef } from "react"
 import { Box, Text, useInput } from "ink"
 import { COLORS, ICONS, ASCII_BANNER } from "./theme"
 import type { Provider } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
+import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
+import { deletePreviousWord } from "./word-delete"
 
 interface WelcomeScreenProps {
   provider: Provider
@@ -15,6 +17,7 @@ interface WelcomeScreenProps {
 export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumableSession, onSendFirstMessage }: WelcomeScreenProps) {
   const [inputValue, setInputValue] = useState("")
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const filterStateRef = useRef<MouseInputFilterState>(MOUSE_INPUT_FILTER_INITIAL)
   const modelInfo = provider.getModelInfo()
 
   const menuItems = [
@@ -42,6 +45,10 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
       }
       return
     }
+    if ((key.ctrl && (input === "w" || input === "\u0017")) || ((key.backspace || key.delete) && (key.ctrl || key.meta))) {
+      setInputValue((prev) => deletePreviousWord(prev))
+      return
+    }
     if (key.backspace || key.delete) {
       if (inputValue.length > 0) setInputValue((prev) => prev.slice(0, -1))
       return
@@ -50,7 +57,11 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
       process.exit(0)
     }
     if (!input || key.ctrl || key.meta || key.escape || key.tab) return
-    setInputValue((prev) => prev + input)
+    const result = filterMouseInput(input, filterStateRef.current)
+    filterStateRef.current = result.state
+    if (result.keptInput.length > 0) {
+      setInputValue((prev) => prev + result.keptInput)
+    }
   })
 
   return (
@@ -61,7 +72,7 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
         </Text>
         <Box marginTop={1}>
           <Text color={COLORS.muted}>
-            {ICONS.sparkle} AI-Powered Coding Assistant {ICONS.sparkle}
+            {ICONS.sparkle} AI-Powered Coding Assistant made by vishesh verma {ICONS.sparkle}
           </Text>
         </Box>
       </Box>

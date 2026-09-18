@@ -77,6 +77,10 @@ export interface ExitCapability {
   requestExit(): Promise<void>
 }
 
+export interface NavigationCapability {
+  home(): void
+}
+
 export interface ModelsCapability {
   list(): Promise<ModelListing[]>
   getCurrentModelId(): string
@@ -92,6 +96,7 @@ export interface CommandContext {
   openPicker?: OpenPicker
   sessions?: SessionsCapability
   exit?: ExitCapability
+  navigation?: NavigationCapability
   models?: ModelsCapability
   skills?: SkillContext
   onSkillActivate?: (content: string) => void

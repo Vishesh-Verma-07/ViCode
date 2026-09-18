@@ -13,6 +13,7 @@ import { createSessionCommand } from "@/commands/session"
 import { createNewCommand } from "@/commands/new"
 import { createExitCommand } from "@/commands/exit"
 import { createModelCommand } from "@/commands/model"
+import { createHomeCommand } from "@/commands/home"
 import { saveSession, loadSession, type Session } from "@/core/session"
 import type { Command, Message, ToolDefinition } from "@/core/types"
 import type { Provider, StreamEvent, ModelListing } from "@/core/provider"
@@ -162,6 +163,7 @@ describe("App command interception", () => {
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         sessionsDir={sessionsDir}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -260,6 +262,7 @@ describe("App command suggestion dropdown", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/suggestion-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -536,6 +539,7 @@ describe("App session switcher", () => {
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         sessionsDir={sessionsDir}
+        initialView="chat"
         commands={registry.getAll()}
       />,
     )
@@ -709,6 +713,7 @@ describe("App model switcher", () => {
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         sessionsDir={sessionsDir}
+        initialView="chat"
         commands={registry.getAll()}
       />,
     )
@@ -1154,6 +1159,7 @@ describe("App streaming guard for commands", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/guard-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -1206,6 +1212,7 @@ describe("App status bar indicator", () => {
         tools={tools}
         systemPrompt=""
         context={{ projectPath: "/tmp/status-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -1693,6 +1700,7 @@ describe("App chat scrolling", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/scroll-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -1815,6 +1823,7 @@ describe("App fenced code block rendering", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/code-block-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -1883,6 +1892,7 @@ describe("App mouse wheel scrolling", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/wheel-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -1956,6 +1966,7 @@ describe("Inline tool bubbles in chat", () => {
         tools={tools}
         systemPrompt=""
         context={{ projectPath: "/tmp/bubble-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -2218,6 +2229,7 @@ describe("Usage panel", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/usage-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -2306,6 +2318,7 @@ describe("Error surfacing", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/err-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -2335,6 +2348,7 @@ describe("Chat input mouse-byte immunity", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/x10-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -2434,6 +2448,7 @@ describe("Chat input mouse-byte immunity", () => {
           tools={[]}
           systemPrompt=""
           context={{ projectPath: "/tmp/wheel-click-test" }}
+          initialView="chat"
           commands={createTestCommands()}
         />,
       )
@@ -2485,6 +2500,7 @@ describe("ChatInput word deletion", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/wdel-test" }}
+        initialView="chat"
         commands={createTestCommands()}
       />,
     )
@@ -2523,6 +2539,278 @@ describe("ChatInput word deletion", () => {
       await until(() => frameText().includes("foo"))
       expect(frameText()).toContain("foo")
       expect(frameText()).not.toContain("bar")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("Ctrl+Delete sequence (what a bare DEL byte is rewritten to) deletes the previous word", async () => {
+    const { frameText, unmount } = await typedFrame([
+      ..."hello beautiful world",
+      "\u001B[3;5~",
+    ])
+    try {
+      await until(() => frameText().includes("hello"))
+      expect(frameText()).toContain("hello beautiful")
+      expect(frameText()).not.toContain("worl")
+      expect(frameText()).not.toContain("world")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("plain Backspace (BS byte) still deletes a single character", async () => {
+    const { frameText, unmount } = await typedFrame([
+      ..."hello",
+      "\u0008",
+    ])
+    try {
+      await until(() => frameText().includes("hell"))
+      expect(frameText()).toContain("hell")
+      expect(frameText()).not.toContain("hello")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
+
+describe("App welcome-first flow", () => {
+  function createCommands(): Command[] {
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createHomeCommand())
+    return registry.getAll()
+  }
+
+  function setup() {
+    const capturedMessages: Message[][] = []
+    const provider = createStubProvider(capturedMessages)
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/welcome-test" }}
+        commands={createCommands()}
+      />,
+    )
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    return { ...instance, capturedMessages, typeAndSubmit }
+  }
+
+  it("boots to the welcome screen instead of the chat panel when no session exists", async () => {
+    const { lastFrame, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("AI-Powered Coding Assistant"))
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("New Chat")
+      expect(frame).toContain("███████╗")
+      expect(frame).toContain("Ask anything or select an option...")
+      expect(frame).not.toContain("Type your message")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("typing a first message on the welcome screen sends it and opens the chat", async () => {
+    const { lastFrame, capturedMessages, typeAndSubmit, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("AI-Powered Coding Assistant"))
+
+      await typeAndSubmit("hello from home")
+
+      await until(() => (lastFrame() ?? "").includes("You:"))
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("hello from home")
+      expect(frame).toContain("Type your message")
+      expect(capturedMessages.length).toBeGreaterThan(0)
+    } finally {
+      unmount()
+    }
+  })
+
+  it("returns to the welcome screen via /home and can start a new message there", async () => {
+    const { lastFrame, capturedMessages, typeAndSubmit, stdin, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("AI-Powered Coding Assistant"))
+
+      stdin.write("\r")
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await until(() => (lastFrame() ?? "").includes("Ready"))
+      await typeAndSubmit("/home")
+      await until(() => (lastFrame() ?? "").includes("AI-Powered Coding Assistant"))
+
+      expect(lastFrame() ?? "").not.toContain("Type your message")
+
+      await typeAndSubmit("back again")
+      await until(() => (lastFrame() ?? "").includes("You:"))
+      expect(lastFrame() ?? "").toContain("back again")
+      expect(capturedMessages.length).toBeGreaterThan(0)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
+
+describe("Welcome screen mouse-byte immunity", () => {
+  function setup() {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/welcome-mouse-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    return { ...instance, frameText }
+  }
+
+  it("ignores X10 and SGR clicks without leaking junk into the input box", async () => {
+    const { frameText, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      stdin.write("\u001B[M !!")
+      await new Promise((r) => setTimeout(r, 20))
+      stdin.write("\x1B[M")
+      await new Promise((r) => setTimeout(r, 20))
+      stdin.write("&")
+      await new Promise((r) => setTimeout(r, 20))
+      stdin.write("\u001B[<0;10;5M")
+      await new Promise((r) => setTimeout(r, 50))
+
+      expect(frameText()).not.toContain("!")
+      expect(frameText()).not.toContain("&")
+      expect(frameText()).not.toMatch(/<\d+;\d+;\d+M/)
+
+      for (const char of "hello") {
+        stdin.write(char)
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      expect(frameText()).toContain("hello")
+      expect(frameText()).not.toMatch(/<\d+;\d+;\d+M/)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
+
+describe("Welcome screen New Chat", () => {
+  function makeSeedSession(): Session {
+    return {
+      id: "sess_welcome_seed",
+      projectPath: "/tmp/welcome-new-test",
+      model: "stub-model",
+      messages: [
+        { id: "msg_seed", role: "user", content: [{ type: "text", text: "hello seed conversation" }], timestamp: Date.now() },
+      ],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 7,
+      totalCost: 0.001,
+    }
+  }
+
+  it("persists the current session and boots into a blank chat, matching /new semantics", async () => {
+    const seed = makeSeedSession()
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-welcome-new-test-"))
+    saveSession(seed, sessionsDir)
+    const capturedMessages: Message[][] = []
+    const instance = render(
+      <App
+        provider={createStubProvider(capturedMessages)}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: seed.projectPath }}
+        initialSession={seed}
+        initialView="home"
+        sessionsDir={sessionsDir}
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+      const bootFrame = frameText()
+      expect(bootFrame).toContain("Start a fresh conversation")
+      expect(bootFrame).toContain("Resume Session")
+
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("Type your message"), 10000)
+
+      const frame = frameText()
+      expect(frame).not.toContain("hello seed conversation")
+      expect(frame).not.toContain("Resume Session")
+      expect(frame).toContain("Tokens: 0")
+      expect(frame).toContain("$0.00")
+      expect(existsSync(join(sessionsDir, "sess_welcome_seed.json"))).toBe(true)
+    } finally {
+      instance.unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 15000)
+})
+
+describe("Welcome screen word deletion", () => {
+  function setup() {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/welcome-wdel-test" }}
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    return { ...instance, frameText }
+  }
+
+  it("Ctrl+Delete sequence deletes a word and BS deletes a single character", async () => {
+    const { frameText, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      for (const char of "hello beautiful world") {
+        stdin.write(char)
+        await new Promise((r) => setTimeout(r, 5))
+      }
+      expect(frameText()).toContain("hello beautiful world")
+
+      stdin.write("\u001B[3;5~")
+      await new Promise((r) => setTimeout(r, 50))
+      expect(frameText()).toContain("hello beautiful")
+      expect(frameText()).not.toContain("worl")
+      expect(frameText()).not.toContain("world")
+
+      stdin.write("\u0008")
+      await new Promise((r) => setTimeout(r, 50))
+      expect(frameText()).toContain("hello beautifu")
+      expect(frameText()).not.toContain("beautiful")
+
+      stdin.write("x")
+      await new Promise((r) => setTimeout(r, 50))
+      expect(frameText()).toContain("hello beautifux")
     } finally {
       unmount()
     }

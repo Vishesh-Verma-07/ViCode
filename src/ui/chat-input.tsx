@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import { Text, useInput } from "ink"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
+import { deletePreviousWord } from "./word-delete"
 import { COLORS, ICONS } from "./theme"
 
 export function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string) => void }) {
@@ -17,7 +18,7 @@ export function ChatInput({ value, placeholder, isDisabled, onChange }: { value:
   }
 
   const deleteWord = () => {
-    commit(valueRef.current.replace(/\s*\S+\s*$/, ""))
+    commit(deletePreviousWord(valueRef.current))
   }
 
   useInput((input, key) => {

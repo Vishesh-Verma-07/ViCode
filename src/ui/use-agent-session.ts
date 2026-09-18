@@ -39,6 +39,7 @@ export interface UseAgentSessionArgs {
   resetDraft: () => void
   view: "home" | "chat"
   enterChat: () => void
+  enterHome: () => void
 }
 
 export interface AgentSession {
@@ -56,6 +57,7 @@ export interface AgentSession {
   feedbackEntries: FeedbackEntry[]
   activeSkills: string[]
   handleSend: (input: string) => Promise<void>
+  startNewSession: () => void
   performExit: () => Promise<void>
   resolveApproval: (approved: boolean) => void
   requestExitSummary: () => void
@@ -80,6 +82,7 @@ export function useAgentSession({
   resetDraft,
   view,
   enterChat,
+  enterHome,
 }: UseAgentSessionArgs): AgentSession {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
@@ -144,6 +147,25 @@ export function useAgentSession({
     abortRef.current?.abort()
   }, [])
 
+  const clearSessionState = useCallback(() => {
+    approvedPathsRef.current.clear()
+    setSession(null)
+    setMessages([])
+    setToolCalls([])
+    setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
+    setTurnCount(0)
+    setActiveSkills([])
+  }, [])
+
+  const startNewSession = useCallback(() => {
+    if (sessionsDir && session) {
+      saveSession({ ...session, updatedAt: new Date().toISOString() }, sessionsDir)
+    }
+    clearSessionState()
+    resetDraft()
+    enterChat()
+  }, [session, sessionsDir, clearSessionState, resetDraft, enterChat])
+
   const handleSend = useCallback(
     async (input: string) => {
       if (!input.trim()) return
@@ -183,19 +205,14 @@ export function useAgentSession({
                   cost: loaded.totalCost,
                 })
               },
-              startFresh: () => {
-                approvedPathsRef.current.clear()
-                setSession(null)
-                setMessages([])
-                setToolCalls([])
-                setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
-                setTurnCount(0)
-                setActiveSkills([])
-              },
+              startFresh: clearSessionState,
             }
           : undefined,
         exit: {
           requestExit: () => performExit(),
+        },
+        navigation: {
+          home: enterHome,
         },
         models: createProvider
           ? {
@@ -383,7 +400,7 @@ export function useAgentSession({
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, view, enterChat, resetDraft],
+    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, view, enterChat, enterHome, resetDraft, clearSessionState],
   )
 
   return {
@@ -401,6 +418,7 @@ export function useAgentSession({
     feedbackEntries,
     activeSkills,
     handleSend,
+    startNewSession,
     performExit,
     resolveApproval,
     requestExitSummary,

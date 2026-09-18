@@ -30,6 +30,7 @@ interface AppProps {
   systemPrompt: string
   context: ToolContext
   initialSession?: Session
+  initialView?: View
   sessionsDir?: string
   commands?: Command[]
   onSkillActivate?: (content: string) => void
@@ -37,8 +38,8 @@ interface AppProps {
 
 type View = "home" | "chat"
 
-export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, sessionsDir, commands }: AppProps) {
-  const [view, setView] = useState<View>("chat")
+export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, initialView, sessionsDir, commands }: AppProps) {
+  const [view, setView] = useState<View>(initialView ?? (initialSession ? "chat" : "home"))
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
   const { stdout } = useStdout()
@@ -73,6 +74,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     resetDraft: drafting.resetInput,
     view,
     enterChat: () => setView("chat"),
+    enterHome: () => setView("home"),
   })
 
   const allCommands = commandRegistry.getAll()
@@ -146,7 +148,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
         <WelcomeScreen
           provider={session.providerState}
-          onNewChat={() => setView("chat")}
+          onNewChat={session.startNewSession}
           onResumeSession={() => setView("chat")}
           hasResumableSession={!!initialSession}
           onSendFirstMessage={(text) => {

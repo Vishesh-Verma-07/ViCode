@@ -21,7 +21,7 @@ describe("WelcomeScreen banner colorization", () => {
       { columns: 100 },
     )
 
-    const bannerLine = "  ██╗   ██╗██╗███████╗██╗    ███████╗"
+    const bannerLine = "  ██╗   ██╗██╗███████╗███████╗███████╗███████╗"
     expect(frame).toContain(bannerLine)
 
     const bannerStart = frame.indexOf(bannerLine)
