@@ -22,7 +22,9 @@
 | **Command Suggestion** | The dropdown rendered above the chat input listing matching Commands as the user types after `/`. Shows a "no commands match" state when nothing matches. |
 | **Config Layering** | Configuration priority: project config (.vicode.json) > global config (~/.vicode/config.json). Runtime changes (model, skills) happen via Commands, not CLI flags. |
 | **Project Hash** | A truncated SHA-256 hash of the project directory's absolute path, used to namespace session storage. |
-| **App Background** | The color painted behind the entire TUI — applied via a background token on the root container, filling every panel and overlay. |
+| **Surface** | A region of the TUI separated from its neighbours by a background shade rather than a border line. The window chrome — Chat Panel, Usage Panel, Status Bar — is laid out as surfaces layered on the App Background, each a shade of grey up the ramp; floating overlays keep borders. |
+| **Input Box** | The text-entry region rendered as a borderless box with a raised background shade (`inputShade`), distinct from surrounding surfaces purely by its lighter background. Covers both the Welcome Screen's first-message box and the Chat window's full-width input strip. |
+| **App Background** | The color painted behind the entire TUI — applied via a background token on the root container, filling every panel and overlay. Any gaps between Surfaces show App Background. |
 | **Design Token** | A named value in the central palette (`COLORS`, `ICONS`) that all UI styling references, so visual language stays consistent instead of using scattered hardcoded colors. |
 | **Code Block** | A framed region — border plus a dark background shade lighter than the App Background — used to render fenced model output and executed command output. |
 | **Inline Chip** | A short code snippet inside prose (single-backtick `` `cmd` ``) rendered with a dark background and no border, so it reads as embedded code without a full frame. |
