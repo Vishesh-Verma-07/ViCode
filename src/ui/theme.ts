@@ -7,11 +7,14 @@ export const COLORS = {
   muted: "gray",
   text: "white",
   dimText: "#666666",
-  border: "#444444",
   appBackground: "#000000",
+  panelShade: "#101010",
+  sidebarShade: "#181818",
   codeBlockShade: "#1a1a1a",
   codeBlockBorder: "#333333",
+  statusBarShade: "#202020",
   inlineChipShade: "#2a2a2a",
+  inputShade: "#2b2b2b",
 } as const
 
 export const ICONS = {
