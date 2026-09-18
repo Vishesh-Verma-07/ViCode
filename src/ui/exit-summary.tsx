@@ -12,6 +12,7 @@ export function ExitSummary({ usage, model }: ExitSummaryProps) {
   return (
     <Box
       flexDirection="column"
+      flexShrink={0}
       borderStyle="double"
       borderColor={COLORS.primary}
       paddingX={1}

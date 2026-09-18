@@ -20,6 +20,7 @@ export function ApprovalPrompt({ toolName, args }: ApprovalPromptProps) {
   return (
     <Box
       flexDirection="column"
+      flexShrink={0}
       borderStyle="double"
       borderColor={COLORS.warning}
       paddingX={1}

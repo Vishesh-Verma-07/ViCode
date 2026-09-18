@@ -53,7 +53,7 @@ export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultInd
   })
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={1}>
+    <Box flexDirection="column" flexShrink={0} borderStyle="round" borderColor={COLORS.primary} paddingX={1}>
       <Text bold color={COLORS.primary}>
         {title}
       </Text>
