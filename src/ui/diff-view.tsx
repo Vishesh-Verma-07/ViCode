@@ -33,7 +33,7 @@ export function DiffView({ diff }: DiffViewProps) {
   const width = Math.max(1, String(maxNum).length)
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       <Text color={COLORS.accent} bold>
         {ICONS.arrow} {path} <Text color={COLORS.success}>+{parsed.added}</Text> <Text color={COLORS.error}>-{parsed.removed}</Text>
       </Text>

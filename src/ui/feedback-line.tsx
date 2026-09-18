@@ -11,7 +11,7 @@ export interface FeedbackEntry {
 
 export function FeedbackLine({ text, tone }: { text: string; tone: FeedbackTone }) {
   return (
-    <Box marginBottom={1}>
+    <Box>
       <Text color={tone === "error" ? COLORS.error : COLORS.primary} wrap="wrap">
         {tone === "error" ? `${ICONS.cross} ` : `${ICONS.check} `}{text}
       </Text>

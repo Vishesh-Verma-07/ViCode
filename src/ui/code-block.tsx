@@ -14,6 +14,7 @@ export function CodeFrame({ children }: CodeFrameProps) {
       borderStyle="single"
       borderColor={COLORS.codeBlockBorder}
       paddingX={1}
+      paddingY={1}
     >
       {children}
     </Box>
@@ -28,7 +29,7 @@ interface CodeBlockProps {
 
 export function CodeBlock({ code, language, commandLine }: CodeBlockProps) {
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       {language && <Text color={COLORS.dimText}>{language}</Text>}
       <CodeFrame>
         {commandLine && (

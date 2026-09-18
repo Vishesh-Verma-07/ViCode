@@ -106,7 +106,7 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
       </Box>
 
       <Box marginTop={2} width={50} flexDirection="column">
-        <Box borderStyle="round" borderColor={inputValue ? COLORS.primary : COLORS.border} paddingX={1} paddingY={0}>
+        <Box backgroundColor={COLORS.inputShade} paddingX={2} paddingY={1}>
           <Text>
             <Text color={COLORS.primary} bold>{ICONS.arrow} </Text>
             {inputValue ? (

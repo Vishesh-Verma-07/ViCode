@@ -19,8 +19,8 @@ export function UsagePanel({ width, model, contextLength, usage, turns, status }
       ? Math.min(100, (usage.totalTokens / contextLength) * 100)
       : 0
   return (
-    <Box width={width} flexDirection="column" borderStyle="single" borderColor={COLORS.border} paddingX={1}>
-      <Box borderBottom={true} borderBottomColor={COLORS.border} paddingBottom={0} marginBottom={1}>
+<Box width={width} flexDirection="column" backgroundColor={COLORS.sidebarShade} paddingX={1}>
+      <Box marginBottom={1}>
         <Text bold color={COLORS.primary}>
           {ICONS.sparkle} Usage
         </Text>
@@ -55,7 +55,7 @@ export function UsagePanel({ width, model, contextLength, usage, turns, status }
           <Text color={COLORS.text}>{turns}</Text>
         </Box>
       </Box>
-      <Box marginTop={1} borderTop={true} borderTopColor={COLORS.border} paddingTop={0}>
+      <Box marginTop={1}>
         <Text color={COLORS.dimText} italic>Ctrl+C to exit</Text>
       </Box>
     </Box>

@@ -33,8 +33,8 @@ export function StatusBar({ usage, model, status }: StatusBarProps) {
     <Box
       justifyContent="space-between"
       paddingX={1}
-      borderStyle="single"
-      borderColor={COLORS.border}
+      flexShrink={0}
+      backgroundColor={COLORS.statusBarShade}
     >
       <Box gap={2}>
         <Text color={COLORS.primary} bold>{ICONS.logo}</Text>

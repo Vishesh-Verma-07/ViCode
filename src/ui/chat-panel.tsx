@@ -30,7 +30,7 @@ interface ChatPanelProps {
   modelName?: string
 }
 
-export const CHAT_CHROME_LINES = 7
+export const CHAT_CHROME_LINES = 6
 const WHEEL_STEP_LINES = 3
 
 function textContentOf(msg: Message): string {
@@ -91,6 +91,19 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
   type Block = { key: string; lines: number; node: ReactNode; text?: string }
   const blocks: Block[] = []
 
+  const pushBlock = (key: string, node: ReactNode, lines: number, text?: string) => {
+    blocks.push({
+      key,
+      lines: lines + 1,
+      text,
+      node: (
+        <Box key={key} flexDirection="column" marginBottom={1}>
+          {node}
+        </Box>
+      ),
+    })
+  }
+
   const TEXT_CHUNK_LINES = 10
 
   const addCodeAwareBlocks = (
@@ -141,12 +154,12 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
         )
         const plain = chunkLines.map((line) => line.map((s) => s.text).join("")).join("\n")
         const estimateText = chunkLines.map((line) => line.map(padded).join("")).join("\n")
-        blocks.push({
+        pushBlock(
           key,
-          lines: estimate(usePrefix ? `${opts?.prefix ?? ""}${estimateText}` : estimateText),
-          text: usePrefix ? `${opts?.prefix ?? ""}${plain}` : plain,
           node,
-        })
+          estimate(usePrefix ? `${opts?.prefix ?? ""}${estimateText}` : estimateText),
+          usePrefix ? `${opts?.prefix ?? ""}${plain}` : plain,
+        )
       }
       firstTextDone = true
       mixed = []
@@ -156,12 +169,12 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
       if (seg.kind === "fenced") {
         flushMixed()
         nodeIdx++
-        blocks.push({
-          key: `${keyBase}:code${nodeIdx}`,
-          lines: estimate(seg.text) + (seg.language ? 1 : 0) + 2,
-          text: seg.text,
-          node: <CodeBlock key={`${keyBase}:code${nodeIdx}`} code={seg.text} language={seg.language} />,
-        })
+        pushBlock(
+          `${keyBase}:code${nodeIdx}`,
+          <CodeBlock key={`${keyBase}:code${nodeIdx}`} code={seg.text} language={seg.language} />,
+          estimate(seg.text) + (seg.language ? 1 : 0) + 4,
+          seg.text,
+        )
       } else {
         mixed.push(seg)
       }
@@ -187,70 +200,64 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
       }
       for (const c of msg.content) {
         if (c.type !== "tool-call") continue
-        blocks.push({
-          key: `${msg.id}:call:${c.toolCallId}`,
-          lines: 1,
-          node: (
-            <Text key={`${msg.id}:call:${c.toolCallId}`} color={COLORS.muted}>
-              <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
-            </Text>
-          ),
-          text: `${ICONS.tool} ${c.toolName}`,
-        })
+        pushBlock(
+          `${msg.id}:call:${c.toolCallId}`,
+          <Text key={`${msg.id}:call:${c.toolCallId}`} color={COLORS.muted}>
+            <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
+          </Text>,
+          1,
+          `${ICONS.tool} ${c.toolName}`,
+        )
       }
     } else if (msg.role === "tool") {
       for (const c of msg.content) {
         if (c.type !== "tool-result") continue
         const { diff, message } = extractDiff(c.result)
         if (diff) {
-          const lines = diff.split("\n").length
-          blocks.push({
-            key: `${msg.id}:result:${c.toolCallId}`,
-            lines,
-            node: <DiffView key={`${msg.id}:result:${c.toolCallId}`} diff={diff} />,
-          })
+          const textLines = diff.split("\n").length
+          pushBlock(
+            `${msg.id}:result:${c.toolCallId}`,
+            <DiffView key={`${msg.id}:result:${c.toolCallId}`} diff={diff} />,
+            textLines + 5,
+          )
         } else {
           const summary = summarizeResult(message)
           const command = commandFromArgs(callArgsByToolCallId.get(c.toolCallId) ?? {})
           const key = `${msg.id}:result:${c.toolCallId}`
-          blocks.push({
+          pushBlock(
             key,
-            lines: 1 + summary.lines + 2 + (command ? 1 : 0),
-            node: (
-              <Box key={key} flexDirection="column">
-                <Text color={COLORS.muted}>
-                  <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
-                </Text>
-                <CodeBlock key={`${key}:code`} code={summary.text} commandLine={command} />
-              </Box>
-            ),
-            text: command
+            <Box key={key} flexDirection="column">
+              <Text color={COLORS.muted}>
+                <Text color={COLORS.primary}>{ICONS.tool}</Text> {c.toolName}
+              </Text>
+              <CodeBlock key={`${key}:code`} code={summary.text} commandLine={command} />
+            </Box>,
+            1 + summary.lines + 4 + (command ? 1 : 0),
+            command
               ? `${ICONS.tool} ${c.toolName}\n$ ${command}\n${summary.text}`
               : `${ICONS.tool} ${c.toolName}\n${summary.text}`,
-          })
+          )
         }
       }
     }
   }
   for (const tool of runningTools) {
-    blocks.push({
-      key: `running:${tool.id}`,
-      lines: 1,
-      node: (
-        <Text key={`running:${tool.id}`} color={COLORS.muted}>
-          <Text color={COLORS.primary}>{ICONS.tool}</Text> {tool.name}…
-        </Text>
-      ),
-      text: `${ICONS.tool} ${tool.name}…`,
-    })
+    pushBlock(
+      `running:${tool.id}`,
+      <Text key={`running:${tool.id}`} color={COLORS.muted}>
+        <Text color={COLORS.primary}>{ICONS.tool}</Text> {tool.name}…
+      </Text>,
+      1,
+      `${ICONS.tool} ${tool.name}…`,
+    )
   }
   for (const entry of feedbackEntries) {
-    blocks.push({
-      key: entry.id,
-      lines: estimate(entry.text) + 1,
-      node: <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />,
-      text: entry.text,
-    })
+    pushBlock(
+      entry.id,
+      <FeedbackLine key={entry.id} text={entry.text} tone={entry.tone} />,
+      estimate(entry.text),
+      entry.text,
+    )
   }
   if (currentText) {
     addCodeAwareBlocks("current-stream", currentText)
@@ -297,11 +304,10 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
     <Box
       width={width}
       flexDirection="column"
-      borderStyle="single"
-      borderColor={COLORS.border}
-      paddingX={1}
+      backgroundColor={COLORS.panelShade}
+      paddingTop={1}
     >
-      <Box flexGrow={1} flexDirection="column" overflow="hidden">
+      <Box flexGrow={1} flexDirection="column" overflow="hidden" paddingX={2}>
         {blocks.length === 0 && (
           <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
             <Text color={COLORS.primary} bold>
@@ -330,14 +336,14 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
         {visibleNodes}
       </Box>
       {suggestion && (
-        <Box paddingBottom={1}>
+        <Box paddingBottom={1} paddingX={2}>
           <CommandSuggestion
             items={suggestion.items}
             highlightIndex={suggestion.highlightIndex}
           />
         </Box>
       )}
-      <Box borderTop={true} borderTopColor={COLORS.border} paddingTop={1}>
+      <Box backgroundColor={COLORS.inputShade} marginTop={1} paddingX={2} paddingY={1}>
         <ChatInput
           value={inputValue}
           placeholder={isStreaming ? "Responding..." : "Type your message..."}
