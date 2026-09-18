@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { loadConfig } from "@/config/config"
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs"
+import { loadConfig, saveApiKeyToGlobalConfig } from "@/config/config"
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "fs"
 import { join } from "path"
 
 const tmpDir = join(import.meta.dir, "__tmp_config_test")
@@ -119,6 +119,49 @@ describe("API key fallback", () => {
       if (original === undefined) delete process.env.OPENROUTER_API_KEY
       else process.env.OPENROUTER_API_KEY = original
     }
+  })
+})
+
+describe("saveApiKeyToGlobalConfig", () => {
+  function globalConfigPath(): string {
+    return join(tmpDir, "vicode-home", "config.json")
+  }
+
+  function makeHome(): void {
+    mkdirSync(join(tmpDir, "vicode-home"), { recursive: true })
+  }
+
+  it("creates the global config file with the key when none exists", () => {
+    makeHome()
+    const result = saveApiKeyToGlobalConfig("sk-or-v1-newkey", globalConfigPath())
+    expect(result).toBe(true)
+    expect(JSON.parse(readFileSync(globalConfigPath(), "utf-8"))).toEqual({ apiKey: "sk-or-v1-newkey" })
+  })
+
+  it("merges the key into an existing global config, preserving other fields", () => {
+    makeHome()
+    writeFileSync(globalConfigPath(), JSON.stringify({ model: "keep-me", apiKey: "old-key" }))
+    saveApiKeyToGlobalConfig("new-key", globalConfigPath())
+    const saved = JSON.parse(readFileSync(globalConfigPath(), "utf-8"))
+    expect(saved.apiKey).toBe("new-key")
+    expect(saved.model).toBe("keep-me")
+  })
+
+  it("creates the config directory if it does not exist", () => {
+    const path = globalConfigPath()
+    expect(existsSync(join(tmpDir, "vicode-home"))).toBe(false)
+    const result = saveApiKeyToGlobalConfig("sk-or-v1-newkey", path)
+    expect(result).toBe(true)
+    expect(existsSync(join(tmpDir, "vicode-home"))).toBe(true)
+    expect(JSON.parse(readFileSync(path, "utf-8")).apiKey).toBe("sk-or-v1-newkey")
+  })
+
+  it("the saved key is picked up by loadConfig as the global layer", () => {
+    makeHome()
+    const path = globalConfigPath()
+    saveApiKeyToGlobalConfig("sk-or-v1-global", path)
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: path })
+    expect(result.apiKey).toBe("sk-or-v1-global")
   })
 })
 

@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import { z } from "zod"
 import type { ToolDefinition, ToolContext } from "../core/types"
 
@@ -21,48 +22,30 @@ export const bashTool: ToolDefinition = {
     const cwd = (args.cwd as string) || context.projectPath
     const timeoutMs = ((args.timeout as number) || 30) * 1000
 
-    const proc = Bun.spawn(["bash", "-c", command], {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-    })
+    const proc = spawn("bash", ["-c", command], { cwd })
 
     let timedOut = false
 
-    const readAll = async (): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
-      const stdoutBuf: number[] = []
-      const stderrBuf: number[] = []
+    const stdoutBuf: number[] = []
+    const stderrBuf: number[] = []
 
-      const readStream = async (
-        stream: ReadableStream<Uint8Array>,
-        buf: number[],
-      ) => {
-        const reader = stream.getReader()
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            for (const byte of value) {
-              if (buf.length < MAX_OUTPUT_BYTES) buf.push(byte)
-            }
-          }
-        } catch {
-          reader.cancel().catch(() => {})
+    const collect = (stream: NodeJS.ReadableStream, buf: number[]) => {
+      stream.on("data", (chunk: Buffer) => {
+        for (const byte of chunk) {
+          if (buf.length < MAX_OUTPUT_BYTES) buf.push(byte)
         }
-      }
-
-      await Promise.all([
-        readStream(proc.stdout, stdoutBuf),
-        readStream(proc.stderr, stderrBuf),
-        proc.exited,
-      ])
-
-      return {
-        stdout: new TextDecoder().decode(new Uint8Array(stdoutBuf)),
-        stderr: new TextDecoder().decode(new Uint8Array(stderrBuf)),
-        exitCode: proc.exitCode ?? 0,
-      }
+      })
     }
+    collect(proc.stdout, stdoutBuf)
+    collect(proc.stderr, stderrBuf)
+
+    const decode = (buf: number[]): string =>
+      new TextDecoder().decode(new Uint8Array(buf))
+
+    const exited = new Promise<number | null>((resolve) => {
+      proc.on("close", (code) => resolve(code))
+      proc.on("error", () => resolve(null))
+    })
 
     const timeout = delay(timeoutMs).then(() => {
       timedOut = true
@@ -70,7 +53,16 @@ export const bashTool: ToolDefinition = {
     })
 
     try {
-      const result = await Promise.race([readAll(), timeout.then(() => null)])
+      const result = await Promise.race([
+        exited.then(async (exitCode) => ({
+          stdout: decode(stdoutBuf),
+          stderr: decode(stderrBuf),
+          exitCode: exitCode ?? 0,
+        })),
+        timeout.then(() => null),
+      ])
+
+      try { proc.kill("SIGKILL") } catch {}
 
       if (timedOut || result === null) {
         return `Error: command timed out after ${timeoutMs / 1000}s`

@@ -1,24 +1,46 @@
 {
-  "name": "vicode",
+  "name": "vicode-ai",
   "version": "1.0.0",
-  "bin": {
-    "vicode": "index.ts"
-  },
-  "module": "index.ts",
+  "description": "An interactive terminal AI coding agent that chats with an LLM directly inside your project directory.",
   "type": "module",
-  "private": true,
+  "main": "dist/index.js",
+  "exports": "./dist/index.js",
+  "bin": {
+    "vicode": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
+    "build": "bun run scripts/build.ts",
+    "prepublishOnly": "bun run build",
+    "prepack": "bun run build",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "@types/react": "^19.2.18",
-    "ink-testing-library": "^4.0.0"
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "tui",
+    "terminal",
+    "llm",
+    "coding-agent",
+    "ink"
+  ],
+  "license": "MIT",
+  "author": "Vishesh Verma",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vishesh-Verma-07/ViCode.git"
   },
-  "peerDependencies": {
-    "typescript": "^5"
+  "bugs": {
+    "url": "https://github.com/Vishesh-Verma-07/ViCode/issues"
   },
+  "homepage": "https://github.com/Vishesh-Verma-07/ViCode#readme",
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
@@ -28,5 +50,11 @@
     "ink": "^7.1.1",
     "react": "^19.2.8",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.18",
+    "ink-testing-library": "^4.0.0",
+    "typescript": "^5"
   }
 }

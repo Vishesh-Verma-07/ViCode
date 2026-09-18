@@ -1,9 +1,7 @@
-#!/usr/bin/env bun
-
 import React from "react"
 import { render } from "ink"
 import { parseArgs, formatHelp } from "./config/cli"
-import { loadConfig } from "./config/config"
+import { loadConfig, saveApiKeyToGlobalConfig } from "./config/config"
 import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
@@ -54,27 +52,21 @@ const config = loadConfig({
   projectPath,
 })
 
-if (!config.apiKey) {
-  console.error(
-    "Error: No API key configured.\n\n" +
-      "Set your OpenRouter API key in one of:\n" +
-      "  1. ~/.vicode/config.json  → { \"apiKey\": \"your-key\" }\n" +
-      "  2. .vicode.json in your project  → { \"apiKey\": \"your-key\" }\n" +
-      "  3. Environment variable  → OPENROUTER_API_KEY=your-key\n\n" +
-      "Get a key at https://openrouter.ai/keys"
-  )
-  process.exit(1)
-}
+const apiKey: string = config.apiKey ?? ""
 
 const model = config.model ?? "deepseek/deepseek-v4-flash-0731:free"
 log("component mounted ", model);
-
-const apiKey: string = config.apiKey
 
 const provider = createOpenRouterProvider({
   apiKey,
   model,
 })
+
+const createProvider = (modelId: string, key = apiKey) =>
+  createOpenRouterProvider({
+    apiKey: key,
+    model: modelId,
+  })
 
 const systemPrompt = assembleSystemPrompt({
   projectPath,
@@ -88,17 +80,17 @@ commandRegistry.registerAll(createBuiltinCommands(commandRegistry))
 render(
   React.createElement(App, {
     provider,
-    createProvider: (modelId: string) =>
-      createOpenRouterProvider({
-        apiKey,
-        model: modelId,
-      }),
+    createProvider,
     tools: allTools,
     systemPrompt,
     context: { projectPath, sensitivePatterns: config.sensitiveFiles },
     initialSession: initialSession ?? undefined,
     sessionsDir,
     commands: commandRegistry.getAll(),
+    initialApiKey: apiKey,
+    onSaveApiKey: (key: string) => {
+      saveApiKeyToGlobalConfig(key)
+    },
   }),
   { stdin: createBackspaceRewritingStdin(process.stdin) },
 )

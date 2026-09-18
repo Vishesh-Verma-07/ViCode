@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { readFileSync, existsSync } from "fs"
-import { join } from "path"
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
+import { join, dirname } from "path"
 
 export const configSchema = z
   .object({
@@ -68,6 +68,26 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
 function joinHomePath(relativePath: string): string {
   const home = process.env.HOME || process.env.USERPROFILE || ""
   return home ? `${home}/${relativePath}` : ""
+}
+
+/**
+ * Persists an API key to the global config (~/.vicode/config.json),
+ * merging with any existing global settings. Best-effort: returns false
+ * when the write fails so callers can surface the failure.
+ */
+export function saveApiKeyToGlobalConfig(
+  apiKey: string,
+  globalConfigPath = joinHomePath(".vicode/config.json"),
+): boolean {
+  try {
+    const existing = readJsonFile(globalConfigPath) ?? {}
+    const merged = { ...existing, apiKey }
+    mkdirSync(dirname(globalConfigPath), { recursive: true })
+    writeFileSync(globalConfigPath, JSON.stringify(merged, null, 2) + "\n", "utf-8")
+    return true
+  } catch {
+    return false
+  }
 }
 
 function cleanUndefined(obj: Record<string, unknown>): Record<string, unknown> {

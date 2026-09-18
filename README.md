@@ -51,8 +51,9 @@ The agent loop (`src/core/agent-loop.ts`) is a manual ReAct loop: it streams tex
 
 ```text
 vicode/
-├── index.ts                  # Thin entry point → src/cli.ts
-├── package.json              # Bun module, "vicode" bin entry
+├── index.ts                  # Dev entry point → src/cli.ts
+├── package.json              # Built for npm; "vicode" bin entry (dist/index.js)
+├── scripts/build.ts          # Production build → dist/index.js (Node ESM bundle)
 ├── tsconfig.json
 ├── src/
 │   ├── cli.ts                # Entry point: wires config → provider → core → UI
@@ -70,19 +71,45 @@ vicode/
 
 ## Installation
 
-Requires [Bun](https://bun.com).
+Install globally (works with `npm`, `bun`, `yarn`, or `pnpm`):
+
+```bash
+npm install -g vicode-ai
+# or
+bun add -g vicode-ai
+# or
+yarn global add vicode-ai
+# or
+pnpm add -g vicode-ai
+```
+
+Or run it without installing:
+
+```bash
+npx vicode-ai
+# or
+bunx vicode-ai
+# or
+pnpm dlx vicode-ai
+```
+
+Run it in your current directory (local install):
+
+```bash
+npm install vicode-ai
+npx vicode
+```
+
+### Development
+
+Building the CLI requires [Bun](https://bun.com). To run from source:
 
 ```bash
 git clone https://github.com/Vishesh-Verma-07/ViCode.git
 cd ViCode
 
 bun install
-```
-
-To make the `vicode` command available globally:
-
-```bash
-bun link
+bun run index.ts
 ```
 
 ## Configuration

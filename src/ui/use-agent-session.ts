@@ -28,7 +28,7 @@ const DONE_REVERT_MS = 3000
 
 export interface UseAgentSessionArgs {
   provider: Provider
-  createProvider?: (modelId: string) => Provider
+  createProvider?: (modelId: string, apiKey?: string) => Provider
   tools: ToolDefinition[]
   systemPrompt: string
   context: ToolContext
@@ -40,6 +40,9 @@ export interface UseAgentSessionArgs {
   view: "home" | "chat"
   enterChat: () => void
   enterHome: () => void
+  apiKey?: string
+  ensureKey?: () => Promise<boolean>
+  openKeyEntry?: () => Promise<boolean>
 }
 
 export interface AgentSession {
@@ -62,6 +65,7 @@ export interface AgentSession {
   resolveApproval: (approved: boolean) => void
   requestExitSummary: () => void
   abortCurrent: () => void
+  applyApiKey: (apiKey: string) => void
 }
 
 /**
@@ -83,6 +87,9 @@ export function useAgentSession({
   view,
   enterChat,
   enterHome,
+  apiKey,
+  ensureKey,
+  openKeyEntry,
 }: UseAgentSessionArgs): AgentSession {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
@@ -100,7 +107,25 @@ export function useAgentSession({
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
   const approvedPathsRef = useRef<Set<string>>(new Set())
+  const providerRef = useRef<Provider>(provider)
+  const apiKeyRef = useRef(apiKey ?? "")
   const { exit } = useApp()
+
+  useEffect(() => {
+    providerRef.current = providerState
+  }, [providerState])
+
+  const applyApiKey = useCallback(
+    (nextApiKey: string) => {
+      apiKeyRef.current = nextApiKey
+      if (!createProvider) return
+      const modelId = providerState.getModelInfo().id
+      const next = createProvider(modelId, nextApiKey)
+      providerRef.current = next
+      setProviderState(next)
+    },
+    [createProvider, providerState],
+  )
 
   useEffect(() => {
     if (turnStatus.kind !== "done") return
@@ -216,14 +241,23 @@ export function useAgentSession({
         },
         models: createProvider
           ? {
-              list: () => providerState.listModels(),
-              getCurrentModelId: () => providerState.getModelInfo().id,
-              switchTo: (modelId) => setProviderState(createProvider(modelId)),
+              list: () => providerRef.current.listModels(),
+              getCurrentModelId: () => providerRef.current.getModelInfo().id,
+              switchTo: (modelId) => {
+                const next = createProvider(modelId, apiKeyRef.current)
+                providerRef.current = next
+                setProviderState(next)
+              },
             }
           : undefined,
         skills: {
           list: async () => discoverSkills(context.projectPath),
         },
+        key: openKeyEntry
+          ? {
+              set: () => openKeyEntry(),
+            }
+          : undefined,
         onSkillActivate: (content: string) => {
           setActiveSkills((prev) => {
             if (prev.some((s) => s === content)) return prev
@@ -240,6 +274,11 @@ export function useAgentSession({
           appendFeedback(dispatch.error, "error")
         }
         return
+      }
+
+      if (ensureKey) {
+        const ok = await ensureKey()
+        if (!ok) return
       }
 
       const userMsg: Message = {
@@ -272,7 +311,7 @@ export function useAgentSession({
           ).join("\n\n")}`
           const result = await runAgentLoop(
             [...messages, userMsg],
-            providerState,
+            providerRef.current,
             tools,
             effectiveSystemPrompt,
             context,
@@ -358,13 +397,13 @@ export function useAgentSession({
           if (sessionsDir) {
             const activeSession = session ?? createSession({
               projectPath: context.projectPath,
-              model: providerState.getModelInfo().name,
+              model: providerRef.current.getModelInfo().name,
               messages: result.messages,
             })
             const savedSession: Session = {
               ...activeSession,
               messages: result.messages,
-              model: providerState.getModelInfo().name,
+              model: providerRef.current.getModelInfo().name,
               updatedAt: new Date().toISOString(),
               totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
               totalCost: activeSession.totalCost + result.totalUsage.cost,
@@ -400,7 +439,7 @@ export function useAgentSession({
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, view, enterChat, enterHome, resetDraft, clearSessionState],
+    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, view, enterChat, enterHome, resetDraft, clearSessionState, ensureKey, openKeyEntry],
   )
 
   return {
@@ -423,5 +462,6 @@ export function useAgentSession({
     resolveApproval,
     requestExitSummary,
     abortCurrent,
+    applyApiKey,
   }
 }

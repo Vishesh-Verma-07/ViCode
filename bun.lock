@@ -18,8 +18,6 @@
         "@types/bun": "latest",
         "@types/react": "^19.2.18",
         "ink-testing-library": "^4.0.0",
-      },
-      "peerDependencies": {
         "typescript": "^5",
       },
     },

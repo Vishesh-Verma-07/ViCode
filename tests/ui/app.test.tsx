@@ -14,6 +14,7 @@ import { createNewCommand } from "@/commands/new"
 import { createExitCommand } from "@/commands/exit"
 import { createModelCommand } from "@/commands/model"
 import { createHomeCommand } from "@/commands/home"
+import { createKeyCommand } from "@/commands/key"
 import { saveSession, loadSession, type Session } from "@/core/session"
 import type { Command, Message, ToolDefinition } from "@/core/types"
 import type { Provider, StreamEvent, ModelListing } from "@/core/provider"
@@ -162,6 +163,7 @@ describe("App command interception", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
+        initialApiKey="test-key"
         sessionsDir={sessionsDir}
         initialView="chat"
         commands={createTestCommands()}
@@ -262,6 +264,7 @@ describe("App command suggestion dropdown", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/suggestion-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -453,6 +456,7 @@ describe("App inline chip rendering", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/chips-test" }}
+        initialApiKey="test-key"
         initialSession={makeChipSession()}
         commands={createTestCommands()}
       />,
@@ -476,6 +480,7 @@ describe("App inline chip rendering", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/chips-test" }}
+        initialApiKey="test-key"
         initialSession={makeChipSession()}
         commands={createTestCommands()}
       />,
@@ -538,6 +543,7 @@ describe("App session switcher", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
+        initialApiKey="test-key"
         sessionsDir={sessionsDir}
         initialView="chat"
         commands={registry.getAll()}
@@ -712,6 +718,7 @@ describe("App model switcher", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
+        initialApiKey="test-key"
         sessionsDir={sessionsDir}
         initialView="chat"
         commands={registry.getAll()}
@@ -920,6 +927,7 @@ describe("App /new command", () => {
         tools={[stampTool]}
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
+        initialApiKey="test-key"
         initialSession={seedSession}
         sessionsDir={sessionsDir}
         commands={registry.getAll()}
@@ -1045,6 +1053,7 @@ describe("App /exit command", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
+        initialApiKey="test-key"
         initialSession={seedSession}
         sessionsDir={sessionsDir}
         commands={registry.getAll()}
@@ -1159,6 +1168,7 @@ describe("App streaming guard for commands", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/guard-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1212,6 +1222,7 @@ describe("App status bar indicator", () => {
         tools={tools}
         systemPrompt=""
         context={{ projectPath: "/tmp/status-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1700,6 +1711,7 @@ describe("App chat scrolling", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/scroll-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1823,6 +1835,7 @@ describe("App fenced code block rendering", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/code-block-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1892,6 +1905,7 @@ describe("App mouse wheel scrolling", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/wheel-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1966,6 +1980,7 @@ describe("Inline tool bubbles in chat", () => {
         tools={tools}
         systemPrompt=""
         context={{ projectPath: "/tmp/bubble-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2229,6 +2244,7 @@ describe("Usage panel", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/usage-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2318,6 +2334,7 @@ describe("Error surfacing", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/err-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2348,6 +2365,7 @@ describe("Chat input mouse-byte immunity", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/x10-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2448,6 +2466,7 @@ describe("Chat input mouse-byte immunity", () => {
           tools={[]}
           systemPrompt=""
           context={{ projectPath: "/tmp/wheel-click-test" }}
+          initialApiKey="test-key"
           initialView="chat"
           commands={createTestCommands()}
         />,
@@ -2500,6 +2519,7 @@ describe("ChatInput word deletion", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/wdel-test" }}
+        initialApiKey="test-key"
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2591,6 +2611,7 @@ describe("App welcome-first flow", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/welcome-test" }}
+        initialApiKey="test-key"
         commands={createCommands()}
       />,
     )
@@ -2669,6 +2690,7 @@ describe("Welcome screen mouse-byte immunity", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/welcome-mouse-test" }}
+        initialApiKey="test-key"
         commands={createTestCommands()}
       />,
     )
@@ -2736,6 +2758,7 @@ describe("Welcome screen New Chat", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: seed.projectPath }}
+        initialApiKey="test-key"
         initialSession={seed}
         initialView="home"
         sessionsDir={sessionsDir}
@@ -2776,6 +2799,7 @@ describe("Welcome screen word deletion", () => {
         tools={[]}
         systemPrompt=""
         context={{ projectPath: "/tmp/welcome-wdel-test" }}
+        initialApiKey="test-key"
         commands={createTestCommands()}
       />,
     )
@@ -2815,4 +2839,146 @@ describe("Welcome screen word deletion", () => {
       unmount()
     }
   }, 15000)
+})
+
+describe("API key entry flow", () => {
+  async function typeInto(instance: { stdin: { write: (s: string) => void } }, text: string): Promise<void> {
+    for (const char of text) {
+      instance.stdin.write(char)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+
+  it("requires a key before chatting and streams once a key is entered", async () => {
+    const captured: Message[][] = []
+    const keysSeen: string[] = []
+    const events: StreamEvent[] = [
+      { type: "text-delta", text: "authed reply" },
+      { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ]
+    const initial = createStubProvider([], events)
+    const createProvider = (_modelId: string, apiKey = "") => {
+      if (apiKey) keysSeen.push(apiKey)
+      return createStubProvider(captured, events)
+    }
+    const savedKeys: string[] = []
+    const instance = render(
+      <App
+        provider={initial}
+        createProvider={createProvider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/key-flow-test" }}
+        initialView="chat"
+        commands={[...createTestCommands(), createKeyCommand()]}
+        onSaveApiKey={(key) => {
+          savedKeys.push(key)
+        }}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeInto(instance, "hello without a key")
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("OpenRouter API key required"))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      expect(captured).toHaveLength(0)
+      expect(frameText()).not.toContain("hello without a key")
+
+      await typeInto(instance, "sk-or-v1-testkey")
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("authed reply"))
+
+      expect(savedKeys).toEqual(["sk-or-v1-testkey"])
+      expect(keysSeen).toEqual(["sk-or-v1-testkey"])
+      expect(captured).toHaveLength(1)
+      expect(JSON.stringify(captured[0])).toContain("hello without a key")
+      expect(frameText()).not.toContain("OpenRouter API key")
+    } finally {
+      instance.unmount()
+    }
+  }, 30000)
+
+  it("the /key command opens the key screen and Esc cancels without a key", async () => {
+    const savedKeys: string[] = []
+    const captured: Message[][] = []
+    const instance = render(
+      <App
+        provider={createStubProvider(captured)}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/key-cmd-test" }}
+        initialView="chat"
+        commands={[...createTestCommands(), createKeyCommand()]}
+        onSaveApiKey={(key) => {
+          savedKeys.push(key)
+        }}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeInto(instance, "/key")
+      instance.stdin.write("\r")
+      await until(
+        () => frameText().includes("OpenRouter API key") && !frameText().includes("required"),
+      )
+
+      instance.stdin.write("\u001B")
+      await until(() => !frameText().includes("OpenRouter API key"))
+
+      expect(savedKeys).toHaveLength(0)
+      expect(captured).toHaveLength(0)
+      expect(frameText()).toContain("Type your message")
+    } finally {
+      instance.unmount()
+    }
+  }, 30000)
+
+  it("centers the key entry screen on screen when shown", async () => {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/key-center-test" }}
+        initialView="chat"
+        commands={[...createTestCommands(), createKeyCommand()]}
+      />,
+    )
+    const frameLines = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .split("\n")
+    try {
+      await until(() => (instance.lastFrame() ?? "").includes("Type your message"))
+
+      for (const char of "/key") {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+      await until(
+        () =>
+          frameLines().some((l) => l.includes("OpenRouter API key")) &&
+          !(instance.lastFrame() ?? "").includes("required"),
+      )
+
+      const lines = frameLines()
+      const titleRow = lines.findIndex((l) => l.includes("OpenRouter API key"))
+      const bottomBorderRow = lines.findIndex((l) => l.includes("╰"))
+      expect(titleRow).toBeGreaterThan(0)
+      expect(titleRow).toBeLessThan(Math.floor(lines.length / 2))
+      expect(bottomBorderRow).toBeGreaterThan(Math.floor(lines.length / 2))
+      expect(bottomBorderRow).toBeGreaterThan(titleRow)
+      expect(bottomBorderRow).toBeLessThan(lines.length - 1)
+      expect(lines[titleRow]!.indexOf("OpenRouter API key")).toBeGreaterThan(3)
+    } finally {
+      instance.unmount()
+    }
+  }, 30000)
 })

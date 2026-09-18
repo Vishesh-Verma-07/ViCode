@@ -87,6 +87,10 @@ export interface ModelsCapability {
   switchTo(modelId: string): void
 }
 
+export interface KeyCapability {
+  set(): Promise<boolean>
+}
+
 export interface SkillContext {
   list(): Promise<Skill[]>
 }
@@ -99,6 +103,7 @@ export interface CommandContext {
   navigation?: NavigationCapability
   models?: ModelsCapability
   skills?: SkillContext
+  key?: KeyCapability
   onSkillActivate?: (content: string) => void
 }
 
