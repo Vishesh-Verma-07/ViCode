@@ -97,3 +97,23 @@ function cleanUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   }
   return result
 }
+
+/**
+ * Removes the API key from the global config (~/.vicode/config.json), keeping
+ * every other field intact. Returns false when there was no key to remove or
+ * the write failed, so callers can surface the outcome.
+ */
+export function removeApiKeyFromGlobalConfig(
+  globalConfigPath = joinHomePath(".vicode/config.json"),
+): boolean {
+  try {
+    const existing = readJsonFile(globalConfigPath)
+    if (!existing || !("apiKey" in existing)) return false
+    delete existing.apiKey
+    mkdirSync(dirname(globalConfigPath), { recursive: true })
+    writeFileSync(globalConfigPath, JSON.stringify(existing, null, 2) + "\n", "utf-8")
+    return true
+  } catch {
+    return false
+  }
+}

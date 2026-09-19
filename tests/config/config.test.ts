@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { loadConfig, saveApiKeyToGlobalConfig } from "@/config/config"
+import { loadConfig, saveApiKeyToGlobalConfig, removeApiKeyFromGlobalConfig } from "@/config/config"
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "fs"
 import { join } from "path"
 
@@ -162,6 +162,39 @@ describe("saveApiKeyToGlobalConfig", () => {
     saveApiKeyToGlobalConfig("sk-or-v1-global", path)
     const result = loadConfig({ projectPath: tmpDir, globalConfigPath: path })
     expect(result.apiKey).toBe("sk-or-v1-global")
+  })
+})
+
+describe("removeApiKeyFromGlobalConfig", () => {
+  function globalPath(): string {
+    return join(tmpDir, "vicode-home", "config.json")
+  }
+
+  it("removes only the apiKey field, preserving other settings", () => {
+    mkdirSync(join(tmpDir, "vicode-home"), { recursive: true })
+    writeFileSync(globalPath(), JSON.stringify({ apiKey: "sk-or-v1-old", model: "keep-me" }))
+    const result = removeApiKeyFromGlobalConfig(globalPath())
+    expect(result).toBe(true)
+    expect(JSON.parse(readFileSync(globalPath(), "utf-8"))).toEqual({ model: "keep-me" })
+  })
+
+  it("returns false and leaves the file untouched when the config has no apiKey", () => {
+    mkdirSync(join(tmpDir, "vicode-home"), { recursive: true })
+    writeFileSync(globalPath(), JSON.stringify({ model: "keep-me" }))
+    expect(removeApiKeyFromGlobalConfig(globalPath())).toBe(false)
+    expect(JSON.parse(readFileSync(globalPath(), "utf-8"))).toEqual({ model: "keep-me" })
+  })
+
+  it("returns false when the config file does not exist", () => {
+    expect(removeApiKeyFromGlobalConfig(join(tmpDir, "vicode-home", "config.json"))).toBe(false)
+  })
+
+  it("cleared config no longer yields an apiKey via loadConfig", () => {
+    mkdirSync(join(tmpDir, "vicode-home"), { recursive: true })
+    saveApiKeyToGlobalConfig("sk-or-v1-global", globalPath())
+    expect(removeApiKeyFromGlobalConfig(globalPath())).toBe(true)
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: globalPath() })
+    expect(result.apiKey).toBeUndefined()
   })
 })
 

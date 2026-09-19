@@ -43,6 +43,7 @@ export interface UseAgentSessionArgs {
   apiKey?: string
   ensureKey?: () => Promise<boolean>
   openKeyEntry?: () => Promise<boolean>
+  removeApiKey?: () => Promise<boolean>
 }
 
 export interface AgentSession {
@@ -90,6 +91,7 @@ export function useAgentSession({
   apiKey,
   ensureKey,
   openKeyEntry,
+  removeApiKey,
 }: UseAgentSessionArgs): AgentSession {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
@@ -256,6 +258,7 @@ export function useAgentSession({
         key: openKeyEntry
           ? {
               set: () => openKeyEntry(),
+              remove: removeApiKey ?? (async () => false),
             }
           : undefined,
         onSkillActivate: (content: string) => {

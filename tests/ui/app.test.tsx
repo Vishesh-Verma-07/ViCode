@@ -2939,6 +2939,54 @@ describe("API key entry flow", () => {
     }
   }, 30000)
 
+  it("the /key remove command clears the saved key and the next chat requires it again", async () => {
+    const captured: Message[][] = []
+    const keysSeen: string[] = []
+    const events: StreamEvent[] = [
+      { type: "text-delta", text: "authed reply" },
+      { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ]
+    const initial = createStubProvider([], events)
+    const createProvider = (_modelId: string, apiKey = "") => {
+      keysSeen.push(apiKey)
+      return createStubProvider(captured, events)
+    }
+    const removed: string[] = []
+    const instance = render(
+      <App
+        provider={initial}
+        createProvider={createProvider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/key-remove-test" }}
+        initialView="chat"
+        initialApiKey="test-key"
+        commands={[...createTestCommands(), createKeyCommand()]}
+        onRemoveApiKey={() => {
+          removed.push("removed")
+        }}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeInto(instance, "/key remove")
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("API key removed"))
+
+      expect(removed).toHaveLength(1)
+
+      await typeInto(instance, "hello after removal")
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("OpenRouter API key required"))
+      expect(captured).toHaveLength(0)
+      expect(frameText()).not.toContain("hello after removal")
+    } finally {
+      instance.unmount()
+    }
+  }, 30000)
+
   it("centers the key entry screen on screen when shown", async () => {
     const instance = render(
       <App

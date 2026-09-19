@@ -37,6 +37,7 @@ interface AppProps {
   commands?: Command[]
   initialApiKey?: string
   onSaveApiKey?: (apiKey: string) => void
+  onRemoveApiKey?: () => void
   onSkillActivate?: (content: string) => void
 }
 
@@ -47,7 +48,7 @@ interface KeyEntryRequest {
   requireKey: boolean
 }
 
-export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, initialView, sessionsDir, commands, initialApiKey, onSaveApiKey }: AppProps) {
+export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, initialView, sessionsDir, commands, initialApiKey, onSaveApiKey, onRemoveApiKey }: AppProps) {
   const [view, setView] = useState<View>(initialView ?? (initialSession ? "chat" : "home"))
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -94,6 +95,16 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     [],
   )
 
+  const sessionRef = useRef<ReturnType<typeof useAgentSession> | null>(null)
+
+  const removeKey = useCallback(async () => {
+    const hadKey = apiKeyRef.current !== ""
+    apiKeyRef.current = ""
+    sessionRef.current?.applyApiKey("")
+    onRemoveApiKey?.()
+    return hadKey
+  }, [onRemoveApiKey])
+
   const session = useAgentSession({
     provider,
     createProvider,
@@ -111,7 +122,9 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     apiKey: initialApiKey,
     ensureKey,
     openKeyEntry: () => openKeyEntry(false),
+    removeApiKey: removeKey,
   })
+  sessionRef.current = session
 
   const submitKey = useCallback(
     (apiKey: string) => {

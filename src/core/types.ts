@@ -89,6 +89,7 @@ export interface ModelsCapability {
 
 export interface KeyCapability {
   set(): Promise<boolean>
+  remove(): Promise<boolean>
 }
 
 export interface SkillContext {

@@ -1,7 +1,7 @@
 import React from "react"
 import { render } from "ink"
 import { parseArgs, formatHelp } from "./config/cli"
-import { loadConfig, saveApiKeyToGlobalConfig } from "./config/config"
+import { loadConfig, saveApiKeyToGlobalConfig, removeApiKeyFromGlobalConfig } from "./config/config"
 import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
@@ -90,6 +90,9 @@ render(
     initialApiKey: apiKey,
     onSaveApiKey: (key: string) => {
       saveApiKeyToGlobalConfig(key)
+    },
+    onRemoveApiKey: () => {
+      removeApiKeyFromGlobalConfig()
     },
   }),
   { stdin: createBackspaceRewritingStdin(process.stdin) },
