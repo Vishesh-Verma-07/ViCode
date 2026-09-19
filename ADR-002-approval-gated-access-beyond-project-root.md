@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The security boundary for file tools has historically been the project directory, enforced as a hard refusal. `write_file` and `edit_file` blocked any path outside the project root outright, `read_file` refused to touch sensitive paths (`.env`, keys, credential stores) entirely, and `bash` was the only surface with an approval prompt.
+The security boundary for file tools has historically been the project directory, enforced as a hard refusal. `write_file` and `edit_file` blocked any path outside the project root outright, writes and edits on Sensitive Paths paused for approval, `read_file` refused sensitive paths entirely (reads could never be approved), and every `bash` call paused for approval.
 
 Hard refusal is too blunt for a coding agent. The model legitimately needs to read files beyond the project root — sibling projects, workspace configuration, global dotfiles — and blocking them forces the user to copy content by hand. Sensitive reads were impossible even when the user was willing to consent. The goal is not to keep everything inside the boundary, but to ensure nothing crosses it without explicit, per-call consent.
 
@@ -20,7 +20,7 @@ Approving a resolved path also auto-approves later calls to that same path for t
 
 - **Positive**: The agent can work with files beyond the project root when the user consents, instead of failing hard.
 - **Positive**: Reads, writes, and edits now follow one consistent rule — sensitive paths of every kind pause for approval (reads too, not just writes and edits).
-- **Positive**: Every out-of-root or sensitive call still surfaces an explicit approval, so consent is never skipped by accident.
+- **Positive**: Every distinct out-of-root or sensitive resolved path still surfaces an explicit approval at least once per Turn, so consent is never skipped by accident; approving that path auto-approves later calls to it for the rest of the Turn.
 - **Positive**: Turn-scoped approved-path memory avoids repeated prompts for the same file during a single turn.
 - **Negative**: Ask-vs-refuse on reads lets approved sensitive content into the model context, where it could be echoed in later output. This is a real trade-off — the user stays in control of what crosses the boundary, but the model gains access the previous model never had.
 - **Negative**: Approval is a per-call negotiation, adding a step to every out-of-root or sensitive operation. Turn-scoped memory mitigates repeats within a turn but not across turns.
