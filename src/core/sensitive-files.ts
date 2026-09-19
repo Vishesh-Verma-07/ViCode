@@ -1,4 +1,5 @@
-import { resolve, relative } from "path"
+import { resolve, relative, sep } from "path"
+import type { ToolContext } from "./types"
 
 export const DEFAULT_SENSITIVE_PATTERNS = [
   ".env",
@@ -52,14 +53,19 @@ export function isSensitivePath(relativePath: string, extraPatterns: string[] = 
   return false
 }
 
+export function isInsideProject(absPath: string, projectPath: string): boolean {
+  return absPath === projectPath || absPath.startsWith(projectPath + sep)
+}
+
 export function pathRequiresApproval(
   args: Record<string, unknown>,
-  context: { projectPath: string; sensitivePatterns?: string[] },
+  context: Pick<ToolContext, "projectPath" | "sensitivePatterns">,
 ): boolean {
   const declared = args.path as string | undefined
   if (!declared) return true
-  const absPath = resolve(context.projectPath, declared)
-  if (!absPath.startsWith(context.projectPath)) return false
-  const relPath = relative(context.projectPath, absPath)
+  const root = resolve(context.projectPath)
+  const absPath = resolve(root, declared)
+  if (!isInsideProject(absPath, root)) return true
+  const relPath = relative(root, absPath)
   return isSensitivePath(relPath, context.sensitivePatterns)
 }

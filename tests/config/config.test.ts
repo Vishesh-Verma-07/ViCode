@@ -22,7 +22,7 @@ afterEach(() => {
 
 describe("config schema", () => {
   it("accepts empty config", () => {
-    const result = loadConfig({ projectPath: tmpDir })
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(tmpDir, "global.json") })
     expect(result.apiKey).toBeUndefined()
     expect(result.model).toBeUndefined()
   })
@@ -97,7 +97,7 @@ describe("API key fallback", () => {
     const original = process.env.OPENROUTER_API_KEY
     process.env.OPENROUTER_API_KEY = "env-key"
     try {
-      const result = loadConfig({ projectPath: tmpDir })
+      const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(tmpDir, "global.json") })
       expect(result.apiKey).toBe("env-key")
     } finally {
       if (original === undefined) delete process.env.OPENROUTER_API_KEY

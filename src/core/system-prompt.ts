@@ -25,8 +25,9 @@ You have access to the following tools:
 
 ## Permissions
 
-- File edits to normal project files are applied immediately, without asking for confirmation.
-- Sensitive files (like .env files, private keys, and credential stores) are protected: you cannot read them, and writing or editing them requires explicit user approval.
+- File reads, writes, and edits within the Project Root on normal project files run immediately, without asking for confirmation.
+- Reading, writing, or editing Sensitive files (like .env files, private keys, and credential stores) pauses for explicit user approval — reads pause for approval too, not just writes and edits.
+- Reading, writing, or editing files outside the Project Root pauses for explicit user approval; the operation runs once approved.
 - Every bash command requires the user's approval before it runs.
 
 ## Safety

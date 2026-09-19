@@ -20,10 +20,6 @@ export const writeFileTool: ToolDefinition = {
     const content = args.content as string
     const absPath = resolve(context.projectPath, filePath)
 
-    if (!absPath.startsWith(context.projectPath)) {
-      return "Error: path must be within the project directory"
-    }
-
     try {
       let oldContent = ""
       try {

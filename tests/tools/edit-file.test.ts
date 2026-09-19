@@ -5,6 +5,7 @@ import { join } from "path"
 import type { ToolContext } from "@/core/types"
 
 const tmpDir = join(import.meta.dir, "__tmp_edit_file_test")
+const outsideDir = join(tmpDir, "..", "__tmp_edit_file_outside")
 
 beforeEach(() => {
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
@@ -13,6 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
+  if (existsSync(outsideDir)) rmSync(outsideDir, { recursive: true })
 })
 
 const ctx: ToolContext = { projectPath: tmpDir }
@@ -53,12 +55,13 @@ describe("edit_file tool", () => {
     expect(result).toContain("Error")
   })
 
-  it("rejects paths outside project", async () => {
-    const result = await editFileTool.execute(
-      { path: "/etc/passwd", oldText: "a", newText: "b" },
-      ctx,
-    )
-    expect(result).toContain("Error")
+  it("edits files outside the project root once approved", async () => {
+    mkdirSync(outsideDir, { recursive: true })
+    const target = join(outsideDir, "outside.txt")
+    writeFileSync(target, "a\nb")
+    const result = await editFileTool.execute({ path: target, oldText: "a", newText: "z" }, ctx)
+    expect(result).toContain("outside.txt")
+    expect(readFileSync(target, "utf-8")).toBe("z\nb")
   })
 
   it("replaces all occurrences of oldText", async () => {
@@ -105,6 +108,16 @@ describe("edit_file tool", () => {
 
     it("requires approval for edits to .env", async () => {
       const needs = await editFileTool.requiresApproval?.({ path: ".env" }, ctx)
+      expect(needs).toBe(true)
+    })
+
+    it("requires approval for edits outside the project root", async () => {
+      const needs = await editFileTool.requiresApproval?.({ path: "../outside.txt" }, ctx)
+      expect(needs).toBe(true)
+    })
+
+    it("requires approval when the path argument is missing", async () => {
+      const needs = await editFileTool.requiresApproval?.({ oldText: "a" }, ctx)
       expect(needs).toBe(true)
     })
   })

@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { readFileSync } from "fs"
-import { resolve, relative } from "path"
-import { isSensitivePath } from "../core/sensitive-files"
+import { resolve } from "path"
+import { pathRequiresApproval } from "../core/sensitive-files"
 import type { ToolDefinition, ToolContext } from "../core/types"
 
 export const readFileTool: ToolDefinition = {
@@ -11,17 +11,10 @@ export const readFileTool: ToolDefinition = {
     path: z.string().describe("File path relative to the project root"),
   }),
   dangerous: false,
+  requiresApproval: pathRequiresApproval,
   execute: async (args, context) => {
     const filePath = args.path as string
     const absPath = resolve(context.projectPath, filePath)
-
-    if (!absPath.startsWith(context.projectPath)) {
-      return "Error: path must be within the project directory"
-    }
-
-    if (isSensitivePath(relative(context.projectPath, absPath), context.sensitivePatterns)) {
-      return `Error: "${filePath}" is a protected file (may contain secrets) and cannot be read`
-    }
 
     try {
       return readFileSync(absPath, "utf-8")

@@ -22,10 +22,6 @@ export const editFileTool: ToolDefinition = {
     const newText = args.newText as string
     const absPath = resolve(context.projectPath, filePath)
 
-    if (!absPath.startsWith(context.projectPath)) {
-      return "Error: path must be within the project directory"
-    }
-
     try {
       const content = readFileSync(absPath, "utf-8")
       if (!content.includes(oldText)) {

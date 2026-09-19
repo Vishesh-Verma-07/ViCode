@@ -5,6 +5,7 @@ import { join } from "path"
 import type { ToolContext } from "@/core/types"
 
 const tmpDir = join(import.meta.dir, "__tmp_write_file_test")
+const outsideDir = join(tmpDir, "..", "__tmp_write_file_outside")
 
 beforeEach(() => {
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
@@ -13,6 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
+  if (existsSync(outsideDir)) rmSync(outsideDir, { recursive: true })
 })
 
 const ctx: ToolContext = { projectPath: tmpDir }
@@ -61,12 +63,12 @@ describe("write_file tool", () => {
     expect(content).toBe("")
   })
 
-  it("rejects paths outside project", async () => {
-    const result = await writeFileTool.execute(
-      { path: "/etc/passwd", content: "bad" },
-      ctx,
-    )
-    expect(result).toContain("Error")
+  it("writes files outside the project root once approved", async () => {
+    mkdirSync(outsideDir, { recursive: true })
+    const target = join(outsideDir, "outside.txt")
+    const result = await writeFileTool.execute({ path: target, content: "bad" }, ctx)
+    expect(result).toContain("outside.txt")
+    expect(readFileSync(target, "utf-8")).toBe("bad")
   })
 
   it("includes diff when overwriting existing file", async () => {
@@ -110,6 +112,16 @@ describe("write_file tool", () => {
     it("honors extra patterns from context", async () => {
       const ctxExtra: ToolContext = { projectPath: tmpDir, sensitivePatterns: ["secrets/**"] }
       const needs = await writeFileTool.requiresApproval?.({ path: "secrets/token.txt" }, ctxExtra)
+      expect(needs).toBe(true)
+    })
+
+    it("requires approval for writes outside the project root", async () => {
+      const needs = await writeFileTool.requiresApproval?.({ path: "../outside.txt" }, ctx)
+      expect(needs).toBe(true)
+    })
+
+    it("requires approval when the path argument is missing", async () => {
+      const needs = await writeFileTool.requiresApproval?.({ content: "x" }, ctx)
       expect(needs).toBe(true)
     })
   })

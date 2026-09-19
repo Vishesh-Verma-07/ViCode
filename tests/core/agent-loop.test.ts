@@ -6,6 +6,7 @@ import { z } from "zod"
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 import { writeFileTool } from "@/tools/write-file"
+import { readFileTool } from "@/tools/read-file"
 import { bashTool } from "@/tools/bash"
 import { MAX_TOOL_RESULT_BYTES, VICODE_TRUNCATION_SENTINEL } from "@/core/cap-result"
 import { CONTEXT_BUDGET_RATIO } from "@/core/constants"
@@ -49,14 +50,17 @@ function createMockCallbacks(overrides?: Partial<AgentLoopCallbacks>): AgentLoop
 const mockContext: ToolContext = { projectPath: "/tmp/test" }
 
 const realToolsDir = join(import.meta.dir, "__tmp_agent_loop_tools_test")
+const outsideToolsDir = join(realToolsDir, "..", "__tmp_agent_loop_outside")
 
 beforeEach(() => {
   if (existsSync(realToolsDir)) rmSync(realToolsDir, { recursive: true })
+  if (existsSync(outsideToolsDir)) rmSync(outsideToolsDir, { recursive: true })
   mkdirSync(realToolsDir, { recursive: true })
 })
 
 afterEach(() => {
   if (existsSync(realToolsDir)) rmSync(realToolsDir, { recursive: true })
+  if (existsSync(outsideToolsDir)) rmSync(outsideToolsDir, { recursive: true })
 })
 
 function userMessage(text: string): Message {
@@ -659,6 +663,71 @@ describe("agent-loop", () => {
       const toolMsg = result.messages.find((m) => m.role === "tool")
       expect((toolMsg!.content[0] as { result: string }).result).toBe("User rejected this tool call.")
       expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toBe("ORIGINAL=1")
+    })
+
+    it("executes a normal read_file silently with no approval", async () => {
+      writeFileSync(join(realToolsDir, "plain.txt"), "plain content")
+      const approvals: string[] = []
+      const result = await runAgentLoop(
+        [userMessage("read plain")],
+        toolCallProvider("read_file", { path: "plain.txt" }),
+        [readFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
+      )
+      expect(approvals).toEqual([])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toBe("plain content")
+    })
+
+    it("pauses for approval on a .env read and approval returns the content", async () => {
+      writeFileSync(join(realToolsDir, ".env"), "SECRET=hunter2")
+      const approvals: string[] = []
+      const result = await runAgentLoop(
+        [userMessage("read env")],
+        toolCallProvider("read_file", { path: ".env" }),
+        [readFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
+      )
+      expect(approvals).toEqual(["read_file"])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toContain("hunter2")
+    })
+
+    it("pauses for approval on a .env read and rejection feeds the rejection result back", async () => {
+      writeFileSync(join(realToolsDir, ".env"), "SECRET=hunter2")
+      const approvals: string[] = []
+      const result = await runAgentLoop(
+        [userMessage("read env")],
+        toolCallProvider("read_file", { path: ".env" }),
+        [readFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return false } }),
+      )
+      expect(approvals).toEqual(["read_file"])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toBe("User rejected this tool call.")
+    })
+
+    it("pauses for approval on a read outside the project root and approval returns the content", async () => {
+      mkdirSync(outsideToolsDir, { recursive: true })
+      writeFileSync(join(outsideToolsDir, "secret.txt"), "outside secret")
+      const approvals: string[] = []
+      const result = await runAgentLoop(
+        [userMessage("read outside")],
+        toolCallProvider("read_file", { path: join(realToolsDir, "..", "__tmp_agent_loop_outside", "secret.txt") }),
+        [readFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: async (name) => { approvals.push(name); return true } }),
+      )
+      expect(approvals).toEqual(["read_file"])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toContain("outside secret")
     })
 
     it("always asks for approval before bash runs", async () => {

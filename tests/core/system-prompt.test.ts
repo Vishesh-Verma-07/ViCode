@@ -40,7 +40,8 @@ describe("assembleSystemPrompt", () => {
     expect(lower).toContain("without asking")
     expect(lower).toContain("approval")
     expect(lower).toContain("sensitive")
-    expect(lower).toContain("cannot read")
+    expect(lower).toContain("outside the project root")
+    expect(lower).toContain("reads")
     expect(lower).toContain("every bash command requires")
   })
 

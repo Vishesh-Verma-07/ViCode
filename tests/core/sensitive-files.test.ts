@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test"
-import { isSensitivePath, DEFAULT_SENSITIVE_PATTERNS } from "@/core/sensitive-files"
+import { isSensitivePath, pathRequiresApproval, DEFAULT_SENSITIVE_PATTERNS } from "@/core/sensitive-files"
+import { join, basename } from "path"
 
 describe("sensitive-files", () => {
   describe("default patterns", () => {
@@ -64,5 +65,44 @@ describe("sensitive-files", () => {
 
   it("extra patterns do not unmark default-sensitive paths", () => {
     expect(isSensitivePath(".env", ["some-other-file"])).toBe(true)
+  })
+
+  describe("pathRequiresApproval", () => {
+    const proj = join(import.meta.dir, "__proj")
+
+    it("requires approval when the path argument is missing", () => {
+      expect(pathRequiresApproval({}, { projectPath: proj })).toBe(true)
+    })
+
+    it("auto-approves in-project normal files", () => {
+      expect(pathRequiresApproval({ path: "src/app.ts" }, { projectPath: proj })).toBe(false)
+    })
+
+    it("auto-approves in-project nested files", () => {
+      expect(pathRequiresApproval({ path: "a/b/c.txt" }, { projectPath: proj })).toBe(false)
+    })
+
+    it("requires approval for in-project sensitive paths", () => {
+      expect(pathRequiresApproval({ path: ".env" }, { projectPath: proj })).toBe(true)
+      expect(pathRequiresApproval({ path: ".ssh/id_rsa" }, { projectPath: proj })).toBe(true)
+    })
+
+    it("requires approval for paths outside the project root", () => {
+      expect(pathRequiresApproval({ path: "../outside.txt" }, { projectPath: proj })).toBe(true)
+      expect(pathRequiresApproval({ path: join(proj, "..", "outside.txt") }, { projectPath: proj })).toBe(true)
+    })
+
+    it("requires approval for absolute paths outside the project root", () => {
+      expect(pathRequiresApproval({ path: "C:/etc/passwd" }, { projectPath: proj })).toBe(true)
+    })
+
+    it("requires approval when a project-root sibling shares the prefix", () => {
+      const path = join(proj, "..", `${basename(proj)}-cousin`, "file.ts")
+      expect(pathRequiresApproval({ path }, { projectPath: proj })).toBe(true)
+    })
+
+    it("honors extra sensitive patterns from the context", () => {
+      expect(pathRequiresApproval({ path: "secrets/token.txt" }, { projectPath: proj, sensitivePatterns: ["secrets/**"] })).toBe(true)
+    })
   })
 })
