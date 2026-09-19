@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApp } from "ink"
-import { resolve } from "path"
 import type { Command, CommandContext, Message, PickerRequest, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
@@ -11,6 +10,8 @@ import { createSession, saveSession } from "../core/session"
 import { discoverSkills } from "../core/skills"
 import { log } from "../utils/logger"
 import { extractDiff } from "./format"
+import { isPathApproved, approvePath, clearApprovedPaths } from "../core/approved-paths"
+import { fileToolApprovalKey } from "../core/sensitive-files"
 import type { FeedbackEntry, FeedbackTone } from "./feedback-line"
 import type { PendingApproval } from "./approval-prompt"
 import type { TurnStatus } from "./status-bar"
@@ -108,7 +109,6 @@ export function useAgentSession({
   const [activeSkills, setActiveSkills] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
-  const approvedPathsRef = useRef<Set<string>>(new Set())
   const providerRef = useRef<Provider>(provider)
   const apiKeyRef = useRef(apiKey ?? "")
   const { exit } = useApp()
@@ -175,7 +175,7 @@ export function useAgentSession({
   }, [])
 
   const clearSessionState = useCallback(() => {
-    approvedPathsRef.current.clear()
+    clearApprovedPaths()
     setSession(null)
     setMessages([])
     setToolCalls([])
@@ -221,7 +221,7 @@ export function useAgentSession({
               dir: sessionsDir,
               getActiveSession: () => session,
               switchTo: (loaded) => {
-                approvedPathsRef.current.clear()
+                clearApprovedPaths()
                 setSession(loaded)
                 setMessages(loaded.messages)
                 enterChat()
@@ -298,6 +298,7 @@ export function useAgentSession({
 
       const controller = new AbortController()
       abortRef.current = controller
+      clearApprovedPaths()
       const turnStart = Date.now()
       let hadError = false
       let turnFailed = false
@@ -361,11 +362,8 @@ export function useAgentSession({
                 console.error("Agent error:", error)
               },
               requestApproval: (toolName, args) => {
-                const approvalKey =
-                  toolName === "write_file" || toolName === "edit_file"
-                    ? resolve(context.projectPath, String(args.path ?? ""))
-                    : null
-                if (approvalKey && approvedPathsRef.current.has(approvalKey)) {
+                const approvalKey = fileToolApprovalKey(toolName, args, context.projectPath)
+                if (approvalKey && isPathApproved(approvalKey)) {
                   return Promise.resolve(true)
                 }
                 return new Promise<boolean>((resolveApproval) => {
@@ -375,7 +373,7 @@ export function useAgentSession({
                     args,
                     resolve: (approved) => {
                       if (approved && approvalKey) {
-                        approvedPathsRef.current.add(approvalKey)
+                        approvePath(approvalKey)
                       }
                       advanceToolStatus()
                       resolveApproval(approved)

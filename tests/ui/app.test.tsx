@@ -1618,7 +1618,52 @@ describe("App status bar indicator", () => {
     }
   }
 
-  it("auto-approves subsequent writes to the same file after one approval in a session", async () => {
+  function makeSameTurnToolProvider(
+    toolName: string,
+    args: Record<string, unknown>,
+    calls: number,
+  ): Provider {
+    let callsMade = 0
+    return {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        if (callsMade < calls) {
+          callsMade++
+          yield { type: "tool-call-start", toolCallId: `call_${callsMade}`, toolName }
+          yield { type: "tool-call-end", toolCallId: `call_${callsMade}`, toolName, args }
+        }
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+  }
+
+  it("auto-approves later calls to the same path within a turn after one approval", async () => {
+    const writeFileTool: ToolDefinition = {
+      name: "write_file",
+      description: "Write file",
+      parameters: z.object({ path: z.string(), content: z.string() }),
+      execute: async () => "written",
+      dangerous: true,
+    }
+    const provider = makeSameTurnToolProvider("write_file", { path: ".env", content: "v" }, 2)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(provider, [writeFileTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("write twice")
+      await until(() => frameText().includes("Waiting for approval"))
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()), 8000)
+    } finally {
+      unmount()
+    }
+  }, 20000)
+
+  it("asks again for the same path in a fresh turn after an approval", async () => {
     const writeFileTool: ToolDefinition = {
       name: "write_file",
       description: "Write file",
@@ -1637,12 +1682,9 @@ describe("App status bar indicator", () => {
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
 
       await typeAndSubmit("second write")
-      let sawApproval = false
-      await until(() => {
-        if (frameText().includes("Waiting for approval")) sawApproval = true
-        return /Done in [0-9]+\.[0-9]s/.test(frameText())
-      }, 8000)
-      expect(sawApproval).toBe(false)
+      await until(() => frameText().includes("Waiting for approval"), 8000)
+      stdin.write("y")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
     } finally {
       unmount()
     }

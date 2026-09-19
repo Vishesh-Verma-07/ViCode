@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { isSensitivePath, pathRequiresApproval, DEFAULT_SENSITIVE_PATTERNS } from "@/core/sensitive-files"
+import { isSensitivePath, pathRequiresApproval, fileToolApprovalKey, DEFAULT_SENSITIVE_PATTERNS } from "@/core/sensitive-files"
 import { join, basename } from "path"
 
 describe("sensitive-files", () => {
@@ -103,6 +103,26 @@ describe("sensitive-files", () => {
 
     it("honors extra sensitive patterns from the context", () => {
       expect(pathRequiresApproval({ path: "secrets/token.txt" }, { projectPath: proj, sensitivePatterns: ["secrets/**"] })).toBe(true)
+    })
+  })
+
+  describe("fileToolApprovalKey", () => {
+    const proj = join(import.meta.dir, "__proj")
+
+    it("returns null for non-file tools", () => {
+      expect(fileToolApprovalKey("bash", { command: "ls" }, proj)).toBeNull()
+    })
+
+    it("returns null when the path argument is missing or empty", () => {
+      expect(fileToolApprovalKey("read_file", {}, proj)).toBeNull()
+      expect(fileToolApprovalKey("write_file", { path: "" }, proj)).toBeNull()
+      expect(fileToolApprovalKey("edit_file", { path: "   " }, proj)).toBeNull()
+    })
+
+    it("resolves the declared path for read, write, and edit", () => {
+      expect(fileToolApprovalKey("read_file", { path: "src/app.ts" }, proj)).toBe(join(proj, "src", "app.ts"))
+      expect(fileToolApprovalKey("write_file", { path: ".env" }, proj)).toBe(join(proj, ".env"))
+      expect(fileToolApprovalKey("edit_file", { path: "../outside.txt" }, proj)).toBe(join(proj, "..", "outside.txt"))
     })
   })
 })

@@ -5,8 +5,11 @@ import type { Message, ToolDefinition, ToolContext } from "@/core/types"
 import { z } from "zod"
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
+import { isPathApproved, approvePath, clearApprovedPaths } from "@/core/approved-paths"
+import { fileToolApprovalKey } from "@/core/sensitive-files"
 import { writeFileTool } from "@/tools/write-file"
 import { readFileTool } from "@/tools/read-file"
+import { editFileTool } from "@/tools/edit-file"
 import { bashTool } from "@/tools/bash"
 import { MAX_TOOL_RESULT_BYTES, VICODE_TRUNCATION_SENTINEL } from "@/core/cap-result"
 import { CONTEXT_BUDGET_RATIO } from "@/core/constants"
@@ -839,6 +842,150 @@ describe("agent-loop", () => {
       let totalTokens = 0
       for (const m of secondTurn) totalTokens += estimateTokens(m)
       expect(totalTokens).toBeLessThanOrEqual(budget)
+    })
+  })
+
+  describe("turn-scoped approved-path memory", () => {
+    beforeEach(() => {
+      clearApprovedPaths()
+    })
+
+    function pathApprovalMiddleware(root: string) {
+      let prompts = 0
+      const requestApproval: AgentLoopCallbacks["requestApproval"] = async (toolName, args) => {
+        const key = fileToolApprovalKey(toolName, args, root)
+        if (key && isPathApproved(key)) return true
+        prompts++
+        if (key) approvePath(key)
+        return true
+      }
+      return { prompts: () => prompts, requestApproval }
+    }
+
+    function finishUsage() {
+      return { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 }
+    }
+
+    function toolCalls(seen: Array<{ name: string; args: Record<string, unknown> }>): StreamEvent[][] {
+      return seen.map((call, i) => [
+        { type: "tool-call-start", toolCallId: `call_${i + 1}`, toolName: call.name },
+        { type: "tool-call-end", toolCallId: `call_${i + 1}`, toolName: call.name, args: call.args },
+        { type: "finish", usage: finishUsage() },
+      ])
+    }
+
+    it("prompts once for repeated accesses to the same path within one turn", async () => {
+      writeFileSync(join(realToolsDir, ".env"), "SECRET=x")
+      const approval = pathApprovalMiddleware(realToolsDir)
+      const provider = createMockProvider([
+        ...toolCalls([
+          { name: "read_file", args: { path: ".env" } },
+          { name: "read_file", args: { path: ".env" } },
+        ]),
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", usage: finishUsage() },
+        ],
+      ])
+
+      await runAgentLoop(
+        [userMessage("read twice")],
+        provider,
+        [readFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: approval.requestApproval }),
+      )
+
+      expect(approval.prompts()).toBe(1)
+    })
+
+    it("remembers an approval across file tools in the same turn", async () => {
+      writeFileSync(join(realToolsDir, ".env"), "SECRET=x")
+      const approval = pathApprovalMiddleware(realToolsDir)
+      const provider = createMockProvider([
+        ...toolCalls([
+          { name: "read_file", args: { path: ".env" } },
+          { name: "edit_file", args: { path: ".env", oldText: "SECRET", newText: "HACKED" } },
+        ]),
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", usage: finishUsage() },
+        ],
+      ])
+
+      await runAgentLoop(
+        [userMessage("read then edit")],
+        provider,
+        [readFileTool, editFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: approval.requestApproval }),
+      )
+
+      expect(approval.prompts()).toBe(1)
+      expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toBe("HACKED=x")
+    })
+
+    it("prompts once for an outside-root path reached twice via different declared paths in one turn", async () => {
+      mkdirSync(outsideToolsDir, { recursive: true })
+      writeFileSync(join(outsideToolsDir, "secret.txt"), "outside secret")
+      const approval = pathApprovalMiddleware(realToolsDir)
+      const provider = createMockProvider([
+        ...toolCalls([
+          { name: "read_file", args: { path: join(realToolsDir, "..", "__tmp_agent_loop_outside", "secret.txt") } },
+          { name: "read_file", args: { path: join(outsideToolsDir, "secret.txt") } },
+        ]),
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", usage: finishUsage() },
+        ],
+      ])
+
+      await runAgentLoop(
+        [userMessage("read outside twice")],
+        provider,
+        [readFileTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({ requestApproval: approval.requestApproval }),
+      )
+
+      expect(approval.prompts()).toBe(1)
+    })
+
+    it("prompts again in a fresh turn when the memory is cleared", async () => {
+      writeFileSync(join(realToolsDir, ".env"), "SECRET=x")
+      let cumulativePrompts = 0
+
+      for (let turn = 0; turn < 2; turn++) {
+        clearApprovedPaths()
+        const approval = pathApprovalMiddleware(realToolsDir)
+        const provider = createMockProvider([
+          ...toolCalls([
+            { name: "read_file", args: { path: ".env" } },
+            { name: "read_file", args: { path: ".env" } },
+          ]),
+          [
+            { type: "text-delta", text: "done" },
+            { type: "finish", usage: finishUsage() },
+          ],
+        ])
+
+        await runAgentLoop(
+          [userMessage("read twice")],
+          provider,
+          [readFileTool],
+          "system",
+          { projectPath: realToolsDir },
+          createMockCallbacks({ requestApproval: approval.requestApproval }),
+        )
+
+        expect(approval.prompts()).toBe(1)
+        cumulativePrompts += approval.prompts()
+      }
+
+      expect(cumulativePrompts).toBe(2)
     })
   })
 })

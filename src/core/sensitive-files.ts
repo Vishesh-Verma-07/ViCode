@@ -57,6 +57,19 @@ export function isInsideProject(absPath: string, projectPath: string): boolean {
   return absPath === projectPath || absPath.startsWith(projectPath + sep)
 }
 
+const FILE_TOOLS = ["read_file", "write_file", "edit_file"]
+
+export function fileToolApprovalKey(
+  toolName: string,
+  args: Record<string, unknown>,
+  projectPath: string,
+): string | null {
+  if (!FILE_TOOLS.includes(toolName)) return null
+  const declared = args.path
+  if (typeof declared !== "string" || declared.trim().length === 0) return null
+  return resolve(projectPath, declared)
+}
+
 export function pathRequiresApproval(
   args: Record<string, unknown>,
   context: Pick<ToolContext, "projectPath" | "sensitivePatterns">,
