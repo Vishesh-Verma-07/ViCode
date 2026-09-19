@@ -2564,7 +2564,7 @@ describe("ChatInput word deletion", () => {
     }
   }, 15000)
 
-  it("Ctrl+Delete sequence (what a bare DEL byte is rewritten to) deletes the previous word", async () => {
+  it("Ctrl+Delete sequence (what a bare BS byte is rewritten to) deletes the previous word", async () => {
     const { frameText, unmount } = await typedFrame([
       ..."hello beautiful world",
       "\u001B[3;5~",
@@ -2579,10 +2579,10 @@ describe("ChatInput word deletion", () => {
     }
   }, 15000)
 
-  it("plain Backspace (BS byte) still deletes a single character", async () => {
+  it("plain Backspace (DEL byte) still deletes a single character", async () => {
     const { frameText, unmount } = await typedFrame([
       ..."hello",
-      "\u0008",
+      "\u007f",
     ])
     try {
       await until(() => frameText().includes("hell"))

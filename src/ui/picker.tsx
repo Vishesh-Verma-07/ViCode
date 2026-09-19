@@ -2,6 +2,7 @@ import React, { useState } from "react"
 import { Box, Text, useInput } from "ink"
 import type { PickerRequest } from "../core/types"
 import { moveHighlight } from "./command-suggestion"
+import { deletePreviousWord } from "./word-delete"
 import { COLORS } from "./theme"
 
 interface PickerProps extends PickerRequest {
@@ -41,6 +42,10 @@ export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultInd
       if (match) onSelect(match.index)
     } else if (key.escape) {
       onCancel()
+    } else if ((key.backspace || key.delete) && (key.ctrl || key.meta)) {
+      setQuery((prev) => deletePreviousWord(prev))
+      setHighlighted(0)
+      setScrollOffset(0)
     } else if (key.backspace || key.delete) {
       setQuery((prev) => prev.slice(0, -1))
       setHighlighted(0)

@@ -107,6 +107,31 @@ describe("Picker", () => {
     instance.unmount()
   })
 
+  it("deletes a single character on backspace", async () => {
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={() => {}} onCancel={() => {}} />,
+    )
+    await sendKeys(instance, ["s", "e", "s", "s", "_", "a", "\u007F"])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("Search: sess_")
+    expect(frame).not.toContain("Search: sess_a")
+    instance.unmount()
+  })
+
+  it("deletes the previous word on Ctrl+Backspace/Ctrl+Delete", async () => {
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={() => {}} onCancel={() => {}} />,
+    )
+    await sendKeys(instance, ["f", "o", "o", " ", "b", "a", "r"])
+    let frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("Search: foo bar")
+    await sendKeys(instance, ["\u001B[3;5~"])
+    frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("Search: foo")
+    expect(frame).not.toContain("foo ba")
+    instance.unmount()
+  })
+
   it("resets the highlight to the first match after searching", async () => {
     const instance = render(
       <Picker title="Pick" items={items} onSelect={() => {}} onCancel={() => {}} />,
