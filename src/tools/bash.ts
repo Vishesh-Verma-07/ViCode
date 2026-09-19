@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import { z } from "zod"
 import type { ToolDefinition, ToolContext } from "../core/types"
+import { bashRequiresApproval } from "../core/bash-allowlist"
 
 const MAX_OUTPUT_BYTES = 1024 * 1024
 
@@ -17,6 +18,7 @@ export const bashTool: ToolDefinition = {
     timeout: z.number().optional().describe("Timeout in seconds (default 30)"),
   }),
   dangerous: true,
+  requiresApproval: bashRequiresApproval,
   execute: async (args, context) => {
     const command = args.command as string
     const cwd = (args.cwd as string) || context.projectPath

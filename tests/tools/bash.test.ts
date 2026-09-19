@@ -67,3 +67,25 @@ describe("bash tool", () => {
     expect(result).toBe("(no output)")
   })
 })
+
+describe("bash requiresApproval", () => {
+  it("auto-approves allowlisted clean commands", async () => {
+    const ctx: ToolContext = { projectPath: tmpDir, silentBashCommands: ["echo"] }
+    expect(await bashTool.requiresApproval?.({ command: "echo hello" }, ctx)).toBe(false)
+  })
+
+  it("asks for commands whose first token is not allowlisted", async () => {
+    const ctx: ToolContext = { projectPath: tmpDir, silentBashCommands: ["echo"] }
+    expect(await bashTool.requiresApproval?.({ command: "rm -rf ./" }, ctx)).toBe(true)
+  })
+
+  it("asks for allowlisted commands that touch a sensitive path", async () => {
+    const ctx: ToolContext = { projectPath: tmpDir, silentBashCommands: ["echo"] }
+    expect(await bashTool.requiresApproval?.({ command: "echo x > .env" }, ctx)).toBe(true)
+  })
+
+  it("asks every time when no allowlist is configured", async () => {
+    const ctx: ToolContext = { projectPath: tmpDir }
+    expect(await bashTool.requiresApproval?.({ command: "echo hello" }, ctx)).toBe(true)
+  })
+})

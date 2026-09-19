@@ -57,6 +57,13 @@ export function isInsideProject(absPath: string, projectPath: string): boolean {
   return absPath === projectPath || absPath.startsWith(projectPath + sep)
 }
 
+export function resolveInsideProject(declared: string, projectPath: string): string | null {
+  const root = resolve(projectPath)
+  const absPath = resolve(root, declared)
+  if (!isInsideProject(absPath, root)) return null
+  return relative(root, absPath)
+}
+
 const FILE_TOOLS = ["read_file", "write_file", "edit_file"]
 
 export function fileToolApprovalKey(
@@ -76,9 +83,7 @@ export function pathRequiresApproval(
 ): boolean {
   const declared = args.path as string | undefined
   if (!declared) return true
-  const root = resolve(context.projectPath)
-  const absPath = resolve(root, declared)
-  if (!isInsideProject(absPath, root)) return true
-  const relPath = relative(root, absPath)
+  const relPath = resolveInsideProject(declared, context.projectPath)
+  if (relPath === null) return true
   return isSensitivePath(relPath, context.sensitivePatterns)
 }

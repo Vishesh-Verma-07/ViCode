@@ -45,6 +45,14 @@ describe("assembleSystemPrompt", () => {
     expect(lower).toContain("every bash command requires")
   })
 
+  it("documents the Bash Allowlist rule in the base prompt", () => {
+    const result = assembleSystemPrompt({ projectPath: tmpDir })
+    const lower = result.toLowerCase()
+    expect(lower).toContain("bash allowlist")
+    expect(lower).toContain("silentbashcommands")
+    expect(lower).toContain("first token")
+  })
+
   it("appends project prompt from .vicode/system.md", () => {
     mkdirSync(join(tmpDir, ".vicode"), { recursive: true })
     writeFileSync(join(tmpDir, ".vicode", "system.md"), "Project-specific rules here")

@@ -749,6 +749,60 @@ describe("agent-loop", () => {
       expect(approvals).toEqual(["bash"])
     })
 
+    it("runs allowlisted bash without asking for approval", async () => {
+      const approvals: string[] = []
+      const result = await runAgentLoop(
+        [userMessage("run")],
+        toolCallProvider("bash", { command: "echo allowlisted" }),
+        [bashTool],
+        "system",
+        { projectPath: realToolsDir, silentBashCommands: ["echo"] },
+        createMockCallbacks({
+          requestApproval: async (name) => { approvals.push(name); return true },
+          onTextDelta: () => {},
+        }),
+      )
+      expect(approvals).toEqual([])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toContain("allowlisted")
+    })
+
+    it("still asks for allowlisted bash when a token touches a sensitive path", async () => {
+      writeFileSync(join(realToolsDir, ".env"), "DO NOT TOUCH")
+      const approvals: string[] = []
+      await runAgentLoop(
+        [userMessage("run")],
+        toolCallProvider("bash", { command: "echo x > .env" }),
+        [bashTool],
+        "system",
+        { projectPath: realToolsDir, silentBashCommands: ["echo"] },
+        createMockCallbacks({
+          requestApproval: async (name) => { approvals.push(name); return false },
+          onTextDelta: () => {},
+        }),
+      )
+      expect(approvals).toEqual(["bash"])
+      expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toBe("DO NOT TOUCH")
+    })
+
+    it("feeds the rejection message back when a rejected bash call is rejected", async () => {
+      const approvals: string[] = []
+      const result = await runAgentLoop(
+        [userMessage("run")],
+        toolCallProvider("bash", { command: "rm -rf /" }),
+        [bashTool],
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({
+          requestApproval: async (name) => { approvals.push(name); return false },
+          onTextDelta: () => {},
+        }),
+      )
+      expect(approvals).toEqual(["bash"])
+      const toolMsg = result.messages.find((m) => m.role === "tool")
+      expect((toolMsg!.content[0] as { result: string }).result).toBe("User rejected this tool call.")
+    })
+
     it("caps a giant tool result to 64 KiB before it reaches onToolResult", async () => {
       const leaked: string[] = []
       const giantTool: ToolDefinition = {
