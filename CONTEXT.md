@@ -21,8 +21,8 @@ _Avoid_: tool use, function call
 **Tool**:
 A function the LLM can invoke to interact with the filesystem or shell. Each Tool has a name, description, Zod parameter schema, and execute function.
 
-**Dangerous Tool**:
-A Tool that can modify state (write files, execute commands). Approval attaches to individual Tool Calls, not whole Tools: normal project file edits run silently, calls targeting Sensitive Paths require user approval, and every `bash` call requires approval.
+**Approval Rule**:
+The rule deciding whether a Tool Call pauses for user approval: a call pauses iff it is a `bash` call, or a file operation whose target is a Sensitive Path or lies outside the Project Root. Approval attaches to individual Tool Calls, not whole Tools.
 
 ### Model access
 
@@ -88,7 +88,10 @@ The overlay shown while a Tool Call awaits user consent, displaying the Tool nam
 ### Filesystem
 
 **Sensitive Path**:
-A file path protected from unsupervised access — matched by default patterns (`.env*`, key material, credential stores, `.ssh/**`) plus user-configured patterns. Writes and edits pause for approval; reads are refused entirely; search results omit matches inside them.
+A file path protected from unsupervised access — matched by default patterns (`.env*`, key material, credential stores, `.ssh/**`) plus user-configured patterns. Reads, writes, and edits pause for approval (reads too, not just writes and edits); search results omit matches inside them.
+
+**Project Root**:
+The allowed boundary for file operations — the directory a Session is associated with. Operations inside it on normal project files run silently; operations outside it require approval and proceed once approved.
 
 ### Layout & rendering
 
