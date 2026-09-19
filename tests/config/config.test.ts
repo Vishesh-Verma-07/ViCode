@@ -258,3 +258,63 @@ describe("sensitiveFiles config", () => {
     expect(result.sensitiveFiles).toBeUndefined()
   })
 })
+
+describe("silentBashCommands config", () => {
+  function makeHomeDir(): string {
+    const homeDir = join(tmpDir, "home")
+    mkdirSync(homeDir, { recursive: true })
+    return homeDir
+  }
+
+  it("accepts silentBashCommands in project config", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ silentBashCommands: ["ls", "pwd"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.silentBashCommands).toEqual(["ls", "pwd"])
+  })
+
+  it("merges global and project silentBashCommands instead of overriding", () => {
+    const homeDir = makeHomeDir()
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ silentBashCommands: ["git status"] }),
+    )
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ silentBashCommands: ["npm test"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
+    expect(result.silentBashCommands).toEqual(["git status", "npm test"])
+  })
+
+  it("falls back to global list when project has none", () => {
+    const homeDir = makeHomeDir()
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ silentBashCommands: ["git status"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
+    expect(result.silentBashCommands).toEqual(["git status"])
+  })
+
+  it("falls back to project list when global has none", () => {
+    const homeDir = makeHomeDir()
+    writeFileSync(
+      join(homeDir, "config.json"),
+      JSON.stringify({ model: "global-model" }),
+    )
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ silentBashCommands: ["pwd"] }),
+    )
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
+    expect(result.silentBashCommands).toEqual(["pwd"])
+  })
+
+  it("is absent when no config declares it", () => {
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.silentBashCommands).toBeUndefined()
+  })
+})

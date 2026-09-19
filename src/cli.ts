@@ -83,7 +83,7 @@ render(
     createProvider,
     tools: allTools,
     systemPrompt,
-    context: { projectPath, sensitivePatterns: config.sensitiveFiles },
+    context: { projectPath, sensitivePatterns: config.sensitiveFiles, silentBashCommands: config.silentBashCommands },
     initialSession: initialSession ?? undefined,
     sessionsDir,
     commands: commandRegistry.getAll(),

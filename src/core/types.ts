@@ -45,6 +45,7 @@ export interface ToolDefinition {
 export interface ToolContext {
   projectPath: string
   sensitivePatterns?: string[]
+  silentBashCommands?: string[]
 }
 
 export interface Command {

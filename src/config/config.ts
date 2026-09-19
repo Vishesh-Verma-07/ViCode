@@ -8,6 +8,7 @@ export const configSchema = z
     model: z.string().optional(),
     systemPrompt: z.string().optional(),
     sensitiveFiles: z.array(z.string()).optional(),
+    silentBashCommands: z.array(z.string()).optional(),
   })
   .strict()
 
@@ -54,6 +55,14 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
     merged.sensitiveFiles = [
       ...(globalConfig.sensitiveFiles ?? []),
       ...(projectConfig.sensitiveFiles ?? []),
+    ]
+  }
+
+  // silentBashCommands merges across layers instead of overriding
+  if (globalConfig.silentBashCommands || projectConfig.silentBashCommands) {
+    merged.silentBashCommands = [
+      ...(globalConfig.silentBashCommands ?? []),
+      ...(projectConfig.silentBashCommands ?? []),
     ]
   }
 
