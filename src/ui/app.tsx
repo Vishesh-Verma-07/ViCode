@@ -171,6 +171,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     firstWord.startsWith("/") &&
     !drafting.suggestionDismissed
   const clampedSuggestionHighlight = Math.min(drafting.suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
+  const suggestionArrows = suggestionVisible && suggestedCommands.length > 0
 
   useInput(
     (input, key) => {
@@ -191,7 +192,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         return
       }
 
-      if (suggestionVisible) {
+      if (suggestionArrows) {
         if (key.upArrow) {
           drafting.setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, -1))
           return
@@ -200,17 +201,18 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           drafting.setSuggestionHighlight((prev) => moveHighlight(prev, suggestedCommands.length, 1))
           return
         }
-        if (key.escape) {
-          drafting.setSuggestionDismissed(true)
-          return
-        }
       }
 
-      if (key.upArrow && !suggestionVisible && view === "chat") {
+      if (key.escape && suggestionVisible) {
+        drafting.setSuggestionDismissed(true)
+        return
+      }
+
+      if (key.upArrow && !suggestionArrows && view === "chat") {
         drafting.recallUp()
         return
       }
-      if (key.downArrow && !suggestionVisible && view === "chat") {
+      if (key.downArrow && !suggestionArrows && view === "chat") {
         drafting.recallDown()
         return
       }

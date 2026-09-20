@@ -52,6 +52,12 @@ export function useChatDrafting(): ChatDrafting {
     setWalk((w) => appendInput(w, text))
   }, [])
 
+  useEffect(() => {
+    if (historyText(walk).trimStart().startsWith("/")) {
+      setSuggestionDismissed(false)
+    }
+  }, [walk])
+
   const openPicker = useCallback((request: PickerRequest) => {
     return new Promise<number | null>((resolve) => {
       pickerResolveRef.current = resolve

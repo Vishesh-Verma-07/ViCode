@@ -2860,6 +2860,160 @@ describe("App Input History recall", () => {
   }, 30000)
 })
 
+describe("App Command Suggestion gating for recall", () => {
+  function setup() {
+    const capturedMessages: Message[][] = []
+    const instance = render(
+      <App
+        provider={createStubProvider(capturedMessages)}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/suggestion-gating-test" }}
+        initialApiKey="test-key"
+        initialView="chat"
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "").replace(/\u001B\[[0-9;]*m/g, "")
+    const inputValue = () => {
+      const line = frameText()
+        .split("\n")
+        .find((l) => l.trimStart().startsWith("→ "))
+      return line ? line.replace(/^.*?→\s*/, "").trimEnd() : ""
+    }
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    async function typeText(text: string) {
+      for (const c of text) {
+        instance.stdin.write(c)
+        await sleep(5)
+      }
+    }
+    async function pressKey(key: string) {
+      instance.stdin.write(key)
+      await sleep(25)
+    }
+    async function submitMessage(text: string) {
+      await typeText(text)
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("Done in"))
+    }
+    return { ...instance, capturedMessages, frameText, inputValue, typeText, pressKey, submitMessage }
+  }
+
+  it("keeps Up/Down moving the suggestion highlight while the dropdown is visible, without recalling history", async () => {
+    const { inputValue, frameText, typeText, pressKey, submitMessage, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+      await submitMessage("alpha")
+
+      await typeText("/")
+      await until(() => frameText().includes("> /help"))
+      await pressKey("\u001B[B")
+      await until(() => frameText().includes("> /noop"))
+      await pressKey("\u001B[B")
+      await until(() => frameText().includes("> /echo"))
+      await pressKey("\u001B[A")
+      await until(() => frameText().includes("> /noop"))
+
+      expect(inputValue()).toBe("/")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("recalls History once the dropdown is dismissed with Escape", async () => {
+    const { inputValue, frameText, typeText, pressKey, submitMessage, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+      await submitMessage("alpha")
+      await submitMessage("beta")
+
+      await typeText("/h")
+      await until(() => frameText().includes("> /help"))
+      await pressKey("\u001B")
+      await until(() => !frameText().includes("> /help"))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "beta")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("switches back to recalling History when the typed Input stops matching any Command", async () => {
+    const { inputValue, frameText, typeText, pressKey, submitMessage, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+      await submitMessage("alpha")
+
+      await typeText("/frobnicate")
+      await until(() => frameText().includes("no commands match"))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+      expect(frameText()).not.toContain("no commands match")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("recalling an Input that starts with `/` recomputes the dropdown and reclaims Up/Down", async () => {
+    const { inputValue, frameText, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+
+      await typeText("/echo hello")
+      await pressKey("\r")
+      await until(() => frameText().includes("hello"))
+
+      await typeText("/no")
+      await until(() => frameText().includes("> /noop"))
+      await pressKey("\r")
+      await until(() => frameText().includes("noop done"))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "/noop")
+      await until(() => frameText().includes("> /noop"))
+
+      await pressKey("\u001B[B")
+      await until(() => frameText().includes("> /noop"))
+      expect(inputValue()).toBe("/noop")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("recomputes the dropdown after Escape-dismiss when a recalled Input starts with `/`", async () => {
+    const { inputValue, frameText, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+
+      await typeText("/no")
+      await until(() => frameText().includes("> /noop"))
+      await pressKey("\r")
+      await until(() => frameText().includes("noop done"))
+
+      await typeText("/h")
+      await until(() => frameText().includes("> /help"))
+      await pressKey("\u001B")
+      await until(() => !frameText().includes("> /help"))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "/noop")
+      await until(() => frameText().includes("> /noop"))
+
+      await pressKey("\u001B[B")
+      await until(() => frameText().includes("> /noop"))
+      expect(inputValue()).toBe("/noop")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+})
+
 describe("App welcome-first flow", () => {
   function createCommands(): Command[] {
     const registry = new CommandRegistry()
