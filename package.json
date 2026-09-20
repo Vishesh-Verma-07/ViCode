@@ -1,6 +1,6 @@
 {
   "name": "vicode-ai",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "An interactive terminal AI coding agent that chats with an LLM directly inside your project directory.",
   "type": "module",
   "main": "dist/index.js",
