@@ -57,6 +57,10 @@ A truncated SHA-256 hash of the project directory's absolute path, used to names
 The Welcome Screen action that begins a fresh conversation. Identical in behaviour to the `/new` command: the current Session (if any) is saved, then messages, usage, unit counters and active Skills are cleared and the chat view opens empty.
 _Avoid_: new session, clear chat
 
+**Input History**:
+The in-memory, session-scoped list of every Input the user submits (Messages and Commands alike), recalled into the Input Box draft by Up/Down arrows. Cleared by New Chat. Recalling is drafting, not replaying: a recalled Input is a fresh message on submit, not a re-run of the old turn.
+_Avoid_: message history (implies the transcript), command history
+
 ### Prompting
 
 **System Prompt**:

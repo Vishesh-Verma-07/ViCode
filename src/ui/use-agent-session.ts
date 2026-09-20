@@ -332,6 +332,14 @@ export function useAgentSession({
                 ])
               },
               onToolCallDelta: () => {},
+              onUsage: (stepUsage) => {
+                setUsage((prev) => ({
+                  inputTokens: prev.inputTokens + stepUsage.inputTokens,
+                  outputTokens: prev.outputTokens + stepUsage.outputTokens,
+                  totalTokens: prev.totalTokens + stepUsage.totalTokens,
+                  cost: prev.cost + stepUsage.cost,
+                }))
+              },
               onToolCallEnd: (id, _name, args) => {
                 setToolCalls((prev) =>
                   prev.map((tc) =>
@@ -388,12 +396,6 @@ export function useAgentSession({
           log(result)
 
           setMessages(result.messages)
-          setUsage((prev) => ({
-            inputTokens: prev.inputTokens + result.totalUsage.inputTokens,
-            outputTokens: prev.outputTokens + result.totalUsage.outputTokens,
-            totalTokens: prev.totalTokens + result.totalUsage.totalTokens,
-            cost: prev.cost + result.totalUsage.cost,
-          }))
 
           if (sessionsDir) {
             const activeSession = session ?? createSession({

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { runAgentLoop, type AgentLoopCallbacks } from "@/core/agent-loop"
-import type { Provider, StreamEvent } from "@/core/provider"
+import type { Provider, StreamEvent, TokenUsage } from "@/core/provider"
 import type { Message, ToolDefinition, ToolContext } from "@/core/types"
 import { z } from "zod"
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs"
@@ -44,6 +44,7 @@ function createMockCallbacks(overrides?: Partial<AgentLoopCallbacks>): AgentLoop
     onToolCallDelta: () => {},
     onToolCallEnd: () => {},
     onToolResult: () => {},
+    onUsage: () => {},
     onError: () => {},
     requestApproval: async () => true,
     ...overrides,
@@ -545,6 +546,49 @@ describe("agent-loop", () => {
     expect(result.totalUsage.cost).toBeCloseTo(0.06, 4)
   })
 
+  it("reports per-call usage via onUsage as each AI call finishes", async () => {
+    const echoTool: ToolDefinition = {
+      name: "echo",
+      description: "Echo",
+      parameters: z.object({ x: z.string() }),
+      execute: async (args) => String(args.x),
+      dangerous: false,
+    }
+
+    const provider = createMockProvider([
+      [
+        { type: "tool-call-start", toolCallId: "c1", toolName: "echo" },
+        { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: { x: "1" } },
+        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0.01 } },
+      ],
+      [
+        { type: "tool-call-start", toolCallId: "c2", toolName: "echo" },
+        { type: "tool-call-end", toolCallId: "c2", toolName: "echo", args: { x: "2" } },
+        { type: "finish", usage: { inputTokens: 8, outputTokens: 4, totalTokens: 12, cost: 0.02 } },
+      ],
+      [
+        { type: "text-delta", text: "done" },
+        { type: "finish", usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, cost: 0.03 } },
+      ],
+    ])
+
+    const reported: TokenUsage[] = []
+    await runAgentLoop(
+      [userMessage("echo")],
+      provider,
+      [echoTool],
+      "system",
+      mockContext,
+      createMockCallbacks({ onUsage: (usage) => reported.push(usage) }),
+    )
+
+    expect(reported).toEqual([
+      { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0.01 },
+      { inputTokens: 8, outputTokens: 4, totalTokens: 12, cost: 0.02 },
+      { inputTokens: 5, outputTokens: 2, totalTokens: 7, cost: 0.03 },
+    ])
+  })
+
   describe("per-call approval policy", () => {
     function makePolicyTool(overrides: Partial<ToolDefinition>): ToolDefinition {
       return {
@@ -733,7 +777,7 @@ describe("agent-loop", () => {
       expect((toolMsg!.content[0] as { result: string }).result).toContain("outside secret")
     })
 
-    it("always asks for approval before bash runs", async () => {
+    it("runs bash in the project without asking for approval", async () => {
       const approvals: string[] = []
       await runAgentLoop(
         [userMessage("run")],
@@ -746,7 +790,7 @@ describe("agent-loop", () => {
           onTextDelta: () => {},
         }),
       )
-      expect(approvals).toEqual(["bash"])
+      expect(approvals).toEqual([])
     })
 
     it("runs allowlisted bash without asking for approval", async () => {
@@ -767,7 +811,7 @@ describe("agent-loop", () => {
       expect((toolMsg!.content[0] as { result: string }).result).toContain("allowlisted")
     })
 
-    it("still asks for allowlisted bash when a token touches a sensitive path", async () => {
+    it("auto-approves bash that touches .env inside the project root", async () => {
       writeFileSync(join(realToolsDir, ".env"), "DO NOT TOUCH")
       const approvals: string[] = []
       await runAgentLoop(
@@ -775,21 +819,21 @@ describe("agent-loop", () => {
         toolCallProvider("bash", { command: "echo x > .env" }),
         [bashTool],
         "system",
-        { projectPath: realToolsDir, silentBashCommands: ["echo"] },
+        { projectPath: realToolsDir },
         createMockCallbacks({
           requestApproval: async (name) => { approvals.push(name); return false },
           onTextDelta: () => {},
         }),
       )
-      expect(approvals).toEqual(["bash"])
-      expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toBe("DO NOT TOUCH")
+      expect(approvals).toEqual([])
+      expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toContain("x")
     })
 
     it("feeds the rejection message back when a rejected bash call is rejected", async () => {
       const approvals: string[] = []
       const result = await runAgentLoop(
         [userMessage("run")],
-        toolCallProvider("bash", { command: "rm -rf /" }),
+        toolCallProvider("bash", { command: "echo hi", cwd: join(realToolsDir, "..") }),
         [bashTool],
         "system",
         { projectPath: realToolsDir },

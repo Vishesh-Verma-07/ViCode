@@ -36,3 +36,4 @@
 | **Usage Panel** | The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count. |
 | **Welcome Screen** | The "home" view shown at startup (and returned to via `/home`): banner, model info, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections. |
 | **New Chat** | The Welcome Screen action that begins a fresh conversation. It is identical in behaviour to the `/new` command: the current Session (if any) is saved, then messages, usage, unit counters and active Skills are cleared and the chat view opens empty. |
+| **Input History** | The in-memory, session-scoped list of every Input the user submits (Messages and Commands alike), recalled into the Input Box draft by Up/Down arrows. Cleared by New Chat. Recalling is drafting, not replaying: a recalled Input is a fresh message on submit, not a re-run of the old turn. |

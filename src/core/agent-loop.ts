@@ -13,6 +13,7 @@ export interface AgentLoopCallbacks {
   onToolCallDelta(toolCallId: string, argsDelta: string): void
   onToolCallEnd(toolCallId: string, toolName: string, args: Record<string, unknown>): void
   onToolResult(toolCallId: string, toolName: string, result: string): void
+  onUsage(usage: TokenUsage): void
   onError(error: unknown): void
   requestApproval(toolName: string, args: Record<string, unknown>): Promise<boolean>
 }
@@ -136,6 +137,7 @@ export async function runAgentLoop(
     }
 
     if (stepUsage) {
+      callbacks.onUsage(stepUsage)
       totalUsage = {
         inputTokens: totalUsage.inputTokens + stepUsage.inputTokens,
         outputTokens: totalUsage.outputTokens + stepUsage.outputTokens,

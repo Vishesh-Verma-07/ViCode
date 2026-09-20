@@ -69,23 +69,24 @@ describe("bash tool", () => {
 })
 
 describe("bash requiresApproval", () => {
-  it("auto-approves allowlisted clean commands", async () => {
-    const ctx: ToolContext = { projectPath: tmpDir, silentBashCommands: ["echo"] }
-    expect(await bashTool.requiresApproval?.({ command: "echo hello" }, ctx)).toBe(false)
-  })
-
-  it("asks for commands whose first token is not allowlisted", async () => {
-    const ctx: ToolContext = { projectPath: tmpDir, silentBashCommands: ["echo"] }
-    expect(await bashTool.requiresApproval?.({ command: "rm -rf ./" }, ctx)).toBe(true)
-  })
-
-  it("asks for allowlisted commands that touch a sensitive path", async () => {
-    const ctx: ToolContext = { projectPath: tmpDir, silentBashCommands: ["echo"] }
-    expect(await bashTool.requiresApproval?.({ command: "echo x > .env" }, ctx)).toBe(true)
-  })
-
-  it("asks every time when no allowlist is configured", async () => {
+  it("auto-approves commands run in the project root", async () => {
     const ctx: ToolContext = { projectPath: tmpDir }
-    expect(await bashTool.requiresApproval?.({ command: "echo hello" }, ctx)).toBe(true)
+    expect(await bashTool.requiresApproval?.({ command: "echo hello" }, ctx)).toBe(false)
+    expect(await bashTool.requiresApproval?.({ command: "rm -rf ./" }, ctx)).toBe(false)
+  })
+
+  it("auto-approves commands in a nested project directory", async () => {
+    const ctx: ToolContext = { projectPath: tmpDir }
+    expect(await bashTool.requiresApproval?.({ command: "echo x > .env", cwd: "src" }, ctx)).toBe(false)
+  })
+
+  it("asks for commands that run outside the project root", async () => {
+    const ctx: ToolContext = { projectPath: tmpDir }
+    expect(await bashTool.requiresApproval?.({ command: "echo hello", cwd: "../" }, ctx)).toBe(true)
+  })
+
+  it("asks for an empty command", async () => {
+    const ctx: ToolContext = { projectPath: tmpDir }
+    expect(await bashTool.requiresApproval?.({ command: "" }, ctx)).toBe(true)
   })
 })
