@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { createInputHistory, editDraft, historyText, stepDown, stepUp } from "@/ui/input-history"
+import { appendInput, createInputHistory, editDraft, historyText, stepDown, stepUp } from "@/ui/input-history"
 
 const HIST = ["oldest", "middle", "newest"]
 
@@ -110,6 +110,23 @@ describe("input history walk core", () => {
       state = stepUp(state)
       state = stepUp(state)
       editDraft(state, "middle edited")
+      expect(HIST).toEqual(["oldest", "middle", "newest"])
+    })
+  })
+
+  describe("appendInput", () => {
+    it("records a submitted Input and resets the walk to the empty draft slot", () => {
+      let state = createInputHistory(HIST, "wip")
+      state = stepUp(state)
+      state = appendInput(state, "brand new")
+      expect(state.history).toEqual([...HIST, "brand new"])
+      expect(state.pointer).toBeNull()
+      expect(historyText(state)).toBe("")
+    })
+
+    it("does not mutate the stored history", () => {
+      const state = createInputHistory(HIST, "wip")
+      appendInput(state, "brand new")
       expect(HIST).toEqual(["oldest", "middle", "newest"])
     })
   })

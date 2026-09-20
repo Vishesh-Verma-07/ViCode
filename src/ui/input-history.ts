@@ -27,6 +27,10 @@ export function editDraft(state: InputHistoryState, text: string): InputHistoryS
   return { ...state, pointer: null, draft: text }
 }
 
+export function appendInput(state: InputHistoryState, text: string): InputHistoryState {
+  return { history: [...state.history, text], pointer: null, draft: "" }
+}
+
 export function historyText(state: InputHistoryState): string {
   if (state.pointer === null) return state.draft
   return state.history[state.pointer] ?? state.draft

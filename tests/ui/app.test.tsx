@@ -2636,6 +2636,230 @@ describe("ChatInput word deletion", () => {
   }, 15000)
 })
 
+describe("App Input History recall", () => {
+  function setup(overrides?: { initialView?: "home" | "chat"; initialSession?: Session; sessionsDir?: string }) {
+    const capturedMessages: Message[][] = []
+    const provider = createStubProvider(capturedMessages)
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/history-recall-test" }}
+        initialApiKey="test-key"
+        initialView={overrides?.initialView ?? "chat"}
+        initialSession={overrides?.initialSession}
+        sessionsDir={overrides?.sessionsDir}
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "").replace(/\u001B\[[0-9;]*m/g, "")
+    const inputValue = () => {
+      const line = frameText()
+        .split("\n")
+        .find((l) => l.trimStart().startsWith("→ "))
+      return line ? line.replace(/^.*?→\s*/, "").trimEnd() : ""
+    }
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    async function typeText(text: string) {
+      for (const c of text) {
+        instance.stdin.write(c)
+        await sleep(5)
+      }
+    }
+    async function pressKey(key: string) {
+      instance.stdin.write(key)
+      await sleep(25)
+    }
+    async function submitMessage(text: string) {
+      await typeText(text)
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("Done in"))
+    }
+    return { ...instance, capturedMessages, frameText, inputValue, typeText, pressKey, submitMessage }
+  }
+
+  it("recalls the most recent Input first, one Input per Up press", async () => {
+    const { inputValue, submitMessage, pressKey, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+      await submitMessage("alpha")
+      await submitMessage("beta")
+      await submitMessage("gamma")
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "gamma")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "beta")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("clamps at the oldest entry with no wrap-around", async () => {
+    const { inputValue, submitMessage, pressKey, unmount } = setup()
+    try {
+      await submitMessage("alpha")
+      await submitMessage("beta")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "beta")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+      await pressKey("\u001B[A")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+      expect(inputValue()).toBe("alpha")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("steps Down toward newer Inputs and returns to the preserved unsent draft, clamping below it", async () => {
+    const { inputValue, typeText, submitMessage, pressKey, unmount } = setup()
+    try {
+      await submitMessage("alpha")
+      await typeText("unsent draft text")
+      await until(() => inputValue() === "unsent draft text")
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+
+      await pressKey("\u001B[B")
+      await until(() => inputValue() === "unsent draft text")
+      await pressKey("\u001B[B")
+      await until(() => inputValue() === "unsent draft text")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("editing a recalled Input detaches it as the new draft", async () => {
+    const { inputValue, typeText, submitMessage, pressKey, unmount } = setup()
+    try {
+      await submitMessage("alpha")
+      await submitMessage("beta")
+      await pressKey("\u001B[A")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "alpha")
+
+      await typeText("!")
+      await until(() => inputValue() === "alpha!")
+
+      await pressKey("\u001B[B")
+      await until(() => inputValue() === "alpha!")
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "beta")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("submitting a recalled Input sends a fresh message Turn, not a replay", async () => {
+    const { inputValue, capturedMessages, submitMessage, pressKey, unmount } = setup()
+    try {
+      await submitMessage("hello before")
+      await until(() => capturedMessages.length === 1)
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "hello before")
+      await pressKey("\r")
+      await until(() => capturedMessages.length === 2)
+
+      expect(inputValue()).toBe("Type your message...")
+      expect(JSON.stringify(capturedMessages[1])).toContain("hello before")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("records a typed slash Command for recall", async () => {
+    const { inputValue, frameText, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+      await typeText("/help")
+      await pressKey("\r")
+      await until(() => (frameText().includes("/help -")))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "/help")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("records a slash Command chosen from the suggestion dropdown under its canonical name", async () => {
+    const { inputValue, frameText, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => inputValue() === "Type your message...")
+      await typeText("/no")
+      await until(() => (frameText().includes("> /noop")))
+      await pressKey("\r")
+      await until(() => (frameText().includes("noop done")))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "/noop")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("records the first message submitted from the Welcome Screen and recalls it in chat", async () => {
+    const { inputValue, frameText, typeText, pressKey, unmount } = setup({ initialView: "home" })
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      await typeText("hello from home")
+      await pressKey("\r")
+      await until(() => frameText().includes("You: hello from home"))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "hello from home")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("keeps Up/Down driving the Welcome menu instead of recalling history into its box", async () => {
+    const seed: Session = {
+      id: "sess_history_seed",
+      projectPath: "/tmp/history-welcome-menu-test",
+      model: "stub-model",
+      messages: [],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-history-menu-test-"))
+    saveSession(seed, sessionsDir)
+    const { inputValue, frameText, typeText, pressKey, unmount } = setup({ initialView: "home", initialSession: seed, sessionsDir })
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+      await until(() => frameText().includes("Start a fresh conversation"))
+
+      await typeText("welcome draft")
+      await until(() => inputValue() === "welcome draft")
+
+      await pressKey("\u001B[B")
+      await until(() => frameText().includes("Continue where you left off"))
+      expect(inputValue()).toBe("welcome draft")
+
+      await pressKey("\u001B[A")
+      await until(() => frameText().includes("Start a fresh conversation"))
+      expect(inputValue()).toBe("welcome draft")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+})
+
 describe("App welcome-first flow", () => {
   function createCommands(): Command[] {
     const registry = new CommandRegistry()

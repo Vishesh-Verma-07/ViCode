@@ -206,13 +206,26 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         }
       }
 
+      if (key.upArrow && !suggestionVisible && view === "chat") {
+        drafting.recallUp()
+        return
+      }
+      if (key.downArrow && !suggestionVisible && view === "chat") {
+        drafting.recallDown()
+        return
+      }
+
       if (key.return) {
         const suggestedCommand = suggestionVisible ? suggestedCommands[clampedSuggestionHighlight] : undefined
         if (suggestedCommand) {
           const typedRest = drafting.inputValue.trim().slice(firstWord.length)
-          void session.handleSend(`/${suggestedCommand.name}${typedRest}`)
+          const commandInput = `/${suggestedCommand.name}${typedRest}`
+          drafting.submitInput(commandInput)
+          void session.handleSend(commandInput)
         } else if (drafting.inputValue.trim()) {
-          void session.handleSend(drafting.inputValue)
+          const message = drafting.inputValue
+          drafting.submitInput(message)
+          void session.handleSend(message)
         }
         return
       }
@@ -239,6 +252,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
             drafting.setInputValue(text)
             setView("chat")
             setTimeout(() => {
+              drafting.submitInput(text)
               void session.handleSend(text)
             }, 50)
           }}
