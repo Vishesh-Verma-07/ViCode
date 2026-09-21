@@ -119,6 +119,14 @@ The color painted behind the entire TUI — applied via a background token on th
 **Input Box**:
 The text-entry region rendered as a borderless box with a raised background shade (`inputShade`), distinct from surrounding surfaces purely by its lighter background. Covers both the Welcome Screen's first-message box and the Chat window's full-width input strip.
 
+**Cursor**:
+The movable insertion position inside an Input Box draft, rendered as a block (an inverse space) between the text halves. Moved one grapheme cluster at a time by Left/Right arrow keys, or jumped to the start/end with Home/End. Every edit operation acts at it rather than at the string end.
+_Avoid_: caret, insertion mark, cursor block
+
+**Cursor-Aware Editing**:
+The Input Box editing model where typing, backspace, delete, word-delete (Ctrl+W / Ctrl+Backspace), and Home/End all apply at the Cursor rather than the end of the draft. Draft replacement from outside the component (recalling Input History, `/new`) snaps the Cursor to the end.
+_Avoid_: positional editing, in-place editing
+
 **Design Token**:
 A named value in the central palette (`COLORS`, `ICONS`) that all UI styling references, so visual language stays consistent instead of using scattered hardcoded colours.
 

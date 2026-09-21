@@ -1,6 +1,7 @@
 import React from "react"
 import { describe, it, expect } from "bun:test"
 import { renderToString } from "ink"
+import { render } from "ink-testing-library"
 import { WelcomeScreen } from "@/ui/welcome"
 import { COLORS } from "@/ui/theme"
 import { ansiCode } from "@/ui/ansi-test"
@@ -13,6 +14,30 @@ const provider: Provider = {
   },
   async *streamChat() {},
 }
+
+const LEFT = "\u001B[D"
+
+async function sendKeys(instance: { stdin: { write: (s: string) => void } }, keys: string[]): Promise<void> {
+  for (const key of keys) {
+    instance.stdin.write(key)
+    await new Promise((resolve) => setTimeout(resolve, 15))
+  }
+}
+
+describe("WelcomeScreen cursor-aware editing", () => {
+  it("moves the cursor left and inserts at it before sending", async () => {
+    const sent: string[] = []
+    const instance = render(
+      <WelcomeScreen provider={provider} onNewChat={() => {}} onSendFirstMessage={(value) => sent.push(value)} />,
+    )
+    try {
+      await sendKeys(instance, ["h", "e", "l", "l", "o", LEFT, LEFT, LEFT, "X", "\r"])
+      expect(sent.at(-1)).toBe("heXllo")
+    } finally {
+      instance.unmount()
+    }
+  })
+})
 
 describe("WelcomeScreen banner colorization", () => {
   it("renders the centered ViCode banner colorized with the primary accent", () => {
