@@ -137,6 +137,16 @@ describe("ChatInput cursor-aware editing", () => {
     instance.unmount()
   })
 
+  it("ctrl+w at a gap consumes the whitespace around the cursor too", async () => {
+    const changes: string[] = []
+    const instance = render(<Harness onValue={(v) => changes.push(v)} />)
+    await sendKeys(instance, ["o", "n", "e", " ", " ", " ", "t", "w", "o"])
+    await sendKeys(instance, [LEFT, LEFT, LEFT]) // cursor inside the gap, still before "two"
+    await sendKeys(instance, [CTRL_W])
+    expect(changes.at(-1)).toBe("two")
+    instance.unmount()
+  })
+
   it("delete is a safe no-op at the end of the draft", async () => {
     const changes: string[] = []
     const instance = render(<Harness onValue={(v) => changes.push(v)} />)

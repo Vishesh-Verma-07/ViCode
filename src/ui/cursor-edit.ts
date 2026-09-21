@@ -87,7 +87,9 @@ export function wordDeleteAt(text: string, cursor: number): CursorState {
   if (wordStart === end) return { text, cursor: c }
   let start = wordStart
   while (start > 0 && /\s/.test(text.charAt(start - 1))) start--
-  return { text: text.slice(0, start) + text.slice(c), cursor: start }
+  let keep = c
+  while (keep < text.length && /\s/.test(text.charAt(keep))) keep++
+  return { text: text.slice(0, start) + text.slice(keep), cursor: start }
 }
 
 export function clampToEnd(text: string): CursorState {

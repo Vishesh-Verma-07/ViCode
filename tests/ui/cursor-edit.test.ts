@@ -127,6 +127,10 @@ describe("cursor edit core", () => {
       expect(wordDeleteAt("abc", 3)).toEqual({ text: "", cursor: 0 })
     })
 
+    it("consumes the whitespace gap at the cursor too", () => {
+      expect(wordDeleteAt("one   two", 5)).toEqual({ text: "two", cursor: 0 })
+    })
+
     it("leaves whitespace-only drafts untouched", () => {
       expect(wordDeleteAt("   ", 3)).toEqual({ text: "   ", cursor: 3 })
     })
