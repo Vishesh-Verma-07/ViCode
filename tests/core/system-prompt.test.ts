@@ -42,7 +42,7 @@ describe("assembleSystemPrompt", () => {
     expect(lower).toContain("sensitive")
     expect(lower).toContain("outside the project root")
     expect(lower).toContain("reads")
-    expect(lower).toContain("every bash command requires")
+    expect(lower).toContain("pauses for explicit user approval")
   })
 
   it("documents the Bash Allowlist rule in the base prompt", () => {
@@ -51,6 +51,7 @@ describe("assembleSystemPrompt", () => {
     expect(lower).toContain("bash allowlist")
     expect(lower).toContain("silentbashcommands")
     expect(lower).toContain("first token")
+    expect(lower).toContain("silent bash call")
   })
 
   it("appends project prompt from .vicode/system.md", () => {

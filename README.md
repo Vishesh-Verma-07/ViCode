@@ -10,7 +10,7 @@ Think of it as a Claude Code / OpenCode-style assistant that runs on Bun, stream
 - **Manual ReAct agent loop** — agent reasons, calls tools, observes results, and repeats until it's done; you see every step as it happens
 - **Six core tools** — `read_file`, `list_files`, `search`, `write_file`, `edit_file`, `bash`
 - **Streaming responses** — token-by-token output with Escape to cancel an in-progress response
-- **Approval-based safety** — sensitive files (`.env*`, keys, credential stores, `.ssh/**`) are protected from reads and require approval for writes/edits; every `bash` call requires your approval
+- **Approval-based safety** — sensitive files (`.env*`, keys, credential stores, `.ssh/**`) are protected from reads and require approval for writes/edits; bash commands outside the Bash Allowlist pause for your approval
 - **Doom-loop detection** — repeated identical tool calls are detected and stopped automatically
 - **Slash commands** — `/help`, `/model`, `/skill`, `/session`, `/new`, `/exit` with command suggestions as you type
 - **Skills** — activate Markdown skill files that are injected as extra system-prompt layers
@@ -199,7 +199,8 @@ vicode: 🔧 bash — { command: "cat src/tools/bash.ts" }
 vicode: The bash tool executes a shell command via Bun.spawn and
        captures stdout/stderr, with a configurable timeout
        (default 30s) and a 1MB output cap. It's marked dangerous,
-       so every call requires your approval before running.
+       so calls outside the Bash Allowlist pause for your approval
+       before running.
 
 Tokens: 1,234 | Cost: $0.00012
 ```
