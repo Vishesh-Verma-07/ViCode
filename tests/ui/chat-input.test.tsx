@@ -71,6 +71,26 @@ describe("ChatInput cursor-aware editing", () => {
     instance.unmount()
   })
 
+  it("inserts pasted multi-character text at the cursor", async () => {
+    const changes: string[] = []
+    const instance = render(<Harness onValue={(v) => changes.push(v)} />)
+    await sendKeys(instance, ["h", "e", "l", "l", "o"])
+    await sendKeys(instance, [LEFT, LEFT, LEFT]) // cursor between "he"|"llo"
+    await sendKeys(instance, ["XY"]) // a single write simulates a paste
+    expect(changes.at(-1)).toBe("heXYllo")
+    instance.unmount()
+  })
+
+  it("moves over emoji as one unit and backspaces it whole", async () => {
+    const changes: string[] = []
+    const instance = render(<Harness onValue={(v) => changes.push(v)} />)
+    await sendKeys(instance, ["a", "🚀", "b"])
+    await sendKeys(instance, [LEFT]) // cursor between "a🚀" and "b"
+    await sendKeys(instance, [BACKSPACE]) // removes the emoji as a single grapheme
+    expect(changes.at(-1)).toBe("ab")
+    instance.unmount()
+  })
+
   it("home and end jump to the start and end", async () => {
     const changes: string[] = []
     const instance = render(<Harness onValue={(v) => changes.push(v)} />)

@@ -1,4 +1,5 @@
 import { Text } from "ink"
+import { normalizeCursor } from "./cursor-edit"
 import { COLORS, ICONS } from "./theme"
 
 interface CursorTextProps {
@@ -10,7 +11,7 @@ interface CursorTextProps {
 }
 
 export function CursorText({ value, cursor, placeholder, disabled = false, placeholderItalic = false }: CursorTextProps) {
-  const c = Math.max(0, Math.min(cursor, value.length))
+  const c = normalizeCursor(value, cursor)
   return (
     <Text>
       <Text color={COLORS.primary} bold>{ICONS.arrow} </Text>

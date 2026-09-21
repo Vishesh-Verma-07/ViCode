@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it } from "bun:test"
 import {
   backspaceAt,
   clampToEnd,
@@ -9,10 +9,25 @@ import {
   moveToEnd,
   moveToHome,
   normalizeCursor,
+  splitGraphemes,
   wordDeleteAt,
 } from "@/ui/cursor-edit"
 
+const segmenter = Intl.Segmenter
+
+afterEach(() => {
+  ;(Intl as { Segmenter?: typeof segmenter }).Segmenter = segmenter
+})
+
 describe("cursor edit core", () => {
+  describe("splitGraphemes", () => {
+    it("falls back to code points when Intl.Segmenter is unavailable", () => {
+      ;(Intl as { Segmenter?: typeof segmenter }).Segmenter = undefined
+      expect(splitGraphemes("a🚀b")).toEqual(["a", "🚀", "b"])
+      expect(splitGraphemes("abc")).toEqual(["a", "b", "c"])
+    })
+  })
+
   describe("normalizeCursor", () => {
     it("clamps to the text length", () => {
       expect(normalizeCursor("abc", 99)).toBe(3)
