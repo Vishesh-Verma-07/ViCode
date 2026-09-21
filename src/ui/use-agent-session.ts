@@ -38,6 +38,7 @@ export interface UseAgentSessionArgs {
   commands?: Command[]
   openPicker: (request: PickerRequest) => Promise<number | null>
   resetDraft: () => void
+  resetHistory: () => void
   view: "home" | "chat"
   enterChat: () => void
   enterHome: () => void
@@ -86,6 +87,7 @@ export function useAgentSession({
   commands,
   openPicker,
   resetDraft,
+  resetHistory,
   view,
   enterChat,
   enterHome,
@@ -176,13 +178,14 @@ export function useAgentSession({
 
   const clearSessionState = useCallback(() => {
     clearApprovedPaths()
+    resetHistory()
     setSession(null)
     setMessages([])
     setToolCalls([])
     setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
     setTurnCount(0)
     setActiveSkills([])
-  }, [])
+  }, [resetHistory])
 
   const startNewSession = useCallback(() => {
     if (sessionsDir && session) {

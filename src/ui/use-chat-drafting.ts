@@ -18,6 +18,7 @@ export interface ChatDrafting {
   openPicker: (request: PickerRequest) => Promise<number | null>
   closePicker: (index: number | null) => void
   resetInput: () => void
+  resetHistory: () => void
 }
 
 export function useChatDrafting(): ChatDrafting {
@@ -85,6 +86,13 @@ export function useChatDrafting(): ChatDrafting {
     setSuggestionHighlight(0)
   }, [])
 
+  const resetHistory = useCallback(() => {
+    setInputKey((prev) => prev + 1)
+    setWalk(() => createInputHistory([], ""))
+    setSuggestionDismissed(false)
+    setSuggestionHighlight(0)
+  }, [])
+
   return {
     inputKey,
     inputValue,
@@ -101,5 +109,6 @@ export function useChatDrafting(): ChatDrafting {
     openPicker,
     closePicker,
     resetInput,
+    resetHistory,
   }
 }

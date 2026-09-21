@@ -116,6 +116,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     commands,
     openPicker: drafting.openPicker,
     resetDraft: drafting.resetInput,
+    resetHistory: drafting.resetHistory,
     view,
     enterChat: () => setView("chat"),
     enterHome: () => setView("home"),
@@ -208,11 +209,11 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
         return
       }
 
-      if (key.upArrow && !suggestionArrows && view === "chat") {
+      if (key.upArrow && !suggestionArrows && view === "chat" && !session.isStreaming) {
         drafting.recallUp()
         return
       }
-      if (key.downArrow && !suggestionArrows && view === "chat") {
+      if (key.downArrow && !suggestionArrows && view === "chat" && !session.isStreaming) {
         drafting.recallDown()
         return
       }

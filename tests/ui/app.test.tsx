@@ -2860,6 +2860,261 @@ describe("App Input History recall", () => {
   }, 30000)
 })
 
+describe("App Input History lifecycle", () => {
+  function makeSeedSession(id: string, texts: string[]): Session {
+    return {
+      id,
+      projectPath: "/tmp/history-lifecycle-test",
+      model: "stub-model",
+      messages: texts.map((text, i) => ({
+        id: `msg_${id}_${i}`,
+        role: "user" as const,
+        content: [{ type: "text" as const, text }],
+        timestamp: Date.now(),
+      })),
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+  }
+
+  function setup(opts?: {
+    initialView?: "home" | "chat"
+    initialSession?: Session
+    sessionsDir?: string
+    commands?: Command[]
+    provider?: Provider
+  }) {
+    const capturedMessages: Message[][] = []
+    const provider = opts?.provider ?? createStubProvider(capturedMessages)
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/history-lifecycle-test" }}
+        initialApiKey="test-key"
+        initialView={opts?.initialView ?? "chat"}
+        initialSession={opts?.initialSession}
+        sessionsDir={opts?.sessionsDir}
+        commands={opts?.commands}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "").replace(/\u001B\[[0-9;]*m/g, "")
+    const inputValue = () => {
+      const line = frameText()
+        .split("\n")
+        .find((l) => l.trimStart().startsWith("→ "))
+      return line ? line.replace(/^.*?→\s*/, "").trimEnd() : ""
+    }
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    async function typeText(text: string) {
+      for (const c of text) {
+        instance.stdin.write(c)
+        await sleep(5)
+      }
+    }
+    async function pressKey(key: string) {
+      instance.stdin.write(key)
+      await sleep(25)
+    }
+    async function submit(text: string) {
+      await typeText(text)
+      instance.stdin.write("\r")
+      await until(() => frameText().includes("Done in"))
+    }
+    return { ...instance, capturedMessages, frameText, inputValue, typeText, pressKey, submit }
+  }
+
+  function helpOnlyRegistry(): Command[] {
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    return registry.getAll()
+  }
+
+  it("Welcome-Screen New Chat clears the Input History so Up recalls nothing and fresh Inputs start a new list", async () => {
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createHomeCommand())
+    const { frameText, inputValue, typeText, pressKey, submit, unmount, stdin } = setup({
+      initialView: "home",
+      commands: registry.getAll(),
+    })
+    try {
+      await until(() => frameText().includes("Ask anything or select an option..."))
+
+      stdin.write("\r")
+      await until(() => frameText().includes("Type your message"), 10000)
+
+      await pressKey("\u001B[A")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("Type your message...")
+
+      await submit("first ever input")
+      await submit("second input")
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "second input")
+
+      await pressKey("\u001B[B")
+      await until(() => inputValue() === "Type your message...")
+
+      await typeText("/home")
+      stdin.write("\r")
+      await until(() => frameText().includes("Ask anything or select an option..."))
+
+      stdin.write("\r")
+      await until(() => frameText().includes("Type your message"), 10000)
+
+      await pressKey("\u001B[A")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("Type your message...")
+
+      await submit("fresh start input")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "fresh start input")
+      await pressKey("\u001B[A")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("fresh start input")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("/new clears the Input History so Up recalls nothing and fresh Inputs start a new list", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-lifecycle-new-test-"))
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createNewCommand())
+    const { frameText, inputValue, typeText, pressKey, submit, unmount, stdin } = setup({
+      sessionsDir,
+      commands: registry.getAll(),
+    })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await submit("alpha")
+      await submit("beta")
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "beta")
+
+      await pressKey("\u001B[B")
+      await until(() => inputValue() === "Type your message...")
+
+      await typeText("/new")
+      stdin.write("\r")
+      await until(() => frameText().includes("Started a new session"))
+
+      await pressKey("\u001B[A")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("Type your message...")
+
+      await submit("fresh after new")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "fresh after new")
+      await pressKey("\u001B[A")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("fresh after new")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("while the input is disabled (agent busy), Up/Down leave the draft alone and recall nothing", async () => {
+    const capturedMessages: Message[][] = []
+    const hangingProvider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(messages, _tools, _systemPrompt, abortSignal) {
+        capturedMessages.push([...messages])
+        yield { type: "text-delta", text: "busy partial" }
+        await new Promise<void>((resolve) => {
+          if (abortSignal?.aborted) {
+            resolve()
+            return
+          }
+          abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+        })
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+    const { frameText, inputValue, typeText, pressKey, stdin, unmount } = setup({
+      provider: hangingProvider,
+      commands: helpOnlyRegistry(),
+    })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeText("hello")
+      stdin.write("\r")
+      await until(() => frameText().includes("busy partial"))
+
+      await typeText("busy draft")
+      await until(() => inputValue() === "busy draft")
+
+      await pressKey("\u001B[A")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("busy draft")
+      await pressKey("\u001B[B")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("busy draft")
+
+      stdin.write("\x1B")
+      const frameReady = () => frameText().includes("Ready")
+      await until(frameReady, 5000)
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "hello")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("resuming an older Session does not rebuild history from its Messages; only this run's Inputs are recallable", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-lifecycle-resume-test-"))
+    const oldSeed = makeSeedSession("sess_old", ["ancient question"])
+    saveSession(oldSeed, sessionsDir)
+
+    const registry = new CommandRegistry()
+    registry.register(createSessionCommand())
+    registry.register(createHelpCommand(registry))
+
+    const { frameText, inputValue, typeText, pressKey, submit, unmount, stdin } = setup({
+      sessionsDir,
+      commands: registry.getAll(),
+    })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await submit("current run input")
+
+      await typeText("/session")
+      stdin.write("\r")
+      await until(() => frameText().includes("Switch to session"))
+      await pressKey("\u001B[B")
+      await pressKey("\r")
+      await until(() => frameText().includes("Switched to session sess_old"))
+      await until(() => frameText().includes("ancient question"))
+
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "/session")
+      await pressKey("\x1B")
+      await pressKey("\u001B[A")
+      await until(() => inputValue() === "current run input")
+      await pressKey("\u001B[A")
+      await new Promise((r) => setTimeout(r, 60))
+      expect(inputValue()).toBe("current run input")
+      expect(inputValue()).not.toBe("ancient question")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+})
+
 describe("App Command Suggestion gating for recall", () => {
   function setup() {
     const capturedMessages: Message[][] = []
