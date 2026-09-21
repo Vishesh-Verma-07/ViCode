@@ -32,6 +32,21 @@ function Harness({ onValue }: { onValue: (value: string) => void }) {
   )
 }
 
+function ExternalReplaceHarness({ onValue, replaceRef }: { onValue: (value: string) => void; replaceRef: (replace: (value: string) => void) => void }) {
+  const [value, setValue] = useState("")
+  replaceRef((next) => setValue(next))
+  return (
+    <ChatInput
+      value={value}
+      placeholder="Type..."
+      onChange={(next) => {
+        setValue(next)
+        onValue(next)
+      }}
+    />
+  )
+}
+
 describe("ChatInput cursor-aware editing", () => {
   const originalExit = process.exit
 
@@ -110,6 +125,37 @@ describe("ChatInput cursor-aware editing", () => {
     await sendKeys(instance, [LEFT, LEFT, LEFT]) // cursor between "he"|"llo"
     await sendKeys(instance, [CTRL_W])
     expect(changes.at(-1)).toBe("llo")
+    instance.unmount()
+  })
+
+  it("ctrl+w at a word boundary consumes the preceding whitespace too", async () => {
+    const changes: string[] = []
+    const instance = render(<Harness onValue={(v) => changes.push(v)} />)
+    await sendKeys(instance, ["o", "n", "e", " ", "t", "w", "o", " ", "t", "h", "r", "e", "e"])
+    await sendKeys(instance, [CTRL_W]) // cursor at the end, after "three"
+    expect(changes.at(-1)).toBe("one two")
+    instance.unmount()
+  })
+
+  it("delete is a safe no-op at the end of the draft", async () => {
+    const changes: string[] = []
+    const instance = render(<Harness onValue={(v) => changes.push(v)} />)
+    await sendKeys(instance, ["a", "b"])
+    await sendKeys(instance, [DELETE])
+    expect(changes.at(-1)).toBe("ab")
+    instance.unmount()
+  })
+
+  it("snaps the block cursor to the end when the draft is replaced from outside", async () => {
+    const changes: string[] = []
+    let replace: (value: string) => void = () => {}
+    const instance = render(<ExternalReplaceHarness onValue={(v) => changes.push(v)} replaceRef={(fn) => { replace = fn }} />)
+    await sendKeys(instance, ["h", "e", "l", "l", "o"])
+    await sendKeys(instance, [LEFT, LEFT, LEFT]) // cursor between "he"|"llo"
+    replace("fresh") // e.g. Input History recall or /new replacing the draft
+    await new Promise((resolve) => setTimeout(resolve, 25)) // let React settle the external value
+    await sendKeys(instance, ["!"])
+    expect(changes.at(-1)).toBe("fresh!")
     instance.unmount()
   })
 })
