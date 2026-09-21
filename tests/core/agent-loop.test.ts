@@ -777,7 +777,7 @@ describe("agent-loop", () => {
       expect((toolMsg!.content[0] as { result: string }).result).toContain("outside secret")
     })
 
-    it("runs bash in the project without asking for approval", async () => {
+    it("always asks for approval before bash runs", async () => {
       const approvals: string[] = []
       await runAgentLoop(
         [userMessage("run")],
@@ -790,7 +790,7 @@ describe("agent-loop", () => {
           onTextDelta: () => {},
         }),
       )
-      expect(approvals).toEqual([])
+      expect(approvals).toEqual(["bash"])
     })
 
     it("runs allowlisted bash without asking for approval", async () => {
@@ -811,7 +811,7 @@ describe("agent-loop", () => {
       expect((toolMsg!.content[0] as { result: string }).result).toContain("allowlisted")
     })
 
-    it("auto-approves bash that touches .env inside the project root", async () => {
+    it("still asks for allowlisted bash when a token touches a sensitive path", async () => {
       writeFileSync(join(realToolsDir, ".env"), "DO NOT TOUCH")
       const approvals: string[] = []
       await runAgentLoop(
@@ -819,21 +819,21 @@ describe("agent-loop", () => {
         toolCallProvider("bash", { command: "echo x > .env" }),
         [bashTool],
         "system",
-        { projectPath: realToolsDir },
+        { projectPath: realToolsDir, silentBashCommands: ["echo"] },
         createMockCallbacks({
           requestApproval: async (name) => { approvals.push(name); return false },
           onTextDelta: () => {},
         }),
       )
-      expect(approvals).toEqual([])
-      expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toContain("x")
+      expect(approvals).toEqual(["bash"])
+      expect(readFileSync(join(realToolsDir, ".env"), "utf-8")).toBe("DO NOT TOUCH")
     })
 
     it("feeds the rejection message back when a rejected bash call is rejected", async () => {
       const approvals: string[] = []
       const result = await runAgentLoop(
         [userMessage("run")],
-        toolCallProvider("bash", { command: "echo hi", cwd: join(realToolsDir, "..") }),
+        toolCallProvider("bash", { command: "rm -rf /" }),
         [bashTool],
         "system",
         { projectPath: realToolsDir },

@@ -42,15 +42,15 @@ describe("assembleSystemPrompt", () => {
     expect(lower).toContain("sensitive")
     expect(lower).toContain("outside the project root")
     expect(lower).toContain("reads")
-    expect(lower).toContain("bash command run inside")
+    expect(lower).toContain("every bash command requires")
   })
 
-  it("documents that bash in the project root runs without approval", () => {
+  it("documents the Bash Allowlist rule in the base prompt", () => {
     const result = assembleSystemPrompt({ projectPath: tmpDir })
     const lower = result.toLowerCase()
-    expect(lower).toContain("bash")
-    expect(lower).toContain("project root")
-    expect(lower).toContain("without asking")
+    expect(lower).toContain("bash allowlist")
+    expect(lower).toContain("silentbashcommands")
+    expect(lower).toContain("first token")
   })
 
   it("appends project prompt from .vicode/system.md", () => {

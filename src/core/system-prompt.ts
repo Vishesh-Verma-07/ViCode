@@ -28,7 +28,7 @@ You have access to the following tools:
 - File reads, writes, and edits within the Project Root on normal project files run immediately, without asking for confirmation.
 - Reading, writing, or editing Sensitive files (like .env files, private keys, and credential stores) pauses for explicit user approval — reads pause for approval too, not just writes and edits.
 - Reading, writing, or editing files outside the Project Root pauses for explicit user approval; the operation runs once approved.
-- Every bash command run inside the Project Root runs immediately, without asking for confirmation. Bash commands that run outside the Project Root still pause for explicit user approval.
+- Every bash command requires the user's approval before it runs, unless BOTH of these hold: (1) the first token of the command is on the Bash Allowlist (the \`silentBashCommands\` list in the global or project config), and (2) neither the command's tokens nor its working directory touches a Sensitive Path (like .env files, private keys, or \`.ssh\`). Even an allowlisted command still pauses for approval when it would read, write, or run inside a Sensitive file or directory, or run outside the Project Root. Anyone can add commands to the allowlist, so never assume an allowlisted command is harmless just because it usually runs silently.
 
 ## Safety
 
