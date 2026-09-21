@@ -24,6 +24,14 @@ A function the LLM can invoke to interact with the filesystem or shell. Each Too
 **Approval Rule**:
 The rule deciding whether a Tool Call pauses for user approval: a call pauses iff it is a `bash` call, or a file operation whose target is a Sensitive Path or lies outside the Project Root. Approval attaches to individual Tool Calls, not whole Tools. Approving a resolved path also auto-approves later calls to that same path for the rest of the Turn, so each distinct path surfaces at most one explicit approval per Turn.
 
+**Bash Allowlist**:
+The user-configured set of first command tokens (configured via the `silentBashCommands` setting, merged across config layers) whose bash Tool Calls may run as Silent Bash Calls.
+_Avoid_: whitelist, allow list
+
+**Silent Bash Call**:
+A bash Tool Call that executes without pausing for user approval because its first command token is on the Bash Allowlist, no command token resolves to a Sensitive Path, and its resolved working directory stays inside the Project Root and is not a Sensitive Path.
+_Avoid_: silent command, approval-free bash
+
 ### Model access
 
 **Provider**:
