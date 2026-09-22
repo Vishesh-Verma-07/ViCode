@@ -7,6 +7,7 @@ import { EventEmitter } from "events"
 import { render as inkRender } from "ink"
 import { render } from "ink-testing-library"
 import { App, FeedbackLine, STREAMING_COMMAND_NOTICE, extractDiff } from "@/ui/app"
+import { ICONS } from "@/ui/theme"
 import { CommandRegistry } from "@/core/command-registry"
 import { createHelpCommand } from "@/commands/help"
 import { createSessionCommand } from "@/commands/session"
@@ -3510,6 +3511,182 @@ describe("Welcome screen word deletion", () => {
       stdin.write("x")
       await new Promise((r) => setTimeout(r, 50))
       expect(frameText()).toContain("hello beautifux")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
+
+describe("Welcome screen cursor-aware editing (whole-App seam)", () => {
+  const LEFT = "\u001B[D"
+  const RIGHT = "\u001B[C"
+  const HOME = "\u001B[H"
+  const END = "\u001B[F"
+  const DELETE = "\u001B[3~"
+  const BACKSPACE = "\u007F"
+  const CTRL_W = "\u0017"
+
+  function setup() {
+    const instance = render(
+      <App
+        provider={createStubProvider([])}
+        tools={[]}
+        systemPrompt=""
+        context={{ projectPath: "/tmp/welcome-cursor-seam-test" }}
+        initialApiKey="test-key"
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    const boxLine = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .split("\n")
+        .find((l) => l.includes(ICONS.arrow)) ?? ""
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    async function typeText(text: string) {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await sleep(5)
+      }
+    }
+    async function pressKey(key: string) {
+      instance.stdin.write(key)
+      await sleep(15)
+    }
+    return { ...instance, frameText, boxLine, typeText, pressKey }
+  }
+
+  it("navigates by Left/Right, inserts at the Cursor, and sends the composed draft", async () => {
+    const { frameText, boxLine, typeText, pressKey, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      await typeText("hello")
+      await pressKey(LEFT)
+      await pressKey(LEFT)
+      await pressKey(LEFT)
+      await until(() => boxLine().includes("he llo"))
+
+      await typeText("X")
+      await until(() => boxLine().includes("heX llo"))
+
+      stdin.write("\r")
+      await until(() => frameText().includes("You: heXllo"), 10000)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("pastes multi-character text at the Cursor", async () => {
+    const { frameText, boxLine, typeText, pressKey, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      await typeText("hello")
+      await pressKey(LEFT)
+      await pressKey(LEFT)
+      await pressKey(LEFT)
+      await until(() => boxLine().includes("he llo"))
+
+      await pressKey("XY")
+      await until(() => boxLine().includes("heXY llo"))
+
+      stdin.write("\r")
+      await until(() => frameText().includes("You: heXYllo"), 10000)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("Home/End jump the Cursor to the start and end for insertion", async () => {
+    const { frameText, boxLine, typeText, pressKey, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      await typeText("abc")
+      await pressKey(HOME)
+      await until(() => boxLine().includes("→  abc"))
+
+      await typeText("Z")
+      await until(() => boxLine().includes("Z abc"))
+
+      await pressKey(END)
+      await pressKey("!")
+      await until(() => boxLine().includes("Zabc!"))
+
+      stdin.write("\r")
+      await until(() => frameText().includes("You: Zabc!"), 10000)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("Backspace removes before the Cursor, Delete removes under it, and Delete is a no-op at the end", async () => {
+    const { frameText, boxLine, typeText, pressKey, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      await typeText("abcdef")
+      await pressKey(DELETE)
+      await until(() => boxLine().includes("abcdef"))
+
+      await pressKey(LEFT)
+      await pressKey(LEFT)
+      await pressKey(LEFT)
+      await until(() => boxLine().includes("abc def"))
+
+      await pressKey(BACKSPACE)
+      await until(() => boxLine().includes("ab def"))
+
+      await pressKey(RIGHT)
+      await until(() => boxLine().includes("abd ef"))
+
+      await pressKey(DELETE)
+      await until(() => boxLine().includes("abd f"))
+
+      stdin.write("\r")
+      await until(() => frameText().includes("You: abdf"), 10000)
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("Ctrl+W word-deletes behind the Cursor, consuming the preceding whitespace at a boundary", async () => {
+    const { frameText, boxLine, typeText, pressKey, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      await typeText("one two three")
+      await pressKey(CTRL_W)
+      await until(() => !boxLine().includes("three"))
+      expect(boxLine()).toContain("one two")
+
+      stdin.write("\r")
+      await until(() => frameText().includes("You: one two"), 10000)
+      expect(frameText()).not.toContain("three")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+
+  it("moves over an emoji as one grapheme and backspaces it whole", async () => {
+    const { frameText, boxLine, typeText, pressKey, stdin, unmount } = setup()
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+
+      await typeText("a🚀b")
+      await pressKey(LEFT)
+      await until(() => boxLine().includes("a🚀 b"))
+
+      await pressKey(BACKSPACE)
+      await until(() => boxLine().includes("a b"))
+
+      stdin.write("\r")
+      await until(() => frameText().includes("You: ab"), 10000)
     } finally {
       unmount()
     }
