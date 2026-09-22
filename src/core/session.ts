@@ -1,18 +1,11 @@
-import { createHash } from "crypto"
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs"
 import { join } from "path"
 import type { Session } from "./types"
 
 export type { Session }
 
-export function computeProjectHash(projectPath: string): string {
-  return createHash("sha256").update(projectPath).digest("hex").slice(0, 8)
-}
-
 export function getSessionsDir(projectPath: string): string {
-  const home = process.env.HOME || process.env.USERPROFILE || ""
-  const hash = computeProjectHash(projectPath)
-  return join(home, ".vicode", "sessions", hash)
+  return join(projectPath, ".vicode", "sessions")
 }
 
 export function createSession(opts: {

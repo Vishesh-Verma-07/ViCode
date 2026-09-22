@@ -76,7 +76,7 @@ Build a two-panel TUI agent called **ViCode** (`vicode`) that:
 ### Session Persistence
 
 38. As a developer, I want my conversation to be auto-saved as a JSON file after every turn, so that I never lose progress.
-39. As a developer, I want sessions to be stored at `~/.vicode/sessions/<project-hash>/<timestamp>.json`, so that each project's history is isolated.
+39. As a developer, I want sessions to be stored at `<project>/.vicode/sessions/<id>.json`, so that each project's history is isolated alongside the project.
 40. As a developer, I want to resume a previous session when I restart `vicode` in the same directory, so that I can pick up where I left off.
 41. As a developer, I want to see a list of past sessions with timestamps and message counts, so that I can choose which one to resume.
 42. As a developer, I want to start a fresh session explicitly (e.g., `vicode --new`), so that I can begin a clean conversation.
@@ -194,7 +194,7 @@ All three are concatenated and sent as the system message to the LLM.
 
 ### Session Persistence
 
-Sessions are stored as JSON files at `~/.vicode/sessions/<project-hash>/<timestamp>.json`. The project hash is derived from the absolute path of the project directory (e.g., SHA-256 truncated to 8 chars). Each session file contains:
+Sessions are stored as JSON files inside the project directory at `<project>/.vicode/sessions/<id>.json`. Each session file contains:
 
 - `id` — Unique session ID
 - `projectPath` — Absolute path to the project directory

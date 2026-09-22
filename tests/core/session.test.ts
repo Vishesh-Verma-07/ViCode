@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from "fs"
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import {
-  computeProjectHash,
   getSessionsDir,
   saveSession,
   loadSession,
@@ -49,37 +48,25 @@ afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true })
 })
 
-describe("computeProjectHash", () => {
-  it("returns a consistent 8-char hex hash for the same path", () => {
-    const hash1 = computeProjectHash("/home/user/project")
-    const hash2 = computeProjectHash("/home/user/project")
-    expect(hash1).toBe(hash2)
-    expect(hash1).toMatch(/^[0-9a-f]{8}$/)
-  })
-
-  it("returns different hashes for different paths", () => {
-    const hash1 = computeProjectHash("/home/user/project-a")
-    const hash2 = computeProjectHash("/home/user/project-b")
-    expect(hash1).not.toBe(hash2)
-  })
-})
-
 describe("getSessionsDir", () => {
-  it("returns a path ending with the project hash", () => {
-    const hash = computeProjectHash("/tmp/test")
-    const dir = getSessionsDir("/tmp/test")
-    expect(dir).toContain(hash)
-    expect(dir).toContain(".vicode")
-    expect(dir).toContain("sessions")
+  it("resolves to the project-local .vicode/sessions directory", () => {
+    const dir = getSessionsDir(tempDir)
+    expect(dir).toBe(join(tempDir, ".vicode", "sessions"))
   })
 })
 
 describe("saveSession and loadSession", () => {
-  it("saves a session and loads it back", () => {
-    const session = makeSession({ projectPath: tempDir })
+  it("saves a session to <project>/.vicode/sessions/<id>.json and loads it back", () => {
+    const session = makeSession({ id: "sess_abc123", projectPath: tempDir })
     const sessionsDir = getSessionsDir(tempDir)
 
     saveSession(session, sessionsDir)
+
+    const filePath = join(tempDir, ".vicode", "sessions", "sess_abc123.json")
+    expect(existsSync(filePath)).toBe(true)
+    const saved = JSON.parse(readFileSync(filePath, "utf-8"))
+    expect(saved.id).toBe(session.id)
+    expect(saved.projectPath).toBe(tempDir)
 
     const loaded = loadSession(session.id, sessionsDir)
     expect(loaded).not.toBeNull()

@@ -13,7 +13,6 @@ import { App } from "./ui/app"
 import { createBackspaceRewritingStdin } from "./ui/backspace-encoding"
 import {
   getSessionsDir,
-  loadSession,
   loadLatestSession,
   type Session,
 } from "./core/session"
@@ -46,7 +45,7 @@ if (existsSync(envPath)) {
 
 const sessionsDir = getSessionsDir(projectPath)
 
-let initialSession: Session | null = null
+const initialSession: Session | null = loadLatestSession(projectPath)
 
 const config = loadConfig({
   projectPath,
