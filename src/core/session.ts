@@ -9,14 +9,12 @@ export function getSessionsDir(projectPath: string): string {
 }
 
 export function createSession(opts: {
-  projectPath: string
   model: string
   messages?: Session["messages"]
 }): Session {
   const now = new Date().toISOString()
   return {
     id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    projectPath: opts.projectPath,
     model: opts.model,
     messages: opts.messages ?? [],
     createdAt: now,

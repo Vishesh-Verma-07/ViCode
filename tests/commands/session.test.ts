@@ -22,7 +22,6 @@ function makeMessage(text: string, overrides?: Partial<Message>): Message {
 function makeSession(overrides?: Partial<Session>): Session {
   return {
     id: "sess_abc123",
-    projectPath: "/tmp/test",
     model: "anthropic/claude-sonnet-4",
     messages: [makeMessage("hello")],
     createdAt: "2025-01-15T10:30:00.000Z",

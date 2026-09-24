@@ -402,7 +402,6 @@ export function useAgentSession({
 
           if (sessionsDir) {
             const activeSession = session ?? createSession({
-              projectPath: context.projectPath,
               model: providerRef.current.getModelInfo().name,
               messages: result.messages,
             })

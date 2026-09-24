@@ -427,7 +427,6 @@ describe("App inline chip rendering", () => {
   function makeChipSession(): Session {
     return {
       id: "sess_chips",
-      projectPath: "/tmp/test",
       model: "stub-model",
       messages: [
         {
@@ -503,7 +502,6 @@ describe("App session switcher", () => {
   function makeSession(overrides?: Partial<Session>): Session {
     return {
       id: "sess_seed",
-      projectPath: "/tmp/test",
       model: "seed-model",
       messages: [],
       createdAt: "2025-01-15T10:30:00.000Z",
@@ -867,7 +865,6 @@ describe("App /new command", () => {
   function makeSeedSession(): Session {
     return {
       id: "sess_seed_one",
-      projectPath: "/tmp/test",
       model: "stub-model",
       messages: [
         { id: "msg_seed", role: "user", content: [{ type: "text", text: "hello seed conversation" }], timestamp: Date.now() },
@@ -1011,7 +1008,6 @@ describe("App /exit command", () => {
   function makeSeedSession(id: string): Session {
     return {
       id,
-      projectPath: "/tmp/test",
       model: "stub-model",
       messages: [],
       createdAt: "2025-01-15T10:30:00.000Z",
@@ -2829,7 +2825,6 @@ describe("App Input History recall", () => {
   it("keeps Up/Down driving the Welcome menu instead of recalling history into its box", async () => {
     const seed: Session = {
       id: "sess_history_seed",
-      projectPath: "/tmp/history-welcome-menu-test",
       model: "stub-model",
       messages: [],
       createdAt: "2025-01-15T10:30:00.000Z",
@@ -2865,7 +2860,6 @@ describe("App Input History lifecycle", () => {
   function makeSeedSession(id: string, texts: string[]): Session {
     return {
       id,
-      projectPath: "/tmp/history-lifecycle-test",
       model: "stub-model",
       messages: texts.map((text, i) => ({
         id: `msg_${id}_${i}`,
@@ -3411,7 +3405,6 @@ describe("Welcome screen New Chat", () => {
   function makeSeedSession(): Session {
     return {
       id: "sess_welcome_seed",
-      projectPath: "/tmp/welcome-new-test",
       model: "stub-model",
       messages: [
         { id: "msg_seed", role: "user", content: [{ type: "text", text: "hello seed conversation" }], timestamp: Date.now() },
@@ -3433,7 +3426,7 @@ describe("Welcome screen New Chat", () => {
         provider={createStubProvider(capturedMessages)}
         tools={[]}
         systemPrompt=""
-        context={{ projectPath: seed.projectPath }}
+        context={{ projectPath: "/tmp/welcome-new-test" }}
         initialApiKey="test-key"
         initialSession={seed}
         initialView="home"

@@ -29,7 +29,6 @@ function makeMessage(overrides?: Partial<Message>): Message {
 function makeSession(overrides?: Partial<Session>): Session {
   return {
     id: "sess_abc123",
-    projectPath: "/tmp/test",
     model: "anthropic/claude-sonnet-4",
     messages: [makeMessage()],
     createdAt: "2025-01-15T10:30:00.000Z",
@@ -57,7 +56,7 @@ describe("getSessionsDir", () => {
 
 describe("saveSession and loadSession", () => {
   it("saves a session to <project>/.vicode/sessions/<id>.json and loads it back", () => {
-    const session = makeSession({ id: "sess_abc123", projectPath: tempDir })
+    const session = makeSession({ id: "sess_abc123" })
     const sessionsDir = getSessionsDir(tempDir)
 
     saveSession(session, sessionsDir)
@@ -66,12 +65,12 @@ describe("saveSession and loadSession", () => {
     expect(existsSync(filePath)).toBe(true)
     const saved = JSON.parse(readFileSync(filePath, "utf-8"))
     expect(saved.id).toBe(session.id)
-    expect(saved.projectPath).toBe(tempDir)
+    expect(saved).not.toHaveProperty("projectPath")
 
     const loaded = loadSession(session.id, sessionsDir)
     expect(loaded).not.toBeNull()
     expect(loaded!.id).toBe(session.id)
-    expect(loaded!.projectPath).toBe(session.projectPath)
+    expect(loaded).not.toHaveProperty("projectPath")
     expect(loaded!.model).toBe(session.model)
     expect(loaded!.messages).toHaveLength(1)
     expect(loaded!.totalTokens).toBe(100)
@@ -80,7 +79,7 @@ describe("saveSession and loadSession", () => {
 
   it("creates the sessions directory if it does not exist", () => {
     const sessionsDir = join(tempDir, "nonexistent", "sessions")
-    const session = makeSession({ projectPath: tempDir })
+    const session = makeSession({})
 
     saveSession(session, sessionsDir)
 
@@ -95,7 +94,7 @@ describe("saveSession and loadSession", () => {
 
   it("overwrites an existing session on save", () => {
     const sessionsDir = getSessionsDir(tempDir)
-    const session = makeSession({ projectPath: tempDir, totalTokens: 100 })
+    const session = makeSession({ totalTokens: 100 })
 
     saveSession(session, sessionsDir)
     session.totalTokens = 200
@@ -152,7 +151,7 @@ describe("listSessions", () => {
 describe("deleteSession", () => {
   it("deletes a saved session", () => {
     const sessionsDir = getSessionsDir(tempDir)
-    const session = makeSession({ projectPath: tempDir })
+    const session = makeSession({})
 
     saveSession(session, sessionsDir)
     expect(loadSession(session.id, sessionsDir)).not.toBeNull()
@@ -168,14 +167,13 @@ describe("deleteSession", () => {
 })
 
 describe("createSession", () => {
-  it("creates a new session with defaults", () => {
+  it("creates a new session with defaults and no projectPath field", () => {
     const session = createSession({
-      projectPath: "/tmp/test",
       model: "anthropic/claude-sonnet-4",
     })
 
     expect(session.id).toMatch(/^sess_/)
-    expect(session.projectPath).toBe("/tmp/test")
+    expect(session).not.toHaveProperty("projectPath")
     expect(session.model).toBe("anthropic/claude-sonnet-4")
     expect(session.messages).toEqual([])
     expect(session.totalTokens).toBe(0)
@@ -195,12 +193,10 @@ describe("loadLatestSession", () => {
     const sessionsDir = getSessionsDir(tempDir)
     const s1 = makeSession({
       id: "s1",
-      projectPath: tempDir,
       updatedAt: "2025-01-15T10:00:00Z",
     })
     const s2 = makeSession({
       id: "s2",
-      projectPath: tempDir,
       updatedAt: "2025-01-15T11:00:00Z",
     })
 

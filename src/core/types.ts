@@ -111,7 +111,6 @@ export interface CommandContext {
 
 export interface Session {
   id: string
-  projectPath: string
   model: string
   messages: Message[]
   createdAt: string
