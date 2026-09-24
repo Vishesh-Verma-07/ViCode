@@ -42,6 +42,16 @@ export interface Provider {
     systemPrompt: string,
     abortSignal?: AbortSignal,
   ): AsyncIterable<StreamEvent>
+  /**
+   * Produce a plain-text completion over `transcript` guided by `summaryPrompt`.
+   * Used by Compaction to condense folded history into the Running Summary.
+   * Optional: a Provider without it is treated as compaction-incapable.
+   */
+  summarize?(
+    transcript: string,
+    summaryPrompt: string,
+    abortSignal?: AbortSignal,
+  ): Promise<{ text: string; usage: TokenUsage }>
   getModelInfo(): ModelInfo
   listModels(): Promise<ModelListing[]>
 }

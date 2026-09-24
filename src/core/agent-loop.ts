@@ -3,6 +3,7 @@ import type { Provider, StreamEvent, TokenUsage } from "./provider"
 import { ToolRegistry } from "./tool-registry"
 import { capResult } from "./cap-result"
 import { project, contextBudget } from "./project-context"
+import { compactHistory, needsCompaction } from "./compaction"
 import { log } from "../utils/logger"
 
 const DOOM_LOOP_THRESHOLD = 3
@@ -15,6 +16,8 @@ export interface AgentLoopCallbacks {
   onToolResult(toolCallId: string, toolName: string, result: string): void
   onUsage(usage: TokenUsage): void
   onError(error: unknown): void
+  onCompactionStart?(): void
+  onCompactionEnd?(foldedMessages: number): void
   requestApproval(toolName: string, args: Record<string, unknown>): Promise<boolean>
 }
 
@@ -69,7 +72,7 @@ export async function runAgentLoop(
   callbacks: AgentLoopCallbacks,
   abortSignal?: AbortSignal,
 ): Promise<AgentLoopResult> {
-  const allMessages = [...messages]
+  let allMessages = [...messages]
   const toolCallHistory: string[] = []
   const budget = contextBudget(provider)
   let totalUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
@@ -79,6 +82,36 @@ export async function runAgentLoop(
   registry.registerAll(tools)
 
   while (!abortSignal?.aborted) {
+    try {
+      if (needsCompaction(allMessages, provider)) {
+        callbacks.onCompactionStart?.()
+        let folded = 0
+        try {
+          const compacted = await compactHistory(allMessages, provider, abortSignal)
+          folded = compacted.foldedMessages
+          if (folded > 0) {
+            allMessages = compacted.messages
+            if (compacted.usage.totalTokens > 0) {
+              callbacks.onUsage(compacted.usage)
+              totalUsage = {
+                inputTokens: totalUsage.inputTokens + compacted.usage.inputTokens,
+                outputTokens: totalUsage.outputTokens + compacted.usage.outputTokens,
+                totalTokens: totalUsage.totalTokens + compacted.usage.totalTokens,
+                cost: (totalUsage.cost ?? 0) + (compacted.usage.cost ?? 0),
+              }
+            }
+          }
+        } catch (error) {
+          // Compaction is opportunistic: a failed summary must never kill a turn.
+          log("Compaction failed:", error)
+        } finally {
+          callbacks.onCompactionEnd?.(folded)
+        }
+      }
+    } catch (error) {
+      log("Compaction failed:", error)
+    }
+
     let assistantText = ""
     const assistantToolCalls: Array<{
       toolCallId: string

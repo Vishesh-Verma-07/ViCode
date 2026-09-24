@@ -166,6 +166,7 @@ Once running, just type a message. The agent reads files, searches your code, ed
 | `/session` | List or resume saved sessions |
 | `/home` | Return to the welcome screen |
 | `/new` | Save the current session and start fresh |
+| `/compact` | Fold older messages into a summary to keep the context window lean |
 | `/exit` | Exit ViCode |
 
 ### Key Shortcuts
@@ -226,7 +227,7 @@ Tests live in a top-level `tests/` tree that mirrors `src/` (e.g. `tests/core/ag
 - [ ] Add more LLM providers (the `Provider` interface is provider-agnostic)
 - [ ] MCP (Model Context Protocol) tool support via the tool registry
 - [ ] Multi-file atomic edit operations
-- [ ] Context window compaction / summarization for long sessions
+- [x] Context window compaction / summarization for long sessions (`/compact` + automatic at 60% context load)
 - [ ] Dedicated git integration UI
 - [ ] Theme system (config already reserves a `theme` field)
 

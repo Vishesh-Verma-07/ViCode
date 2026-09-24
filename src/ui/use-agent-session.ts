@@ -4,6 +4,7 @@ import type { Command, CommandContext, Message, PickerRequest, ToolContext, Tool
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
 import { runAgentLoop } from "../core/agent-loop"
+import { compactHistory } from "../core/compaction"
 import { CommandRegistry } from "../core/command-registry"
 import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
 import { createSession, saveSession } from "../core/session"
@@ -258,6 +259,58 @@ export function useAgentSession({
         skills: {
           list: async () => discoverSkills(context.projectPath),
         },
+        compaction: sessionsDir
+          ? {
+              compact: async () => {
+                setTurnStatus({ kind: "compacting" })
+                try {
+                  const result = await compactHistory(messages, providerRef.current)
+                  if (result.foldedMessages === 0) {
+                    return { foldedMessages: 0, foldedTokens: 0, summary: "" }
+                  }
+
+                  setMessages(result.messages)
+
+                  if (result.usage && result.usage.totalTokens > 0) {
+                    setUsage((prev) => ({
+                      inputTokens: prev.inputTokens + result.usage!.inputTokens,
+                      outputTokens: prev.outputTokens + result.usage!.outputTokens,
+                      totalTokens: prev.totalTokens + result.usage!.totalTokens,
+                      cost: prev.cost + result.usage!.cost,
+                    }))
+                  }
+
+                  const base = session ?? createSession({
+                    model: providerRef.current.getModelInfo().name,
+                    messages: result.messages,
+                  })
+                  const savedSession: Session = {
+                    ...base,
+                    messages: result.messages,
+                    model: providerRef.current.getModelInfo().name,
+                    updatedAt: new Date().toISOString(),
+                    totalTokens: base.totalTokens + (result.usage?.totalTokens ?? 0),
+                    totalCost: base.totalCost + (result.usage?.cost ?? 0),
+                    lastCompaction: {
+                      before: result.folded,
+                      summary: result.summary,
+                      at: new Date().toISOString(),
+                    },
+                  }
+                  saveSession(savedSession, sessionsDir)
+                  setSession(savedSession)
+
+                  return {
+                    foldedMessages: result.foldedMessages,
+                    foldedTokens: result.foldedTokens,
+                    summary: result.summary,
+                  }
+                } finally {
+                  setTurnStatus({ kind: "idle" })
+                }
+              },
+            }
+          : undefined,
         key: openKeyEntry
           ? {
               set: () => openKeyEntry(),
@@ -342,6 +395,12 @@ export function useAgentSession({
                   totalTokens: prev.totalTokens + stepUsage.totalTokens,
                   cost: prev.cost + stepUsage.cost,
                 }))
+              },
+              onCompactionStart: () => {
+                setTurnStatus({ kind: "compacting" })
+              },
+              onCompactionEnd: () => {
+                setTurnStatus({ kind: "thinking" })
               },
               onToolCallEnd: (id, _name, args) => {
                 setToolCalls((prev) =>

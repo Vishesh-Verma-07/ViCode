@@ -28,6 +28,9 @@ function createMockProvider(events: StreamEvent[][]): Provider {
         yield event
       }
     },
+    async summarize() {
+      return { text: "[mock summary]", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+    },
     getModelInfo() {
       return { id: "mock", name: "Mock Model" }
     },
@@ -274,6 +277,9 @@ describe("agent-loop", () => {
     const provider: Provider = {
       async *streamChat() {
         throw new Error("API error")
+      },
+      async summarize() {
+        return { text: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
       },
       getModelInfo() {
         return { id: "mock", name: "Mock" }
@@ -896,6 +902,9 @@ describe("agent-loop", () => {
             yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
           }
         },
+        async summarize() {
+          return { text: "[mock summary]", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+        },
         getModelInfo() {
           return { id: "mock", name: "Mock", contextLength }
         },
@@ -1084,6 +1093,93 @@ describe("agent-loop", () => {
       }
 
       expect(cumulativePrompts).toBe(2)
+    })
+  })
+
+  describe("agent-loop auto-compaction", () => {
+    it("compacts history mid-loop when the honest meter crosses the threshold", async () => {
+      const longText = "x".repeat(20_000)
+      const seedHistory: Message[] = [
+        { id: "u0", role: "user", content: [{ type: "text", text: "build the thing" }], timestamp: 0 },
+        { id: "a0", role: "assistant", content: [{ type: "text", text: longText }], timestamp: 0 },
+      ]
+
+      let summarizeCalls = 0
+      let compactionsStarted = 0
+      const compactionsEnded: number[] = []
+
+      const provider: Provider = {
+        async *streamChat() {
+          yield { type: "text-delta", text: "done" }
+          yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+        },
+        async summarize() {
+          summarizeCalls++
+          return { text: "[condensed]", usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10, cost: 0 } }
+        },
+        getModelInfo() {
+          return { id: "mock", name: "Mock", contextLength: 1000 }
+        },
+        async listModels() {
+          return []
+        },
+      }
+
+      const result = await runAgentLoop(
+        [...seedHistory, userMessage("continue")],
+        provider,
+        [],
+        "system",
+        mockContext,
+        createMockCallbacks({
+          onCompactionStart: () => compactionsStarted++,
+          onCompactionEnd: (folded) => compactionsEnded.push(folded),
+        }),
+      )
+
+      expect(summarizeCalls).toBe(1)
+      expect(compactionsStarted).toBe(1)
+      expect(compactionsEnded).toEqual([2])
+
+      const summaryMsg = result.messages[0]!
+      expect(summaryMsg.content[0]!.type).toBe("context-summary")
+      expect(result.messages).toHaveLength(3)
+      expect(result.messages[1]!.role).toBe("user")
+      expect(result.messages[1]!.content).toEqual([{ type: "text", text: "continue" }])
+
+      expect(result.totalUsage.totalTokens).toBe(12)
+    })
+
+    it("skips auto-compaction when the provider has no summarize support", async () => {
+      const longText = "x".repeat(20_000)
+      const provider: Provider = {
+        async *streamChat() {
+          yield { type: "text-delta", text: "done" }
+          yield { type: "finish", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+        },
+        getModelInfo() {
+          return { id: "mock", name: "Mock", contextLength: 1000 }
+        },
+        async listModels() {
+          return []
+        },
+      }
+
+      const result = await runAgentLoop(
+        [
+          { id: "u0", role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 },
+          { id: "a0", role: "assistant", content: [{ type: "text", text: longText }], timestamp: 0 },
+          userMessage("continue"),
+        ],
+        provider,
+        [],
+        "system",
+        mockContext,
+        createMockCallbacks(),
+      )
+
+      expect(result.messages[0]!.content[0]!.type).not.toBe("context-summary")
+      expect(result.messages).toHaveLength(4)
     })
   })
 })

@@ -55,11 +55,8 @@ Configuration priority: project config (.vicode.json) > global config (~/.vicode
 ### Conversation persistence
 
 **Session**:
-A saved conversation between the user and the agent, stored as JSON, associated with a project directory.
+A saved conversation between the user and the agent, stored as JSON at `<project>/.vicode/sessions/<id>.json` — one file per Session. Scoping is physical: a Session lives inside the directory it belongs to, so a project only ever surfaces its own sessions.
 _Avoid_: chat (the view), history
-
-**Project Hash**:
-A truncated SHA-256 hash of the project directory's absolute path, used to namespace session storage.
 
 **New Chat**:
 The Welcome Screen action that begins a fresh conversation. Identical in behaviour to the `/new` command: the current Session (if any) is saved, then messages, usage, unit counters and active Skills are cleared and the chat view opens empty.
@@ -68,6 +65,22 @@ _Avoid_: new session, clear chat
 **Input History**:
 The in-memory, session-scoped list of every Input the user submits (Messages and Commands alike), recalled into the Input Box draft by Up/Down arrows. Cleared by New Chat. Recalling is drafting, not replaying: a recalled Input is a fresh message on submit, not a re-run of the old turn.
 _Avoid_: message history (implies the transcript), command history
+
+**Compaction**:
+Replacing the older part of the conversation history with a model-generated summary once the window grows too large, so the agent keeps working instead of hitting the context limit. Distinct from Truncation, which silently drops or trims messages that exceed the budget.
+_Avoid_: summarization, context pruning, compacting the window
+
+**Running Summary**:
+The single ever-growing message at the front of the history that accumulates everything earlier conversation has been Compacted down to, so repeated compactions never compound memory loss. New summaries append to it rather than replacing it.
+_Avoid_: summary message, accumulated summary
+
+**Compact Threshold**:
+The Context Load percentage at which auto-compaction fires within the Agent Loop — 60% of the context window by default. The `/compact` Command is unconditional and ignores the threshold.
+_Avoid_: compact limit, context alarm
+
+**Context Load**:
+The current estimated size of the message history — the estimated tokens of every message in the array — expressed as a percentage of the model's context window. The honest meter behind the Compact Threshold. Distinct from the Usage Panel's percentage, which reflects cumulative token spend since the session began, not the live in-window size.
+_Avoid_: context usage, context-window usage (overlaps the cumulative panel figure)
 
 ### Prompting
 
@@ -107,7 +120,7 @@ The overlay shown while a Tool Call awaits user consent, displaying the Tool nam
 A file path protected from unsupervised access — matched by default patterns (`.env*`, key material, credential stores, `.ssh/**`) plus user-configured patterns. Reads, writes, and edits pause for approval (reads too, not just writes and edits); search results omit matches inside them.
 
 **Project Root**:
-The allowed boundary for file operations — the directory a Session is associated with. Operations inside it on normal project files run silently; operations outside it require approval and proceed once approved.
+The allowed boundary for file operations — the directory a Session lives in. Operations inside it on normal project files run silently; operations outside it require approval and proceed once approved.
 
 ### Layout & rendering
 

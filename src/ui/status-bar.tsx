@@ -9,6 +9,7 @@ export type TurnStatus =
   | { kind: "thinking" }
   | { kind: "working"; toolName: string }
   | { kind: "waiting-approval" }
+  | { kind: "compacting" }
   | { kind: "done"; durationMs: number }
   | { kind: "error" }
 
@@ -68,6 +69,12 @@ export function StatusIndicator({ status }: { status: TurnStatus }) {
       )
     case "waiting-approval":
       return <Text color={COLORS.warning}>{ICONS.warning} Waiting for approval</Text>
+    case "compacting":
+      return (
+        <ThemeProvider theme={cyanSpinnerTheme}>
+          <Spinner label="Compacting context…" />
+        </ThemeProvider>
+      )
     case "done":
       return <Text color={COLORS.success}>{ICONS.check} Done in {(status.durationMs / 1000).toFixed(1)}s</Text>
     case "error":

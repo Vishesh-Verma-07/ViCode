@@ -1,9 +1,10 @@
 import type { Provider, StreamEvent, TokenUsage, ModelInfo, ModelListing, ModelListingPricing } from "../core/provider"
-import type { Message, ToolDefinition } from "../core/types"
+import type { Message, ToolDefinition, ContextSummaryContent } from "../core/types"
 import type { ModelMessage, ToolSet } from "ai"
 import { streamText, tool, zodSchema } from "ai"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
 import { getModelPricing, calculateCost } from "../core/cost-calculator"
+import { composeSummaryMessageText } from "../core/compaction"
 import { join, dirname } from "path"
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "fs"
 
@@ -102,6 +103,32 @@ export function createOpenRouterProvider(config: OpenRouterProviderConfig, optio
       return info
     },
 
+    async summarize(
+      transcript: string,
+      summaryPrompt: string,
+      abortSignal?: AbortSignal,
+    ): Promise<{ text: string; usage: TokenUsage }> {
+      const result = streamText({
+        model: openrouter.chat(modelId),
+        messages: [{ role: "user", content: transcript }],
+        system: summaryPrompt,
+        abortSignal,
+        providerOptions: {
+          openrouter: {
+            usage: { include: true },
+          },
+        },
+      })
+
+      let text = ""
+      let usage: TokenUsage | undefined
+      for await (const event of result.stream) {
+        if (event.type === "text-delta") text += event.text ?? ""
+        if (event.type === "finish-step") usage = extractUsage(event.usage, modelId)
+      }
+      return { text, usage: usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+    },
+
     listModels(): Promise<ModelListing[]> {
       return listOpenRouterModels(options)
     },
@@ -119,10 +146,14 @@ export function convertMessages(messages: Message[]): ModelMessage[] {
         content: textParts.map((c) => c.text).join("\n"),
       })
     } else if (msg.role === "user") {
-      const textParts = msg.content.filter((c) => c.type === "text")
+      const textParts = msg.content
+        .filter((c) => c.type === "text" || c.type === "context-summary")
+        .map((c) =>
+          c.type === "text" ? c.text : composeSummaryMessageText(c as ContextSummaryContent),
+        )
       result.push({
         role: "user",
-        content: textParts.map((c) => c.text).join("\n"),
+        content: textParts.join("\n"),
       })
     } else if (msg.role === "assistant") {
       const parts: ModelMessage[] = []

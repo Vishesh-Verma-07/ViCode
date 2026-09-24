@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react"
 import { Box, Text, useInput } from "ink"
 import { parseWheelEvent } from "./mouse"
 import { COLORS, ICONS } from "./theme"
-import type { Message } from "../core/types"
+import type { Message, ContextSummaryContent } from "../core/types"
 import { tokenizeCodeText, type CodeSegment } from "../core/code-tokenizer"
 import { InlineCodeText } from "./inline-chip"
 import { CodeBlock } from "./code-block"
@@ -192,6 +192,24 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
 
   for (const msg of messages) {
     if (msg.role === "user") {
+      const summaryParts = msg.content.filter(
+        (c): c is ContextSummaryContent => c.type === "context-summary",
+      )
+      if (summaryParts.length > 0) {
+        for (const part of summaryParts) {
+          const header = `Context compacted — ${part.foldedMessages} messages folded`
+          pushBlock(
+            `${msg.id}:summary:head`,
+            <Text key={`${msg.id}:summary:head`} color={COLORS.warning}>
+              <Text color={COLORS.primary}>{ICONS.hourglass}</Text> {header}
+            </Text>,
+            1,
+            header,
+          )
+          addCodeAwareBlocks(`${msg.id}:summary:body`, part.summary)
+        }
+        continue
+      }
       addCodeAwareBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
     } else if (msg.role === "assistant") {
       const text = textContentOf(msg)

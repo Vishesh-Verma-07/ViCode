@@ -11,12 +11,13 @@ function byteLen(s: string): number {
   return new TextEncoder().encode(s).length
 }
 
-function estimateMessageTokens(msg: Message): number {
+export function estimateMessageTokens(msg: Message): number {
   let tokens = MESSAGE_OVERHEAD_TOKENS
   for (const part of msg.content) {
     if (part.type === "text") tokens += Math.ceil(byteLen(part.text) / BYTE_PER_TOKEN)
     else if (part.type === "tool-result") tokens += Math.ceil(byteLen(part.result) / BYTE_PER_TOKEN)
     else if (part.type === "tool-call") tokens += Math.ceil(byteLen(JSON.stringify(part.args)) / BYTE_PER_TOKEN)
+    else if (part.type === "context-summary") tokens += Math.ceil(byteLen(part.summary) / BYTE_PER_TOKEN)
   }
   return tokens
 }

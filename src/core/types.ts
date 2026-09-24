@@ -24,7 +24,15 @@ export interface ToolResultContent {
   isError?: boolean
 }
 
-export type Content = TextContent | ToolCallContent | ToolResultContent
+export interface ContextSummaryContent {
+  type: "context-summary"
+  summary: string
+  foldedMessages: number
+  foldedTokens: number
+  at: number
+}
+
+export type Content = TextContent | ToolCallContent | ToolResultContent | ContextSummaryContent
 
 export interface Message {
   id: string
@@ -97,6 +105,16 @@ export interface SkillContext {
   list(): Promise<Skill[]>
 }
 
+export interface CompactionReport {
+  foldedMessages: number
+  foldedTokens: number
+  summary: string
+}
+
+export interface CompactionCapability {
+  compact(): Promise<CompactionReport>
+}
+
 export interface CommandContext {
   projectPath: string
   openPicker?: OpenPicker
@@ -106,6 +124,7 @@ export interface CommandContext {
   models?: ModelsCapability
   skills?: SkillContext
   key?: KeyCapability
+  compaction?: CompactionCapability
   onSkillActivate?: (content: string) => void
 }
 
@@ -117,4 +136,9 @@ export interface Session {
   updatedAt: string
   totalTokens: number
   totalCost: number
+  lastCompaction?: {
+    before: Message[]
+    summary: string
+    at: string
+  }
 }
