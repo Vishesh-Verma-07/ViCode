@@ -71,6 +71,7 @@ const systemPrompt = assembleSystemPrompt({
   projectPath,
   projectPrompt: config.systemPrompt,
   cliPrompt: undefined,
+  tools: allTools,
 })
 
 const commandRegistry = new CommandRegistry()
