@@ -77,6 +77,10 @@ Instructions sent to the LLM at the start of the conversation defining its behav
 **Skill**:
 A markdown instruction file whose full content is injected as a System Prompt layer when activated via `/skill`, shaping agent behaviour until the session ends. Discovered from project `.vicode/skills/` and global `~/.vicode/skills/`; project wins on name collision. Multiple active Skills stack.
 
+**Mode**:
+A session-level behaviour context selecting which Tools are exposed to the model and adding a hardcoded System Prompt layer. Three built-in Modes (build, discuss, plan) are cycled with Tab; the switch renders immediately but applies from the next user input. Distinct from View (home/chat), Skill (a user-toggled prompt layer that persists across Modes), and Turn Status.
+_Avoid_: posture, role (both imply the whole assistant identity)
+
 ### Control surface
 
 **Command**:
