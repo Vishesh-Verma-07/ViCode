@@ -68,6 +68,10 @@ export const MODES: readonly ModeDefinition[] = [
 
 export const DEFAULT_MODE: ModeId = MODES[0]!.id
 
+export function isModeId(value: unknown): value is ModeId {
+  return typeof value === "string" && MODES.some((m) => m.id === value)
+}
+
 export function cycleMode(mode: ModeId): ModeId {
   const index = MODES.findIndex((m) => m.id === mode)
   return MODES[(index + 1) % MODES.length]!.id

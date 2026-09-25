@@ -117,7 +117,7 @@ export function useAgentSession({
   const [showExitSummary, setShowExitSummary] = useState(false)
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
   const [activeSkills, setActiveSkills] = useState<string[]>([])
-  const [activeMode, setActiveMode] = useState<ModeId>(DEFAULT_MODE)
+  const [activeMode, setActiveMode] = useState<ModeId>(initialSession?.mode ?? DEFAULT_MODE)
   const activeModeDefinition: ModeDefinition = findMode(activeMode) ?? MODES[0]!
   const cycleMode = useCallback(() => {
     setActiveMode((prev) => cycleModeId(prev))
@@ -198,6 +198,7 @@ export function useAgentSession({
     setUsage({ inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 })
     setTurnCount(0)
     setActiveSkills([])
+    setActiveMode(DEFAULT_MODE)
   }, [resetHistory])
 
   const startNewSession = useCallback(() => {
@@ -242,6 +243,7 @@ export function useAgentSession({
                 clearApprovedPaths()
                 setSession(loaded)
                 setMessages(loaded.messages)
+                setActiveMode(loaded.mode ?? DEFAULT_MODE)
                 enterChat()
                 setUsage({
                   inputTokens: 0,
@@ -305,6 +307,7 @@ export function useAgentSession({
                     updatedAt: new Date().toISOString(),
                     totalTokens: base.totalTokens + (result.usage?.totalTokens ?? 0),
                     totalCost: base.totalCost + (result.usage?.cost ?? 0),
+                    mode: activeMode,
                     lastCompaction: {
                       before: result.folded,
                       summary: result.summary,
@@ -491,6 +494,7 @@ export function useAgentSession({
               updatedAt: new Date().toISOString(),
               totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
               totalCost: activeSession.totalCost + result.totalUsage.cost,
+              mode: turnMode.id,
             }
             saveSession(savedSession, sessionsDir)
             setSession(savedSession)

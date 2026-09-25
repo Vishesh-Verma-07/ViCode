@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "fs"
 import { join } from "path"
 import type { Session } from "./types"
+import { DEFAULT_MODE, isModeId, type ModeId } from "./modes"
 
 export type { Session }
 
@@ -10,6 +11,7 @@ export function getSessionsDir(projectPath: string): string {
 
 export function createSession(opts: {
   model: string
+  mode?: ModeId
   messages?: Session["messages"]
 }): Session {
   const now = new Date().toISOString()
@@ -21,6 +23,7 @@ export function createSession(opts: {
     updatedAt: now,
     totalTokens: 0,
     totalCost: 0,
+    mode: opts.mode ?? DEFAULT_MODE,
   }
 }
 
@@ -35,7 +38,9 @@ export function loadSession(id: string, sessionsDir: string): Session | null {
   if (!existsSync(filePath)) return null
   try {
     const raw = readFileSync(filePath, "utf-8")
-    return JSON.parse(raw) as Session
+    const parsed = JSON.parse(raw) as Session
+    const mode = isModeId(parsed.mode) ? parsed.mode : DEFAULT_MODE
+    return { ...parsed, mode }
   } catch {
     return null
   }

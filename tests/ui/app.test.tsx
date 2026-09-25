@@ -3995,3 +3995,214 @@ describe("Mode switching via Tab", () => {
     }
   }, 30000)
 })
+
+describe("Mode persistence across sessions", () => {
+  function makeSession(overrides?: Partial<Session>): Session {
+    return {
+      id: "sess_seed",
+      model: "stub-model",
+      messages: [
+        { id: "msg_seed", role: "user", content: [{ type: "text", text: "seed question" }], timestamp: Date.now() },
+      ],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+      ...overrides,
+    }
+  }
+
+  function setupPersistentMode(opts: { initialSession?: Session } = {}) {
+    const projectDir = mkdtempSync(join(tmpdir(), "vicode-mode-persist-"))
+    const sessionsDir = join(projectDir, ".vicode", "sessions")
+    const seen: Array<{ tools: string[]; prompt: string }> = []
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, tools, systemPrompt) {
+        seen.push({ tools: tools.map((t) => t.name).sort(), prompt: systemPrompt })
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+    if (opts.initialSession) saveSession(opts.initialSession, sessionsDir)
+
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createNewCommand())
+    registry.register(createSessionCommand())
+
+    const instance = render(
+      <App
+        provider={provider}
+        tools={allTools}
+        context={{ projectPath: projectDir }}
+        initialApiKey="test-key"
+        initialSession={opts.initialSession}
+        initialView="chat"
+        sessionsDir={sessionsDir}
+        commands={registry.getAll()}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    async function pressTab(): Promise<void> {
+      instance.stdin.write("\t")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    async function pressEnter(): Promise<void> {
+      instance.stdin.write("\r")
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    }
+    function readSavedSessions(): Record<string, Session> {
+      const result: Record<string, Session> = {}
+      if (existsSync(sessionsDir)) {
+        for (const file of readdirSync(sessionsDir).filter((f) => f.endsWith(".json"))) {
+          const session = JSON.parse(readFileSync(join(sessionsDir, file), "utf-8")) as Session
+          result[session.id] = session
+        }
+      }
+      return result
+    }
+    function waitForSessionToContain(id: string, text: string): Promise<void> {
+      return until(() => {
+        if (!existsSync(join(sessionsDir, `${id}.json`))) return false
+        return readFileSync(join(sessionsDir, `${id}.json`), "utf-8").includes(text)
+      })
+    }
+    return {
+      ...instance,
+      seen,
+      frameText,
+      sessionsDir,
+      projectDir,
+      typeAndSubmit,
+      pressTab,
+      pressEnter,
+      readSavedSessions,
+      waitForSessionToContain,
+    }
+  }
+
+  it("persists the active mode into the saved session on every turn", async () => {
+    const { frameText, sessionsDir, typeAndSubmit, pressTab, readSavedSessions, unmount, projectDir } =
+      setupPersistentMode()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("first turn")
+      await until(() => {
+        if (!existsSync(sessionsDir)) return false
+        return readdirSync(sessionsDir).filter((f) => f.endsWith(".json")).length > 0
+      })
+      const firstId = Object.keys(readSavedSessions())[0]!
+      expect(readSavedSessions()[firstId]!.mode).toBe("build")
+
+      await pressTab()
+      await until(() => frameText().includes("[Discuss]"))
+      await typeAndSubmit("second turn")
+
+      await until(() => {
+        if (!existsSync(join(sessionsDir, `${firstId}.json`))) return false
+        return readFileSync(join(sessionsDir, `${firstId}.json`), "utf-8").includes("second turn")
+      })
+      expect(readSavedSessions()[firstId]!.mode).toBe("discuss")
+    } finally {
+      unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("restores a plan session's mode on resume and keeps the next turn read-only", async () => {
+    const seed = makeSession({ id: "sess_plan", mode: "plan" })
+    const { frameText, seen, typeAndSubmit, readSavedSessions, waitForSessionToContain, unmount, projectDir } =
+      setupPersistentMode({ initialSession: seed })
+    try {
+      await until(() => frameText().includes("seed question"))
+      expect(frameText()).toContain("[Plan]")
+
+      await typeAndSubmit("follow up")
+      await until(() => seen.length >= 1)
+      expect(seen[0]!.tools).toEqual(["list_files", "read_file", "search"])
+      expect(seen[0]!.prompt).toContain("plan mode")
+
+      await waitForSessionToContain("sess_plan", "follow up")
+      expect(readSavedSessions()["sess_plan"]!.mode).toBe("plan")
+    } finally {
+      unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("restores the saved mode when switching sessions via /session", async () => {
+    const plan = makeSession({ id: "sess_plan", mode: "plan", updatedAt: "2025-06-01T10:00:00.000Z" })
+    const build = makeSession({ id: "sess_build", messages: [], updatedAt: "2025-01-01T10:00:00.000Z" })
+    const { frameText, sessionsDir, typeAndSubmit, pressEnter, unmount, projectDir } = setupPersistentMode()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      expect(frameText()).toContain("[Build]")
+
+      saveSession(plan, sessionsDir)
+      saveSession(build, sessionsDir)
+
+      await typeAndSubmit("/session")
+      await until(() => frameText().includes("sess_plan"))
+      await pressEnter()
+      await until(() => frameText().includes("[Plan]"))
+      expect(frameText()).toContain("seed question")
+    } finally {
+      unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("/new resets the mode to build and the fresh session saves build", async () => {
+    const seed = makeSession({ id: "sess_plan", mode: "plan" })
+    const { frameText, typeAndSubmit, readSavedSessions, waitForSessionToContain, unmount, projectDir } =
+      setupPersistentMode({ initialSession: seed })
+    try {
+      await until(() => frameText().includes("seed question"))
+      expect(frameText()).toContain("[Plan]")
+
+      await typeAndSubmit("/new")
+      await until(() => frameText().includes("Started a new session"))
+      expect(frameText()).toContain("[Build]")
+
+      await typeAndSubmit("fresh turn")
+      const freshId = await (async () => {
+        await until(() => Object.keys(readSavedSessions()).some((id) => id !== "sess_plan"))
+        return Object.keys(readSavedSessions()).find((id) => id !== "sess_plan")!
+      })()
+      await waitForSessionToContain(freshId, "fresh turn")
+      expect(readSavedSessions()[freshId]!.mode).toBe("build")
+    } finally {
+      unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("resumes a pre-mode session as build", async () => {
+    const seed = makeSession({ id: "sess_legacy" })
+    const { frameText, typeAndSubmit, readSavedSessions, waitForSessionToContain, unmount, projectDir } =
+      setupPersistentMode({ initialSession: seed })
+    try {
+      await until(() => frameText().includes("seed question"))
+      expect(frameText()).toContain("[Build]")
+
+      await typeAndSubmit("legacy follow up")
+      await waitForSessionToContain("sess_legacy", "legacy follow up")
+      expect(readSavedSessions()["sess_legacy"]!.mode).toBe("build")
+    } finally {
+      unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+})

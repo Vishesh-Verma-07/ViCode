@@ -1,6 +1,7 @@
 import type { z } from "zod"
 import type { ModelListing } from "./provider"
 import type { Skill } from "./skills"
+import type { ModeId } from "./modes"
 
 export type Role = "user" | "assistant" | "system" | "tool"
 
@@ -136,6 +137,7 @@ export interface Session {
   updatedAt: string
   totalTokens: number
   totalCost: number
+  mode?: ModeId
   lastCompaction?: {
     before: Message[]
     summary: string

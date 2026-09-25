@@ -91,6 +91,21 @@ describe("createNewCommand", () => {
     expect(output).toContain("Started a new session")
   })
 
+  it("saves the active session together with its mode so it resumes in the same mode", async () => {
+    const dir = tempDir
+    const active = makeSession({ mode: "plan" })
+    const { context, freshStarts } = createContext({ dir, activeSession: active })
+
+    const output = await createNewCommand().execute([], context)
+
+    expect(freshStarts).toHaveLength(1)
+    expect(output).toContain("Started a new session")
+
+    const saved = loadSession("sess_current", dir)
+    expect(saved).not.toBeNull()
+    expect(saved!.mode).toBe("plan")
+  })
+
   it("starts fresh even when there is no active session yet", async () => {
     const { context, freshStarts } = createContext({ dir: tempDir, activeSession: null })
 

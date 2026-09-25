@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs"
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import {
@@ -75,6 +75,42 @@ describe("saveSession and loadSession", () => {
     expect(loaded!.messages).toHaveLength(1)
     expect(loaded!.totalTokens).toBe(100)
     expect(loaded!.totalCost).toBe(0.005)
+  })
+
+  it("round-trips the session's mode on save and load", () => {
+    const session = makeSession({ id: "sess_plan", mode: "plan" })
+    const sessionsDir = getSessionsDir(tempDir)
+
+    saveSession(session, sessionsDir)
+
+    const loaded = loadSession("sess_plan", sessionsDir)
+    expect(loaded).not.toBeNull()
+    expect(loaded!.mode).toBe("plan")
+  })
+
+  it("resolves a session without a mode field to build on load", () => {
+    const session = makeSession({ id: "sess_old" })
+    const sessionsDir = getSessionsDir(tempDir)
+
+    saveSession(session, sessionsDir)
+
+    const loaded = loadSession("sess_old", sessionsDir)
+    expect(loaded).not.toBeNull()
+    expect(loaded!.mode).toBe("build")
+  })
+
+  it("resolves an invalid stored mode value to build on load", () => {
+    const session = makeSession({ id: "sess_corrupt" })
+    const sessionsDir = getSessionsDir(tempDir)
+    saveSession(session, sessionsDir)
+
+    const filePath = join(sessionsDir, "sess_corrupt.json")
+    const raw = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>
+    writeFileSync(filePath, JSON.stringify({ ...raw, mode: "turbo" }), "utf-8")
+
+    const loaded = loadSession("sess_corrupt", sessionsDir)
+    expect(loaded).not.toBeNull()
+    expect(loaded!.mode).toBe("build")
   })
 
   it("creates the sessions directory if it does not exist", () => {
@@ -180,6 +216,16 @@ describe("createSession", () => {
     expect(session.totalCost).toBe(0)
     expect(new Date(session.createdAt).getTime()).not.toBeNaN()
     expect(new Date(session.updatedAt).getTime()).not.toBeNaN()
+    expect(session.mode).toBe("build")
+  })
+
+  it("creates a new session with an explicit mode", () => {
+    const session = createSession({
+      model: "anthropic/claude-sonnet-4",
+      mode: "discuss",
+    })
+
+    expect(session.mode).toBe("discuss")
   })
 })
 
