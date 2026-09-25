@@ -14,6 +14,8 @@ import { bashTool } from "@/tools/bash"
 import { MAX_TOOL_RESULT_BYTES, VICODE_TRUNCATION_SENTINEL } from "@/core/cap-result"
 import { CONTEXT_BUDGET_RATIO } from "@/core/constants"
 import { project } from "@/core/project-context"
+import { MODES } from "@/core/modes"
+import { allTools } from "@/tools/index"
 
 function byteLength(s: string): number {
   return new TextEncoder().encode(s).length
@@ -1180,6 +1182,129 @@ describe("agent-loop", () => {
 
       expect(result.messages[0]!.content[0]!.type).not.toBe("context-summary")
       expect(result.messages).toHaveLength(4)
+    })
+  })
+
+  describe("mode-gated turns", () => {
+    const planMode = MODES.find((m) => m.id === "plan")!
+
+    function finish() {
+      return { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 }
+    }
+
+    function toolEvents(toolName: string, args: Record<string, unknown>, id: string): StreamEvent[] {
+      return [
+        { type: "tool-call-start", toolCallId: id, toolName },
+        { type: "tool-call-end", toolCallId: id, toolName, args },
+        { type: "finish", usage: finish() },
+      ]
+    }
+
+    function capturingProvider(seen: string[][], calls: StreamEvent[][]): Provider {
+      let index = 0
+      return {
+        async *streamChat(_messages, tools) {
+          seen.push(tools.map((t) => t.name).sort())
+          for (const event of calls[index++] ?? []) {
+            yield event
+          }
+        },
+        async summarize() {
+          return { text: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
+        },
+        getModelInfo() {
+          return { id: "mock", name: "Mock" }
+        },
+        async listModels() {
+          return []
+        },
+      }
+    }
+
+    it("sends plan mode only the read-only triplet and denies writes and bash", async () => {
+      const seen: string[][] = []
+      const provider = capturingProvider(seen, [
+        toolEvents("write_file", { path: "planned.txt", content: "x" }, "c1"),
+        toolEvents("bash", { command: "echo hi" }, "c2"),
+        toolEvents("definitely_not_a_tool", {}, "c3"),
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", usage: finish() },
+        ],
+      ])
+      const results: string[] = []
+      const approvals: string[] = []
+      await runAgentLoop(
+        [userMessage("plan it")],
+        provider,
+        allTools,
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({
+          onToolResult: (_, __, r) => results.push(r),
+          requestApproval: async (name) => {
+            approvals.push(name)
+            return true
+          },
+        }),
+        undefined,
+        planMode,
+      )
+
+      expect(seen.length).toBeGreaterThanOrEqual(3)
+      for (const names of seen) {
+        expect(names).toEqual(["list_files", "read_file", "search"])
+      }
+      expect(results[0]).toContain("denied by mode")
+      expect(results[1]).toContain("denied by mode")
+      expect(results[2]).toContain("Unknown tool")
+      expect(approvals).toEqual([])
+      expect(existsSync(join(realToolsDir, "planned.txt"))).toBe(false)
+    })
+
+    it("denies out-of-boundary writes and bash in discuss mode but allows docs writes and reads", async () => {
+      writeFileSync(join(realToolsDir, "notes.txt"), "hello from notes")
+      const discussMode = MODES.find((m) => m.id === "discuss")!
+      const seen: string[][] = []
+      const provider = capturingProvider(seen, [
+        toolEvents("write_file", { path: "src/notes.ts", content: "export {}" }, "d1"),
+        toolEvents("write_file", { path: "CONTEXT.md", content: "# Updated" }, "d2"),
+        toolEvents("read_file", { path: "notes.txt" }, "d3"),
+        toolEvents("bash", { command: "echo hi" }, "d4"),
+        [
+          { type: "text-delta", text: "done" },
+          { type: "finish", usage: finish() },
+        ],
+      ])
+      const results: string[] = []
+      const approvals: string[] = []
+      await runAgentLoop(
+        [userMessage("discuss docs")],
+        provider,
+        allTools,
+        "system",
+        { projectPath: realToolsDir },
+        createMockCallbacks({
+          onToolResult: (_, __, r) => results.push(r),
+          requestApproval: async (name) => {
+            approvals.push(name)
+            return true
+          },
+        }),
+        undefined,
+        discussMode,
+      )
+
+      expect(results[0]).toContain("denied by mode")
+      expect(existsSync(join(realToolsDir, "src", "notes.ts"))).toBe(false)
+      expect(results[1]).toContain("File written successfully")
+      expect(readFileSync(join(realToolsDir, "CONTEXT.md"), "utf-8")).toBe("# Updated")
+      expect(results[2]).toBe("hello from notes")
+      expect(results[3]).toContain("denied by mode")
+      expect(approvals).toEqual([])
+      for (const names of seen) {
+        expect(names).toEqual(["edit_file", "list_files", "read_file", "search", "write_file"])
+      }
     })
   })
 })

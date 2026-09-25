@@ -3,6 +3,8 @@ import { Box, Text, useInput } from "ink"
 import { COLORS, ICONS, ASCII_BANNER } from "./theme"
 import type { Provider } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
+import type { ModeDefinition } from "../core/modes"
+import { ModeTag } from "./mode-tag"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { CursorText } from "./cursor-text"
 import {
@@ -23,9 +25,11 @@ interface WelcomeScreenProps {
   onResumeSession?: () => void
   hasResumableSession?: boolean
   onSendFirstMessage: (input: string) => void
+  onTab?: () => void
+  mode?: ModeDefinition
 }
 
-export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumableSession, onSendFirstMessage }: WelcomeScreenProps) {
+export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumableSession, onSendFirstMessage, onTab, mode }: WelcomeScreenProps) {
   const [inputValue, setInputValue] = useState("")
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [cursor, setCursor] = useState(0)
@@ -53,6 +57,10 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
   ]
 
   useInput((input, key) => {
+    if (key.tab) {
+      onTab?.()
+      return
+    }
     if (key.upArrow) {
       setSelectedIndex((prev) => Math.max(0, prev - 1))
       return
@@ -125,6 +133,12 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
       <Box flexDirection="column" alignItems="center" marginTop={1} marginBottom={1}>
         <Text color={COLORS.muted}>
           Model: <Text color={COLORS.text} bold>{modelInfo.name}</Text>
+          {mode ? (
+            <Text>
+              {" "}
+              <ModeTag mode={mode} />
+            </Text>
+          ) : null}
         </Text>
       </Box>
 

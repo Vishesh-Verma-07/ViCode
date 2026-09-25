@@ -4,9 +4,14 @@ import { ToolRegistry } from "./tool-registry"
 import { capResult } from "./cap-result"
 import { project, contextBudget } from "./project-context"
 import { compactHistory, needsCompaction } from "./compaction"
+import { selectModeTools, type ModeDefinition } from "./modes"
 import { log } from "../utils/logger"
 
 const DOOM_LOOP_THRESHOLD = 3
+
+function deniedByMode(toolName: string, mode: ModeDefinition, reason: string): string {
+  return `denied by mode: ${toolName} ${reason} in ${mode.name} mode`
+}
 
 export interface AgentLoopCallbacks {
   onTextDelta(text: string): void
@@ -54,6 +59,16 @@ async function executeTool(
   }
 }
 
+function isDeniedByModeGate(
+  mode: ModeDefinition,
+  toolName: string,
+  args: Record<string, unknown>,
+  context: ToolContext,
+): boolean {
+  const gate = mode.toolGate?.[toolName]
+  return gate ? !gate(args, context) : false
+}
+
 function needsApproval(
   tool: ToolDefinition,
   args: Record<string, unknown>,
@@ -71,6 +86,7 @@ export async function runAgentLoop(
   context: ToolContext,
   callbacks: AgentLoopCallbacks,
   abortSignal?: AbortSignal,
+  mode?: ModeDefinition,
 ): Promise<AgentLoopResult> {
   let allMessages = [...messages]
   const toolCallHistory: string[] = []
@@ -79,7 +95,8 @@ export async function runAgentLoop(
   let doomLoopDetected = false
 
   const registry = new ToolRegistry()
-  registry.registerAll(tools)
+  const registeredTools = mode ? selectModeTools(tools, mode.id) : tools
+  registry.registerAll(registeredTools)
 
   while (!abortSignal?.aborted) {
     try {
@@ -123,7 +140,7 @@ export async function runAgentLoop(
 
     try {
       const modelContext = project(allMessages, budget)
-      for await (const event of provider.streamChat(modelContext, tools, systemPrompt, abortSignal)) {
+      for await (const event of provider.streamChat(modelContext, registeredTools, systemPrompt, abortSignal)) {
         if (abortSignal?.aborted) break
 
         //@ts-ignore
@@ -223,7 +240,12 @@ export async function runAgentLoop(
       let result: string
 
       if (!toolDef) {
-        result = `Error: Unknown tool "${tc.toolName}"`
+        const inCatalog = tools.some((t) => t.name === tc.toolName)
+        result = mode && inCatalog
+          ? deniedByMode(tc.toolName, mode, "is not available")
+          : `Error: Unknown tool "${tc.toolName}"`
+      } else if (mode && isDeniedByModeGate(mode, tc.toolName, tc.args, context)) {
+        result = deniedByMode(tc.toolName, mode, "is not allowed on this path")
       } else if (await needsApproval(toolDef, tc.args, context)) {
         const approved = await callbacks.requestApproval(tc.toolName, tc.args)
         if (!approved) {

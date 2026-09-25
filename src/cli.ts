@@ -5,7 +5,6 @@ import { loadConfig, saveApiKeyToGlobalConfig, removeApiKeyFromGlobalConfig } fr
 import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
 import { createOpenRouterProvider } from "./providers/openrouter"
-import { assembleSystemPrompt } from "./core/system-prompt"
 import { allTools } from "./tools"
 import { CommandRegistry } from "./core/command-registry"
 import { createBuiltinCommands } from "./commands"
@@ -67,13 +66,6 @@ const createProvider = (modelId: string, key = apiKey) =>
     model: modelId,
   })
 
-const systemPrompt = assembleSystemPrompt({
-  projectPath,
-  projectPrompt: config.systemPrompt,
-  cliPrompt: undefined,
-  tools: allTools,
-})
-
 const commandRegistry = new CommandRegistry()
 commandRegistry.registerAll(createBuiltinCommands(commandRegistry))
 
@@ -82,7 +74,7 @@ render(
     provider,
     createProvider,
     tools: allTools,
-    systemPrompt,
+    projectPrompt: config.systemPrompt,
     context: { projectPath, sensitivePatterns: config.sensitiveFiles, silentBashCommands: config.silentBashCommands },
     initialSession: initialSession ?? undefined,
     sessionsDir,

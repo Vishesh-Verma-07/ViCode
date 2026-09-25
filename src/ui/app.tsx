@@ -29,7 +29,8 @@ interface AppProps {
   provider: Provider
   createProvider?: (modelId: string, apiKey?: string) => Provider
   tools: ToolDefinition[]
-  systemPrompt: string
+  projectPrompt?: string
+  cliPrompt?: string
   context: ToolContext
   initialSession?: Session
   initialView?: View
@@ -48,7 +49,7 @@ interface KeyEntryRequest {
   requireKey: boolean
 }
 
-export function App({ provider, createProvider, tools, systemPrompt, context, initialSession, initialView, sessionsDir, commands, initialApiKey, onSaveApiKey, onRemoveApiKey }: AppProps) {
+export function App({ provider, createProvider, tools, projectPrompt, cliPrompt, context, initialSession, initialView, sessionsDir, commands, initialApiKey, onSaveApiKey, onRemoveApiKey }: AppProps) {
   const [view, setView] = useState<View>(initialView ?? (initialSession ? "chat" : "home"))
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -109,7 +110,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
     provider,
     createProvider,
     tools,
-    systemPrompt,
+    projectPrompt,
+    cliPrompt,
     context,
     initialSession,
     sessionsDir,
@@ -251,6 +253,8 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           onNewChat={session.startNewSession}
           onResumeSession={() => setView("chat")}
           hasResumableSession={!!initialSession}
+          onTab={session.cycleMode}
+          mode={session.activeModeDefinition}
           onSendFirstMessage={(text) => {
             drafting.setInputValue(text)
             setView("chat")
@@ -296,6 +300,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           onInputChange={drafting.handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
           modelName={session.providerState.getModelInfo().name}
+          onTab={session.cycleMode}
         />
         <UsagePanel
           width={sidebarWidth}
@@ -306,7 +311,7 @@ export function App({ provider, createProvider, tools, systemPrompt, context, in
           status={session.turnStatus}
         />
       </Box>
-      <StatusBar usage={session.usage} model={session.providerState.getModelInfo().name} status={session.turnStatus} />
+      <StatusBar usage={session.usage} model={session.providerState.getModelInfo().name} status={session.turnStatus} mode={session.activeModeDefinition} />
       {drafting.pickerRequest && (
         <Picker
           title={drafting.pickerRequest.title}

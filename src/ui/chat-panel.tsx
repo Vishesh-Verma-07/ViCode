@@ -28,6 +28,7 @@ interface ChatPanelProps {
   onInputChange?: (value: string) => void
   suggestion?: CommandSuggestionProps
   modelName?: string
+  onTab?: () => void
 }
 
 export const CHAT_CHROME_LINES = 6
@@ -66,7 +67,7 @@ function commandFromArgs(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName }: ChatPanelProps) {
+export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName, onTab }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
   useInput((_input, key) => {
@@ -367,6 +368,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           placeholder={isStreaming ? "Responding..." : "Type your message..."}
           isDisabled={inputDisabled}
           onChange={onInputChange ?? (() => {})}
+          onTab={onTab}
         />
       </Box>
     </Box>

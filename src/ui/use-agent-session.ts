@@ -4,6 +4,8 @@ import type { Command, CommandContext, Message, PickerRequest, ToolContext, Tool
 import type { Session } from "../core/session"
 import type { Provider, TokenUsage } from "../core/provider"
 import { runAgentLoop } from "../core/agent-loop"
+import { assembleSystemPrompt } from "../core/system-prompt"
+import { DEFAULT_MODE, MODES, cycleMode as cycleModeId, findMode, selectModeTools, type ModeDefinition, type ModeId } from "../core/modes"
 import { compactHistory } from "../core/compaction"
 import { CommandRegistry } from "../core/command-registry"
 import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
@@ -32,7 +34,8 @@ export interface UseAgentSessionArgs {
   provider: Provider
   createProvider?: (modelId: string, apiKey?: string) => Provider
   tools: ToolDefinition[]
-  systemPrompt: string
+  projectPrompt?: string
+  cliPrompt?: string
   context: ToolContext
   initialSession?: Session
   sessionsDir?: string
@@ -63,6 +66,9 @@ export interface AgentSession {
   showExitSummary: boolean
   feedbackEntries: FeedbackEntry[]
   activeSkills: string[]
+  activeMode: ModeId
+  activeModeDefinition: ModeDefinition
+  cycleMode: () => void
   handleSend: (input: string) => Promise<void>
   startNewSession: () => void
   performExit: () => Promise<void>
@@ -81,7 +87,8 @@ export function useAgentSession({
   provider,
   createProvider,
   tools,
-  systemPrompt,
+  projectPrompt,
+  cliPrompt,
   context,
   initialSession,
   sessionsDir,
@@ -110,6 +117,11 @@ export function useAgentSession({
   const [showExitSummary, setShowExitSummary] = useState(false)
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([])
   const [activeSkills, setActiveSkills] = useState<string[]>([])
+  const [activeMode, setActiveMode] = useState<ModeId>(DEFAULT_MODE)
+  const activeModeDefinition: ModeDefinition = findMode(activeMode) ?? MODES[0]!
+  const cycleMode = useCallback(() => {
+    setActiveMode((prev) => cycleModeId(prev))
+  }, [])
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
   const providerRef = useRef<Provider>(provider)
@@ -200,6 +212,8 @@ export function useAgentSession({
   const handleSend = useCallback(
     async (input: string) => {
       if (!input.trim()) return
+
+      const turnMode = activeModeDefinition
 
       if (view === "home") {
         enterChat()
@@ -366,9 +380,14 @@ export function useAgentSession({
 
       const turn = (async () => {
         try {
-          const effectiveSystemPrompt = `${systemPrompt}\n\n${activeSkills.filter(
-            (s) => s,
-          ).join("\n\n")}`
+          const modePrompt = assembleSystemPrompt({
+            projectPath: context.projectPath,
+            projectPrompt,
+            cliPrompt,
+            skillPrompts: activeSkills,
+            tools: selectModeTools(tools, turnMode.id),
+          })
+          const effectiveSystemPrompt = `${modePrompt}\n\n${turnMode.promptLayer}`
           const result = await runAgentLoop(
             [...messages, userMsg],
             providerRef.current,
@@ -453,6 +472,7 @@ export function useAgentSession({
               },
             },
             controller.signal,
+            turnMode,
           )
 
           log(result)
@@ -503,7 +523,7 @@ export function useAgentSession({
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, providerState, createProvider, tools, systemPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, view, enterChat, enterHome, resetDraft, clearSessionState, ensureKey, openKeyEntry],
+    [messages, providerState, createProvider, tools, projectPrompt, cliPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, activeMode, view, enterChat, enterHome, resetDraft, clearSessionState, ensureKey, openKeyEntry],
   )
 
   return {
@@ -520,6 +540,9 @@ export function useAgentSession({
     showExitSummary,
     feedbackEntries,
     activeSkills,
+    activeMode,
+    activeModeDefinition,
+    cycleMode,
     handleSend,
     startNewSession,
     performExit,

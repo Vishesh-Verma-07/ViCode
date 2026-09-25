@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test"
 import { join } from "path"
-import { DEFAULT_MODE, MODES, cycleMode, resolveModeTools, isDocsBoundaryPath, type ModeId } from "@/core/modes"
+import { z } from "zod"
+import { DEFAULT_MODE, MODES, cycleMode, resolveModeTools, isDocsBoundaryPath, selectModeTools, findMode, type ModeId } from "@/core/modes"
+import type { ToolDefinition } from "@/core/types"
 import { allTools, readOnlyTools, writeTools } from "@/tools/index"
 import { COLORS } from "@/ui/theme"
 
@@ -61,6 +63,56 @@ describe("mode registry", () => {
     expect(colors.build).toBe("blue")
     expect(colors.discuss).toBe("purple")
     expect(colors.plan).toBe("orange")
+  })
+})
+
+describe("selectModeTools", () => {
+  const customTool: ToolDefinition = {
+    name: "stamp_tool",
+    description: "Stamp a marker",
+    parameters: z.object({}),
+    execute: async () => "stamped",
+    dangerous: false,
+  }
+  const customCatalog = [...allTools, customTool]
+
+  it("keeps the caller's whole catalog in build mode, custom tools included", () => {
+    const selected = selectModeTools(customCatalog, "build")
+    expect(selected.map((t) => t.name).sort()).toEqual(
+      [...allTools.map((t) => t.name), "stamp_tool"].sort(),
+    )
+  })
+
+  it("narrows the catalog to the read-only triplet in plan mode", () => {
+    const selected = selectModeTools(customCatalog, "plan")
+    expect(selected.map((t) => t.name).sort()).toEqual(["list_files", "read_file", "search"])
+  })
+
+  it("narrows the catalog to reads plus docs-safe writes in discuss mode", () => {
+    const selected = selectModeTools(customCatalog, "discuss")
+    expect(selected.map((t) => t.name).sort()).toEqual(
+      ["edit_file", "list_files", "read_file", "search", "write_file"],
+    )
+  })
+
+  it("agrees with resolveModeTools for the built-in catalog", () => {
+    for (const mode of ["build", "discuss", "plan"] as const) {
+      const selected = selectModeTools(allTools, mode)
+      expect(selected.map((t) => t.name).sort()).toEqual(
+        resolveModeTools(mode).map((t) => t.name).sort(),
+      )
+    }
+  })
+})
+
+describe("findMode", () => {
+  it("returns the definition for a known mode id", () => {
+    expect(findMode("discuss")?.name).toBe("Discuss")
+    expect(findMode("plan")?.promptLayer).toContain("plan mode")
+  })
+
+  it("returns undefined for an unknown mode id", () => {
+    expect(findMode("unknown" as ModeId)).toBeUndefined()
   })
 })
 

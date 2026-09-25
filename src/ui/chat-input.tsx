@@ -15,7 +15,7 @@ import {
   type CursorState,
 } from "./cursor-edit"
 
-export function ChatInput({ value, placeholder, isDisabled, onChange }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string) => void }) {
+export function ChatInput({ value, placeholder, isDisabled, onChange, onTab }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string) => void; onTab?: () => void }) {
   const filterStateRef = useRef<MouseInputFilterState>(MOUSE_INPUT_FILTER_INITIAL)
   const valueRef = useRef(value)
   const ownValueRef = useRef(value)
@@ -42,6 +42,10 @@ export function ChatInput({ value, placeholder, isDisabled, onChange }: { value:
 
   useInput((input, key) => {
     if (isDisabled) return
+    if (key.tab) {
+      onTab?.()
+      return
+    }
     if (
       key.return ||
       key.upArrow ||

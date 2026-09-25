@@ -1,6 +1,6 @@
 import React from "react"
 import { describe, it, expect } from "bun:test"
-import { mkdtempSync, existsSync, readFileSync, readdirSync, rmSync } from "fs"
+import { mkdtempSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { EventEmitter } from "events"
@@ -20,6 +20,8 @@ import { saveSession, loadSession, type Session } from "@/core/session"
 import type { Command, Message, ToolDefinition } from "@/core/types"
 import type { Provider, StreamEvent, ModelListing } from "@/core/provider"
 import { z } from "zod"
+import { allTools } from "@/tools/index"
+import { createSkillCommand } from "@/commands/skill"
 
 function until(condition: () => boolean, timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -162,7 +164,6 @@ describe("App command interception", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         initialApiKey="test-key"
         sessionsDir={sessionsDir}
@@ -263,7 +264,6 @@ describe("App command suggestion dropdown", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/suggestion-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -454,7 +454,6 @@ describe("App inline chip rendering", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/chips-test" }}
         initialApiKey="test-key"
         initialSession={makeChipSession()}
@@ -478,7 +477,6 @@ describe("App inline chip rendering", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/chips-test" }}
         initialApiKey="test-key"
         initialSession={makeChipSession()}
@@ -540,7 +538,6 @@ describe("App session switcher", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         initialApiKey="test-key"
         sessionsDir={sessionsDir}
@@ -715,7 +712,6 @@ describe("App model switcher", () => {
         provider={provider}
         createProvider={createProvider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         initialApiKey="test-key"
         sessionsDir={sessionsDir}
@@ -923,7 +919,6 @@ describe("App /new command", () => {
       <App
         provider={provider}
         tools={[stampTool]}
-        systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         initialApiKey="test-key"
         initialSession={seedSession}
@@ -1048,7 +1043,6 @@ describe("App /exit command", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: join(sessionsDir, "project") }}
         initialApiKey="test-key"
         initialSession={seedSession}
@@ -1163,7 +1157,6 @@ describe("App streaming guard for commands", () => {
       <App
         provider={hangingProvider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/guard-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -1217,7 +1210,6 @@ describe("App status bar indicator", () => {
       <App
         provider={provider}
         tools={tools}
-        systemPrompt=""
         context={{ projectPath: "/tmp/status-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -1748,7 +1740,6 @@ describe("App chat scrolling", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/scroll-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -1872,7 +1863,6 @@ describe("App fenced code block rendering", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/code-block-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -1942,7 +1932,6 @@ describe("App mouse wheel scrolling", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/wheel-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -2017,7 +2006,6 @@ describe("Inline tool bubbles in chat", () => {
       <App
         provider={provider}
         tools={tools}
-        systemPrompt=""
         context={{ projectPath: "/tmp/bubble-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -2281,7 +2269,6 @@ describe("Usage panel", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/usage-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -2343,7 +2330,7 @@ describe("Usage panel", () => {
     }
   }, 30000)
 
-  it("ignores the Tab key entirely", async () => {
+  it("does not surface the diffs picker on Tab", async () => {
     const { frameText, stdin, anyFrameContaining, unmount } = setupUsage(createStubProvider([]))
     try {
       await until(() => anyFrameContaining("Type your message"))
@@ -2371,7 +2358,6 @@ describe("Error surfacing", () => {
       <App
         provider={failingProvider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/err-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -2402,7 +2388,6 @@ describe("Chat input mouse-byte immunity", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/x10-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -2503,7 +2488,6 @@ describe("Chat input mouse-byte immunity", () => {
         <App
           provider={provider}
           tools={[]}
-          systemPrompt=""
           context={{ projectPath: "/tmp/wheel-click-test" }}
           initialApiKey="test-key"
           initialView="chat"
@@ -2556,7 +2540,6 @@ describe("ChatInput word deletion", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/wdel-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -2641,7 +2624,6 @@ describe("App Input History recall", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/history-recall-test" }}
         initialApiKey="test-key"
         initialView={overrides?.initialView ?? "chat"}
@@ -2887,7 +2869,6 @@ describe("App Input History lifecycle", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/history-lifecycle-test" }}
         initialApiKey="test-key"
         initialView={opts?.initialView ?? "chat"}
@@ -3117,7 +3098,6 @@ describe("App Command Suggestion gating for recall", () => {
       <App
         provider={createStubProvider(capturedMessages)}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/suggestion-gating-test" }}
         initialApiKey="test-key"
         initialView="chat"
@@ -3279,7 +3259,6 @@ describe("App welcome-first flow", () => {
       <App
         provider={provider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/welcome-test" }}
         initialApiKey="test-key"
         commands={createCommands()}
@@ -3358,7 +3337,6 @@ describe("Welcome screen mouse-byte immunity", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/welcome-mouse-test" }}
         initialApiKey="test-key"
         commands={createTestCommands()}
@@ -3425,7 +3403,6 @@ describe("Welcome screen New Chat", () => {
       <App
         provider={createStubProvider(capturedMessages)}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/welcome-new-test" }}
         initialApiKey="test-key"
         initialSession={seed}
@@ -3466,7 +3443,6 @@ describe("Welcome screen word deletion", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/welcome-wdel-test" }}
         initialApiKey="test-key"
         commands={createTestCommands()}
@@ -3524,7 +3500,6 @@ describe("Welcome screen cursor-aware editing (whole-App seam)", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/welcome-cursor-seam-test" }}
         initialApiKey="test-key"
         commands={createTestCommands()}
@@ -3712,7 +3687,6 @@ describe("API key entry flow", () => {
         provider={initial}
         createProvider={createProvider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/key-flow-test" }}
         initialView="chat"
         commands={[...createTestCommands(), createKeyCommand()]}
@@ -3754,7 +3728,6 @@ describe("API key entry flow", () => {
       <App
         provider={createStubProvider(captured)}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/key-cmd-test" }}
         initialView="chat"
         commands={[...createTestCommands(), createKeyCommand()]}
@@ -3802,7 +3775,6 @@ describe("API key entry flow", () => {
         provider={initial}
         createProvider={createProvider}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/key-remove-test" }}
         initialView="chat"
         initialApiKey="test-key"
@@ -3837,7 +3809,6 @@ describe("API key entry flow", () => {
       <App
         provider={createStubProvider([])}
         tools={[]}
-        systemPrompt=""
         context={{ projectPath: "/tmp/key-center-test" }}
         initialView="chat"
         commands={[...createTestCommands(), createKeyCommand()]}
@@ -3872,6 +3843,155 @@ describe("API key entry flow", () => {
       expect(lines[titleRow]!.indexOf("OpenRouter API key")).toBeGreaterThan(3)
     } finally {
       instance.unmount()
+    }
+  }, 30000)
+})
+
+describe("Mode switching via Tab", () => {
+  function setupModeSwitching(initialView: "home" | "chat" = "chat") {
+    const projectDir = mkdtempSync(join(tmpdir(), "vicode-mode-"))
+    mkdirSync(join(projectDir, ".vicode", "skills"), { recursive: true })
+    writeFileSync(
+      join(projectDir, ".vicode", "skills", "review-ritual.md"),
+      "# Review Ritual\n\nAlways run the full suite before committing.",
+    )
+    const seen: Array<{ tools: string[]; prompt: string }> = []
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, tools, systemPrompt) {
+        seen.push({ tools: tools.map((t) => t.name).sort(), prompt: systemPrompt })
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+    const registry = new CommandRegistry()
+    registry.register(createSkillCommand())
+    const instance = render(
+      <App
+        provider={provider}
+        tools={allTools}
+        context={{ projectPath: projectDir }}
+        initialApiKey="test-key"
+        initialView={initialView}
+        commands={registry.getAll()}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    async function pressTab(): Promise<void> {
+      instance.stdin.write("\t")
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    async function pressEnter(): Promise<void> {
+      instance.stdin.write("\r")
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    }
+    return { instance, seen, frameText, projectDir, typeAndSubmit, pressTab, pressEnter }
+  }
+
+  it("cycles build → discuss → plan and scopes the next submitted turn's tools and prompt", async () => {
+    const { instance, seen, frameText, projectDir, typeAndSubmit, pressTab } = setupModeSwitching()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("first turn as build")
+      await until(() => seen.length === 1)
+      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "write_file"])
+      expect(seen[0]!.prompt).toContain("build mode")
+
+      await typeAndSubmit("/skill")
+      await until(() => frameText().includes("Review Ritual"))
+      for (let i = 0; i < 40 && !frameText().includes("Activated skill: Review Ritual"); i++) {
+        instance.stdin.write("\r")
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      expect(frameText()).toContain("Activated skill: Review Ritual")
+
+      await pressTab()
+      await pressTab()
+      await typeAndSubmit("plan this")
+      await until(() => seen.length === 2)
+      expect(seen[1]!.tools).toEqual(["list_files", "read_file", "search"])
+      expect(seen[1]!.prompt).toContain("plan mode")
+      expect(seen[1]!.prompt).not.toContain("write_file")
+      expect(seen[1]!.prompt).not.toContain("edit_file")
+      expect(seen[1]!.prompt).not.toContain("bash")
+      expect(seen[1]!.prompt).toContain("# Review Ritual")
+      expect(seen[1]!.prompt).toContain("Always run the full suite before committing")
+      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "write_file"])
+
+      await pressTab()
+      await typeAndSubmit("build again")
+      await until(() => seen.length === 3)
+      expect(seen[2]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "write_file"])
+      expect(seen[2]!.prompt).toContain("build mode")
+      expect(seen[2]!.prompt).toContain("# Review Ritual")
+    } finally {
+      instance.unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("cycles mode from the welcome screen's first-message box", async () => {
+    const { instance, seen, frameText, projectDir, typeAndSubmit, pressTab } = setupModeSwitching("home")
+    try {
+      await until(() => frameText().includes("Ask anything or select an option"))
+
+      await pressTab()
+
+      await typeAndSubmit("hello from welcome")
+      await until(() => seen.length === 1)
+      expect(seen[0]!.tools).toEqual(["edit_file", "list_files", "read_file", "search", "write_file"])
+      expect(seen[0]!.prompt).toContain("discuss mode")
+    } finally {
+      instance.unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("renders the active mode in the status bar immediately on each Tab", async () => {
+    const { instance, frameText, projectDir, pressTab } = setupModeSwitching()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      expect(frameText()).toContain("[Build]")
+
+      await pressTab()
+      await until(() => frameText().includes("[Discuss]"))
+
+      await pressTab()
+      await until(() => frameText().includes("[Plan]"))
+
+      await pressTab()
+      await until(() => frameText().includes("[Build]"))
+    } finally {
+      instance.unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("renders the active mode on the welcome screen immediately on each Tab", async () => {
+    const { instance, frameText, projectDir, pressTab } = setupModeSwitching("home")
+    try {
+      await until(() => frameText().includes("Ask anything or select an option"))
+      expect(frameText()).toContain("[Build]")
+
+      await pressTab()
+      await until(() => frameText().includes("[Discuss]"))
+
+      await pressTab()
+      await until(() => frameText().includes("[Plan]"))
+    } finally {
+      instance.unmount()
+      rmSync(projectDir, { recursive: true, force: true })
     }
   }, 30000)
 })

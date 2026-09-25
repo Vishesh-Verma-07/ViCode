@@ -13,6 +13,7 @@ Think of it as a Claude Code / OpenCode-style assistant that runs on Bun, stream
 - **Approval-based safety** — sensitive files (`.env*`, keys, credential stores, `.ssh/**`) are protected from reads and require approval for writes/edits; bash commands outside the Bash Allowlist pause for your approval
 - **Doom-loop detection** — repeated identical tool calls are detected and stopped automatically
 - **Slash commands** — `/help`, `/model`, `/skill`, `/session`, `/new`, `/exit` with command suggestions as you type
+- **Active Mode** — press `Tab` to cycle build / discuss / plan; each mode scopes which tools the model sees and applies its own system-prompt layer, taking effect on your next message
 - **Skills** — activate Markdown skill files that are injected as extra system-prompt layers
 - **Session persistence** — conversations auto-save as JSON per project and can be resumed via `/session`
 - **Token & cost tracking** — live usage in the status bar and a full session summary on exit
@@ -173,6 +174,7 @@ Once running, just type a message. The agent reads files, searches your code, ed
 
 | Key | Action |
 |---|---|
+| `Tab` | Cycle Active Mode (build → discuss → plan) |
 | `Esc` | Cancel the in-progress LLM response |
 | `y` / `n` | Approve / reject a pending tool call |
 | `Ctrl+C` | Show the session summary and exit |
