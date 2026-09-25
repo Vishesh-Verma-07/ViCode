@@ -81,6 +81,10 @@ function normalizeFrame(lastFrame: () => string | undefined): () => string {
       .replace(/\s+/g, " ")
 }
 
+function frameLines(lastFrame: () => string | undefined): string[] {
+  return (lastFrame() ?? "").split("\n").map((l) => l.replace(/\u001B\[[0-9;]*m/g, ""))
+}
+
 describe("extractDiff", () => {
   it("returns result as-is when no diff markers present", () => {
     const result = "File edited successfully: app.ts"
@@ -3848,7 +3852,7 @@ describe("API key entry flow", () => {
 })
 
 describe("Mode switching via Tab", () => {
-  function setupModeSwitching(initialView: "home" | "chat" = "chat") {
+  function setupModeSwitching(initialView: "home" | "chat" = "chat", providerOverride?: Provider) {
     const projectDir = mkdtempSync(join(tmpdir(), "vicode-mode-"))
     mkdirSync(join(projectDir, ".vicode", "skills"), { recursive: true })
     writeFileSync(
@@ -3856,7 +3860,7 @@ describe("Mode switching via Tab", () => {
       "# Review Ritual\n\nAlways run the full suite before committing.",
     )
     const seen: Array<{ tools: string[]; prompt: string }> = []
-    const provider: Provider = {
+    const defaultProvider: Provider = {
       getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
       async listModels() {
         return []
@@ -3866,6 +3870,7 @@ describe("Mode switching via Tab", () => {
         yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
       },
     }
+    const provider = providerOverride ?? defaultProvider
     const registry = new CommandRegistry()
     registry.register(createSkillCommand())
     const instance = render(
@@ -3958,17 +3963,21 @@ describe("Mode switching via Tab", () => {
     }
   }, 30000)
 
-  it("renders the active mode in the status bar immediately on each Tab", async () => {
+  it("renders the active Mode Tag in the chat input box on each Tab, and never in the status bar", async () => {
     const { instance, frameText, projectDir, pressTab } = setupModeSwitching()
+    const statusLine = () => frameLines(instance.lastFrame).findLast((l) => l.includes("Tokens:")) ?? ""
     try {
       await until(() => frameText().includes("Type your message"))
       expect(frameText()).toContain("[Build]")
+      expect(statusLine()).not.toContain("[Build]")
 
       await pressTab()
       await until(() => frameText().includes("[Discuss]"))
+      expect(statusLine()).not.toContain("[Discuss]")
 
       await pressTab()
       await until(() => frameText().includes("[Plan]"))
+      expect(statusLine()).not.toContain("[Plan]")
 
       await pressTab()
       await until(() => frameText().includes("[Build]"))
@@ -3978,17 +3987,63 @@ describe("Mode switching via Tab", () => {
     }
   }, 30000)
 
-  it("renders the active mode on the welcome screen immediately on each Tab", async () => {
-    const { instance, frameText, projectDir, pressTab } = setupModeSwitching("home")
+  it("cycles the Mode Tag on a Tab mid-turn without interrupting the running turn, and applies from the next input", async () => {
+    const seen: Array<{ tools: string[] }> = []
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, tools) {
+        seen.push({ tools: tools.map((t) => t.name).sort() })
+        yield { type: "text-delta", text: "partial reply" }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } }
+      },
+    }
+    const { instance, frameText, projectDir, typeAndSubmit, pressTab } = setupModeSwitching("chat", provider)
     try {
-      await until(() => frameText().includes("Ask anything or select an option"))
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("start a turn")
+      await until(() => frameText().includes("partial reply"))
+      expect(seen).toHaveLength(1)
+      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "write_file"])
       expect(frameText()).toContain("[Build]")
 
       await pressTab()
       await until(() => frameText().includes("[Discuss]"))
 
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+
+      expect(seen).toHaveLength(1)
+      expect(frameText()).toContain("[Discuss]")
+
+      await typeAndSubmit("next turn")
+      await until(() => seen.length === 2)
+      expect(seen[1]!.tools).toEqual(["edit_file", "list_files", "read_file", "search", "write_file"])
+    } finally {
+      instance.unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 15000)
+
+  it("renders the active Mode Tag inside the welcome first-message box, and not in the model line", async () => {
+    const { instance, frameText, projectDir, pressTab } = setupModeSwitching("home")
+    const modelLine = () =>
+      frameLines(instance.lastFrame).find((l) => l.includes("Model:")) ?? ""
+    try {
+      await until(() => frameText().includes("Ask anything or select an option"))
+      expect(frameText()).toContain("[Build]")
+      expect(modelLine()).not.toContain("[Build]")
+
+      await pressTab()
+      await until(() => frameText().includes("[Discuss]"))
+      expect(modelLine()).not.toContain("[Discuss]")
+
       await pressTab()
       await until(() => frameText().includes("[Plan]"))
+      expect(modelLine()).not.toContain("[Plan]")
     } finally {
       instance.unmount()
       rmSync(projectDir, { recursive: true, force: true })

@@ -4,6 +4,7 @@ import { renderToString } from "ink"
 import { render } from "ink-testing-library"
 import { WelcomeScreen } from "@/ui/welcome"
 import { COLORS } from "@/ui/theme"
+import { findMode } from "@/core/modes"
 import { ansiCode } from "@/ui/ansi-test"
 import type { Provider } from "@/core/provider"
 
@@ -64,5 +65,24 @@ describe("WelcomeScreen banner colorization", () => {
     const leadingSpaces = line.length - line.trimStart().length
     expect(leadingSpaces).toBeGreaterThan(2)
     expect(line.length).toBeLessThan(120)
+  })
+})
+
+describe("WelcomeScreen mode indicator", () => {
+  it("shows the Mode Tag inside the first-message box, not beside the model line", () => {
+    const frame = renderToString(
+      <WelcomeScreen
+        provider={provider}
+        onNewChat={() => {}}
+        onSendFirstMessage={() => {}}
+        mode={findMode("build")!}
+      />,
+      { columns: 100 },
+    )
+    const clean = (s: string) => s.replace(/\u001B\[[0-9;]*m/g, "")
+    const modelLine = frame.split("\n").map(clean).find((l) => l.includes("Model:")) ?? ""
+    expect(modelLine).not.toContain("[Build]")
+
+    expect(clean(frame)).toContain("[Build]")
   })
 })

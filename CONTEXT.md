@@ -134,7 +134,10 @@ A region of the TUI separated from its neighbours by a background shade rather t
 The color painted behind the entire TUI — applied via a background token on the root container, filling every panel and overlay. Any gaps between Surfaces show App Background.
 
 **Input Box**:
-The text-entry region rendered as a borderless box with a raised background shade (`inputShade`), distinct from surrounding surfaces purely by its lighter background. Covers both the Welcome Screen's first-message box and the Chat window's full-width input strip.
+The text-entry region rendered as a borderless box with a raised background shade (`inputShade`), distinct from surrounding surfaces purely by its lighter background. The active Mode is indicated inside it as a colored left-edge bar plus a Mode Tag, rendered from the Design Token palette; the rest of its styling (background shade, cursor) is untouched. Covers both the Welcome Screen's first-message box and the Chat window's full-width input strip.
+
+**Mode Tag**:
+The colored `[Build]`-style label plus left-edge bar rendered inside an Input Box from the Mode's Design Token color (build blue, discuss purple, plan orange), marking the active Mode. Updating it on a Tab cycle is immediate and never interrupts a running Turn. Distinct from an Inline Chip, which marks inline code inside prose.
 
 **Cursor**:
 The movable insertion position inside an Input Box draft, rendered as a block (an inverse space) between the text halves. Moved one grapheme cluster at a time by Left/Right arrow keys, or jumped to the start/end with Home/End. Every edit operation acts at it rather than at the string end.

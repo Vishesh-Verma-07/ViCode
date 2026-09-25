@@ -3,8 +3,6 @@ import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
 import { COLORS, ICONS } from "./theme"
 import type { TokenUsage } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
-import type { ModeDefinition } from "../core/modes"
-import { ModeTag } from "./mode-tag"
 
 export type TurnStatus =
   | { kind: "idle" }
@@ -29,10 +27,9 @@ interface StatusBarProps {
   usage: TokenUsage
   model: string
   status: TurnStatus
-  mode?: ModeDefinition
 }
 
-export function StatusBar({ usage, model, status, mode }: StatusBarProps) {
+export function StatusBar({ usage, model, status }: StatusBarProps) {
   return (
     <Box
       justifyContent="space-between"
@@ -42,7 +39,6 @@ export function StatusBar({ usage, model, status, mode }: StatusBarProps) {
     >
       <Box gap={2}>
         <Text color={COLORS.primary} bold>{ICONS.logo}</Text>
-        {mode && <ModeTag mode={mode} />}
         <Text color={COLORS.muted}>
           {model}
         </Text>

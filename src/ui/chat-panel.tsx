@@ -10,6 +10,8 @@ import { DiffView } from "./diff-view"
 import { CommandSuggestion, type CommandSuggestionProps } from "./command-suggestion"
 import { FeedbackLine, type FeedbackEntry } from "./feedback-line"
 import { ChatInput } from "./chat-input"
+import { ModeInputBox } from "./mode-input-box"
+import type { ModeDefinition } from "../core/modes"
 import { extractDiff } from "./format"
 
 interface ChatPanelProps {
@@ -28,6 +30,7 @@ interface ChatPanelProps {
   onInputChange?: (value: string) => void
   suggestion?: CommandSuggestionProps
   modelName?: string
+  mode?: ModeDefinition
   onTab?: () => void
 }
 
@@ -67,7 +70,7 @@ function commandFromArgs(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName, onTab }: ChatPanelProps) {
+export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName, mode, onTab }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
   useInput((_input, key) => {
@@ -362,7 +365,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           />
         </Box>
       )}
-      <Box backgroundColor={COLORS.inputShade} marginTop={1} paddingX={2} paddingY={1}>
+      <ModeInputBox mode={mode} marginTop={1}>
         <ChatInput
           value={inputValue}
           placeholder={isStreaming ? "Responding..." : "Type your message..."}
@@ -370,7 +373,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           onChange={onInputChange ?? (() => {})}
           onTab={onTab}
         />
-      </Box>
+      </ModeInputBox>
     </Box>
   )
 }

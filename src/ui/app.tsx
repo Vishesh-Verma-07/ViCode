@@ -300,6 +300,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           onInputChange={drafting.handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
           modelName={session.providerState.getModelInfo().name}
+          mode={session.activeModeDefinition}
           onTab={session.cycleMode}
         />
         <UsagePanel
@@ -311,7 +312,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           status={session.turnStatus}
         />
       </Box>
-      <StatusBar usage={session.usage} model={session.providerState.getModelInfo().name} status={session.turnStatus} mode={session.activeModeDefinition} />
+      <StatusBar usage={session.usage} model={session.providerState.getModelInfo().name} status={session.turnStatus} />
       {drafting.pickerRequest && (
         <Picker
           title={drafting.pickerRequest.title}

@@ -4,7 +4,7 @@ import { COLORS, ICONS, ASCII_BANNER } from "./theme"
 import type { Provider } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import type { ModeDefinition } from "../core/modes"
-import { ModeTag } from "./mode-tag"
+import { ModeInputBox } from "./mode-input-box"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { CursorText } from "./cursor-text"
 import {
@@ -133,12 +133,6 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
       <Box flexDirection="column" alignItems="center" marginTop={1} marginBottom={1}>
         <Text color={COLORS.muted}>
           Model: <Text color={COLORS.text} bold>{modelInfo.name}</Text>
-          {mode ? (
-            <Text>
-              {" "}
-              <ModeTag mode={mode} />
-            </Text>
-          ) : null}
         </Text>
       </Box>
 
@@ -164,15 +158,15 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
         })}
       </Box>
 
-      <Box marginTop={2} width={50} flexDirection="column">
-        <Box backgroundColor={COLORS.inputShade} paddingX={2} paddingY={1}>
+      <Box marginTop={1} width={50} flexDirection="column">
+        <ModeInputBox mode={mode}>
           <CursorText
             value={inputValue}
             cursor={cursor}
             placeholder="Ask anything or select an option..."
             placeholderItalic
           />
-        </Box>
+        </ModeInputBox>
       </Box>
 
       <Box marginTop={1}>

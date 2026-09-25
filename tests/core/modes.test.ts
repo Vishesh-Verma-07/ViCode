@@ -61,8 +61,8 @@ describe("mode registry", () => {
       plan: COLORS.modePlan,
     }
     expect(colors.build).toBe("blue")
-    expect(colors.discuss).toBe("purple")
-    expect(colors.plan).toBe("orange")
+    expect(colors.discuss).toBe("#a855f7")
+    expect(colors.plan).toBe("#f97316")
   })
 })
 
