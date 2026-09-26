@@ -52,7 +52,7 @@ const config = loadConfig({
 
 const apiKey: string = config.apiKey ?? ""
 
-const model = config.model ?? "deepseek/deepseek-v4-flash-0731:free"
+const model = config.model ?? "nvidia/nemotron-3-ultra-550b-a55b:free"
 log("component mounted ", model);
 
 const provider = createOpenRouterProvider({
