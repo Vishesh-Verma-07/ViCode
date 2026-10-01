@@ -5,6 +5,7 @@ import type { Provider } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import type { ModeDefinition } from "../core/modes"
 import { ModeInputBox } from "./mode-input-box"
+import { ProjectRootPath } from "./project-root-path"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { CursorText } from "./cursor-text"
 import {
@@ -27,9 +28,10 @@ interface WelcomeScreenProps {
   onSendFirstMessage: (input: string) => void
   onTab?: () => void
   mode?: ModeDefinition
+  projectRoot?: string
 }
 
-export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumableSession, onSendFirstMessage, onTab, mode }: WelcomeScreenProps) {
+export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumableSession, onSendFirstMessage, onTab, mode, projectRoot }: WelcomeScreenProps) {
   const [inputValue, setInputValue] = useState("")
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [cursor, setCursor] = useState(0)
@@ -118,61 +120,70 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
   })
 
   return (
-    <Box flexDirection="column" alignItems="center" justifyContent="center" height="100%" paddingX={2}>
-      <Box flexDirection="column" alignItems="center" marginBottom={1}>
-        <Text color={COLORS.primary} bold>
-          {ASCII_BANNER}
-        </Text>
-        <Box marginTop={1}>
-          <Text color={COLORS.muted}>
-            {ICONS.sparkle} AI-Powered Coding Assistant made by vishesh verma {ICONS.sparkle}
+    <Box flexDirection="column" height="100%" paddingX={2}>
+      <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1} flexShrink={1} overflow="hidden">
+        <Box flexDirection="column" alignItems="center" marginBottom={1}>
+          <Text color={COLORS.primary} bold>
+            {ASCII_BANNER}
           </Text>
+          <Box marginTop={1}>
+            <Text color={COLORS.muted}>
+              {ICONS.sparkle} AI-Powered Coding Assistant made by vishesh verma {ICONS.sparkle}
+            </Text>
+          </Box>
+        </Box>
+
+        <Box flexDirection="column" alignItems="center" marginTop={1} marginBottom={1}>
+          <Text color={COLORS.muted}>
+            Model: <Text color={COLORS.text} bold>{modelInfo.name}</Text>
+          </Text>
+        </Box>
+
+        <Box flexDirection="column" marginTop={1} width={50}>
+          {menuItems.map((item, i) => {
+            const isSelected = i === selectedIndex
+            return (
+              <Box key={item.label} flexDirection="column" marginBottom={0}>
+                <Text
+                  color={isSelected ? COLORS.primary : COLORS.muted}
+                  bold={isSelected}
+                >
+                  {isSelected ? `${ICONS.chevron} ` : "  "}
+                  {item.label}
+                </Text>
+                {isSelected && (
+                  <Text color={COLORS.dimText} wrap="truncate-end">
+                    {"    "}{item.description}
+                  </Text>
+                )}
+              </Box>
+            )
+          })}
+        </Box>
+
+        <Box marginTop={1} width={50} flexDirection="column">
+          <ModeInputBox mode={mode}>
+            <CursorText
+              value={inputValue}
+              cursor={cursor}
+              placeholder="Ask anything or select an option..."
+              placeholderItalic
+            />
+          </ModeInputBox>
         </Box>
       </Box>
 
-      <Box flexDirection="column" alignItems="center" marginTop={1} marginBottom={1}>
-        <Text color={COLORS.muted}>
-          Model: <Text color={COLORS.text} bold>{modelInfo.name}</Text>
-        </Text>
-      </Box>
-
-      <Box flexDirection="column" marginTop={1} width={50}>
-        {menuItems.map((item, i) => {
-          const isSelected = i === selectedIndex
-          return (
-            <Box key={item.label} flexDirection="column" marginBottom={0}>
-              <Text
-                color={isSelected ? COLORS.primary : COLORS.muted}
-                bold={isSelected}
-              >
-                {isSelected ? `${ICONS.chevron} ` : "  "}
-                {item.label}
-              </Text>
-              {isSelected && (
-                <Text color={COLORS.dimText} wrap="truncate-end">
-                  {"    "}{item.description}
-                </Text>
-              )}
-            </Box>
-          )
-        })}
-      </Box>
-
-      <Box marginTop={1} width={50} flexDirection="column">
-        <ModeInputBox mode={mode}>
-          <CursorText
-            value={inputValue}
-            cursor={cursor}
-            placeholder="Ask anything or select an option..."
-            placeholderItalic
-          />
-        </ModeInputBox>
-      </Box>
-
-      <Box marginTop={1}>
-        <Text color={COLORS.dimText}>
-          ↑↓ Navigate  •  Enter Select  •  Type to start chatting  •  Ctrl+C Exit
-        </Text>
+      <Box flexDirection="column" flexShrink={0}>
+        {projectRoot ? (
+          <Box>
+            <ProjectRootPath projectRoot={projectRoot} />
+          </Box>
+        ) : null}
+        <Box>
+          <Text color={COLORS.dimText}>
+            ↑↓ Navigate  •  Enter Select  •  Type to start chatting  •  Ctrl+C Exit
+          </Text>
+        </Box>
       </Box>
     </Box>
   )

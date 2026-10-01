@@ -14,12 +14,19 @@ export function moveHighlight(previous: number, length: number, delta: -1 | 1): 
   return Math.max(0, Math.min(length - 1, previous + delta))
 }
 
+export function findUsageHint(commands: Command[], input: string): string | undefined {
+  const draft = input.trimStart()
+  if (!draft.startsWith("/") || /\s/.test(draft)) return undefined
+  return commands.find((command) => command.name === draft.slice(1))?.usage
+}
+
 export interface CommandSuggestionProps {
   items: Command[]
   highlightIndex: number
+  hint?: string
 }
 
-export function CommandSuggestion({ items, highlightIndex }: CommandSuggestionProps) {
+export function CommandSuggestion({ items, highlightIndex, hint }: CommandSuggestionProps) {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={1}>
       {items.length === 0 ? (
@@ -39,6 +46,11 @@ export function CommandSuggestion({ items, highlightIndex }: CommandSuggestionPr
             </Box>
           )
         })
+      )}
+      {hint && (
+        <Text color={COLORS.muted} wrap="truncate-end">
+          {hint}
+        </Text>
       )}
     </Box>
   )

@@ -1,9 +1,16 @@
 import { listSessions, loadSession, saveSession, type SessionSummary } from "../core/session"
 import type { Command } from "../core/types"
 
+export const SESSION_PICKER_HINT =
+  "Tip: /rename <name> names the current session, /rename clear drops the name"
+
 export function formatSessionMeta(summary: SessionSummary): string {
   const timestamp = new Date(summary.updatedAt).toLocaleString()
   return `${timestamp} | ${summary.messageCount} messages | ${summary.model}`
+}
+
+export function formatSessionName(summary: SessionSummary): string {
+  return summary.name ? `${summary.name} (${summary.id})` : summary.id
 }
 
 export function createSessionCommand(): Command {
@@ -22,8 +29,9 @@ export function createSessionCommand(): Command {
 
       const selectedIndex = await ctx.openPicker({
         title: "Switch to session",
+        hint: SESSION_PICKER_HINT,
         items: summaries.map((summary) => ({
-          label: summary.id,
+          label: formatSessionName(summary),
           metadata: formatSessionMeta(summary),
         })),
       })
@@ -45,7 +53,7 @@ export function createSessionCommand(): Command {
       ctx.sessions.switchTo(loaded)
 
       const count = loaded.messages.length
-      return `Switched to session ${summary.id} (${count} ${count === 1 ? "message" : "messages"})`
+      return `Switched to ${formatSessionName(summary)} — ${count} ${count === 1 ? "message" : "messages"}`
     },
   }
 }

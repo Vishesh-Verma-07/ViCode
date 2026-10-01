@@ -11,7 +11,7 @@ interface PickerProps extends PickerRequest {
   rows?: number
 }
 
-export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultIndex = 0 }: PickerProps) {
+export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultIndex = 0, hint }: PickerProps) {
   const [highlighted, setHighlighted] = useState(defaultIndex)
   const [query, setQuery] = useState("")
   const maxVisible = Math.max(1, Math.floor(rows * 0.18))
@@ -89,6 +89,11 @@ export function Picker({ title, items, onSelect, onCancel, rows = 24, defaultInd
             </Text>
           )}
         </>
+      )}
+      {hint && (
+        <Text color={COLORS.muted} wrap="truncate-end">
+          {hint}
+        </Text>
       )}
     </Box>
   )

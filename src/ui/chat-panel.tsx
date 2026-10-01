@@ -359,10 +359,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
       </Box>
       {suggestion && (
         <Box paddingBottom={1} paddingX={2}>
-          <CommandSuggestion
-            items={suggestion.items}
-            highlightIndex={suggestion.highlightIndex}
-          />
+          <CommandSuggestion {...suggestion} />
         </Box>
       )}
       <ModeInputBox mode={mode} marginTop={1}>

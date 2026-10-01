@@ -1,5 +1,6 @@
 import { Box, Text } from "ink"
 import { COLORS, ICONS } from "./theme"
+import { ProjectRootPath } from "./project-root-path"
 import type { TokenUsage } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
 import type { TurnStatus } from "./status-bar"
@@ -11,15 +12,16 @@ interface UsagePanelProps {
   usage: TokenUsage
   turns: number
   status: TurnStatus
+  projectRoot?: string
 }
 
-export function UsagePanel({ width, model, contextLength, usage, turns, status }: UsagePanelProps) {
+export function UsagePanel({ width, model, contextLength, usage, turns, status, projectRoot }: UsagePanelProps) {
   const contextPct =
     contextLength && contextLength > 0
       ? Math.min(100, (usage.totalTokens / contextLength) * 100)
       : 0
   return (
-<Box width={width} flexDirection="column" backgroundColor={COLORS.sidebarShade} paddingX={1}>
+<Box width={width} flexDirection="column" flexGrow={1} backgroundColor={COLORS.usagePanelShade} paddingX={1}>
       <Box marginBottom={1}>
         <Text bold color={COLORS.primary}>
           {ICONS.sparkle} Usage
@@ -55,8 +57,16 @@ export function UsagePanel({ width, model, contextLength, usage, turns, status }
           <Text color={COLORS.text}>{turns}</Text>
         </Box>
       </Box>
-      <Box marginTop={1}>
-        <Text color={COLORS.dimText} italic>Ctrl+C to exit</Text>
+      <Box flexGrow={1} />
+      <Box flexDirection="column" flexShrink={0}>
+        {projectRoot ? (
+          <Box>
+            <ProjectRootPath projectRoot={projectRoot} />
+          </Box>
+        ) : null}
+        <Box>
+          <Text color={COLORS.dimText} italic>Ctrl+C to exit</Text>
+        </Box>
       </Box>
     </Box>
   )

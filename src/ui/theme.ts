@@ -12,7 +12,7 @@ export const COLORS = {
   dimText: "#666666",
   appBackground: "#000000",
   panelShade: "#101010",
-  sidebarShade: "#181818",
+  usagePanelShade: "#181818",
   codeBlockShade: "#1a1a1a",
   codeBlockBorder: "#333333",
   statusBarShade: "#202020",

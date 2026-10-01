@@ -45,6 +45,7 @@ function createContext(opts: { dir: string; activeSession?: Session | null }): {
         getActiveSession: () => activeSession,
         switchTo: () => {},
         startFresh: () => freshStarts.push(Date.now()),
+        rename: () => {},
       },
     },
   }
