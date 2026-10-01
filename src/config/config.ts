@@ -1,10 +1,25 @@
 import { z } from "zod"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import { join, dirname } from "path"
+import { listProviders, isProviderId, type ProviderId } from "../core/providers"
+import { LEGACY_PROVIDER, qualifyStoredModel, isLegacyModelValue } from "../core/model-id"
 
 export const configSchema = z
   .object({
+    /**
+     * On-disk format version. A config without it predates provider
+     * qualification, so its `model` can only have meant OpenRouter — the same
+     * collision `openai/gpt-4o` would otherwise hit. See model-id.ts.
+     */
+    version: z.number().optional(),
+    /**
+     * Legacy single key. Kept readable so an existing global config keeps
+     * working; it is normalised into `apiKeys[openrouter]` on load.
+     */
     apiKey: z.string().optional(),
+    /** One key per Provider, keyed by Provider id. */
+    apiKeys: z.record(z.string(), z.string()).optional(),
+    /** Canonical `provider/model` id. Unqualified ids are read as OpenRouter. */
     model: z.string().optional(),
     systemPrompt: z.string().optional(),
     sensitiveFiles: z.array(z.string()).optional(),
@@ -12,12 +27,19 @@ export const configSchema = z
   })
   .strict()
 
-export type AppConfig = z.infer<typeof configSchema>
+export type AppConfig = Omit<
+  z.infer<typeof configSchema>,
+  "apiKey" | "apiKeys" | "version"
+> & {
+  /** Every configured key, keyed by Provider id. Always present, maybe empty. */
+  apiKeys: Partial<Record<ProviderId, string>>
+  /** The canonical model id, resolved from whichever layer won. */
+  model?: string
+}
 
 interface LoadConfigOptions {
   projectPath: string
   globalConfigPath?: string
-  cliArgs?: Partial<AppConfig>
 }
 
 function readJsonFile(path: string): Record<string, unknown> | null {
@@ -30,11 +52,49 @@ function readJsonFile(path: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Collects configured keys into one map, dropping any entry that is not a
+ * Provider in the registry so a stale key cannot masquerade as a valid route.
+ */
+function collectKeys(...layers: (z.infer<typeof configSchema> | undefined)[]): Partial<Record<ProviderId, string>> {
+  const keys: Partial<Record<ProviderId, string>> = {}
+  for (const layer of layers) {
+    if (!layer) continue
+    // The legacy single key belongs to OpenRouter, the only Provider that
+    // existed when it could have been written.
+    if (layer.apiKey) keys[LEGACY_PROVIDER] = layer.apiKey
+    if (layer.apiKeys) {
+      for (const [id, value] of Object.entries(layer.apiKeys)) {
+        if (isProviderId(id) && typeof value === "string" && value !== "") keys[id] = value
+      }
+    }
+  }
+  return keys
+}
+
+/**
+ * The key for a Provider: the configured one, else the first environment
+ * variable that Provider accepts. OpenCode Zen and Go deliberately share
+ * `OPENCODE_API_KEY`, so setting it authenticates both.
+ */
+export function keyForProvider(
+  config: AppConfig,
+  provider: ProviderId,
+): string | undefined {
+  const configured = config.apiKeys[provider]
+  if (configured) return configured
+  const descriptor = listProviders().find((p) => p.id === provider)
+  for (const envVar of descriptor?.env ?? []) {
+    const value = process.env[envVar]
+    if (value) return value
+  }
+  return undefined
+}
+
 export function loadConfig(options: LoadConfigOptions): AppConfig {
   const {
     projectPath,
     globalConfigPath = joinHomePath(".vicode/config.json"),
-    cliArgs = {},
   } = options
 
   const globalRaw = readJsonFile(globalConfigPath)
@@ -44,10 +104,19 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
   const projectRaw = readJsonFile(projectFile)
   const projectConfig = projectRaw ? configSchema.parse(projectRaw) : {}
 
+  // The winning layer carries its own version, because a model id is only
+  // unambiguous relative to the format it was written in.
+  const rawModel = projectConfig.model ?? globalConfig.model
+  const rawModelSource = projectConfig.model !== undefined ? projectConfig : globalConfig
+
   // Config layering: project overrides global; no CLI layer
   const merged: AppConfig = {
-    ...globalConfig,
-    ...projectConfig,
+    model:
+      rawModel === undefined
+        ? undefined
+        : qualifyStoredModel(rawModel, isLegacyModelValue(rawModelSource)),
+    systemPrompt: projectConfig.systemPrompt ?? globalConfig.systemPrompt,
+    apiKeys: collectKeys(globalConfig, projectConfig),
   }
 
   // sensitiveFiles merges across layers instead of overriding
@@ -66,11 +135,6 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
     ]
   }
 
-  if (!merged.apiKey) {
-    const envKey = process.env.OPENROUTER_API_KEY
-    if (envKey) merged.apiKey = envKey
-  }
-
   return merged
 }
 
@@ -79,18 +143,13 @@ function joinHomePath(relativePath: string): string {
   return home ? `${home}/${relativePath}` : ""
 }
 
-/**
- * Persists an API key to the global config (~/.vicode/config.json),
- * merging with any existing global settings. Best-effort: returns false
- * when the write fails so callers can surface the failure.
- */
-export function saveApiKeyToGlobalConfig(
-  apiKey: string,
-  globalConfigPath = joinHomePath(".vicode/config.json"),
+function writeGlobalConfig(
+  mutate: (existing: Record<string, unknown>) => Record<string, unknown>,
+  globalConfigPath: string,
 ): boolean {
   try {
     const existing = readJsonFile(globalConfigPath) ?? {}
-    const merged = { ...existing, apiKey }
+    const merged = mutate(existing)
     mkdirSync(dirname(globalConfigPath), { recursive: true })
     writeFileSync(globalConfigPath, JSON.stringify(merged, null, 2) + "\n", "utf-8")
     return true
@@ -99,30 +158,47 @@ export function saveApiKeyToGlobalConfig(
   }
 }
 
-function cleanUndefined(obj: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(obj)) {
-    if (value !== undefined) result[key] = value
-  }
-  return result
+/**
+ * Persists one Provider's API key to the global config, leaving the other
+ * Providers' keys and every non-key setting intact. Best-effort: returns false
+ * when the write fails so callers can surface the failure.
+ */
+export function saveApiKeyToGlobalConfig(
+  provider: ProviderId,
+  apiKey: string,
+  globalConfigPath = joinHomePath(".vicode/config.json"),
+): boolean {
+  return writeGlobalConfig((existing) => {
+    const keys = (existing.apiKeys as Record<string, string> | undefined) ?? {}
+    const next = { ...keys, [provider]: apiKey }
+    // The legacy top-level key would shadow the map on the next load.
+    delete existing.apiKey
+    return { ...existing, apiKeys: next }
+  }, globalConfigPath)
 }
 
 /**
- * Removes the API key from the global config (~/.vicode/config.json), keeping
- * every other field intact. Returns false when there was no key to remove or
- * the write failed, so callers can surface the outcome.
+ * Removes one Provider's key from the global config, keeping every other key
+ * and setting intact. Returns false when there was no key to remove or the
+ * write failed.
  */
 export function removeApiKeyFromGlobalConfig(
+  provider: ProviderId,
   globalConfigPath = joinHomePath(".vicode/config.json"),
 ): boolean {
-  try {
-    const existing = readJsonFile(globalConfigPath)
-    if (!existing || !("apiKey" in existing)) return false
-    delete existing.apiKey
-    mkdirSync(dirname(globalConfigPath), { recursive: true })
-    writeFileSync(globalConfigPath, JSON.stringify(existing, null, 2) + "\n", "utf-8")
-    return true
-  } catch {
-    return false
-  }
+  const existing = readJsonFile(globalConfigPath)
+  if (!existing) return false
+
+  const keys = existing.apiKeys as Record<string, string> | undefined
+  const hadMapped = keys !== undefined && provider in keys
+  const hadLegacy = provider === LEGACY_PROVIDER && "apiKey" in existing
+  if (!hadMapped && !hadLegacy) return false
+
+  return writeGlobalConfig((current) => {
+    const currentKeys = current.apiKeys as Record<string, string> | undefined
+    if (currentKeys) delete currentKeys[provider]
+    delete current.apiKey
+    if (currentKeys && Object.keys(currentKeys).length === 0) delete current.apiKeys
+    return current
+  }, globalConfigPath)
 }

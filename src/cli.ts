@@ -1,10 +1,17 @@
 import React from "react"
 import { render } from "ink"
 import { parseArgs, formatHelp } from "./config/cli"
-import { loadConfig, saveApiKeyToGlobalConfig, removeApiKeyFromGlobalConfig } from "./config/config"
+import {
+  loadConfig,
+  keyForProvider,
+  saveApiKeyToGlobalConfig,
+  removeApiKeyFromGlobalConfig,
+} from "./config/config"
 import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
-import { createOpenRouterProvider } from "./providers/openrouter"
+import { createProvider } from "./providers"
+import { loadCatalogOffline } from "./core/catalog"
+import { formatModelId, parseModelId, resolveModelId, LEGACY_PROVIDER } from "./core/model-id"
 import { allTools } from "./tools"
 import { CommandRegistry } from "./core/command-registry"
 import { createBuiltinCommands } from "./commands"
@@ -13,9 +20,14 @@ import { createBackspaceRewritingStdin } from "./ui/backspace-encoding"
 import {
   getSessionsDir,
   loadLatestSession,
-  type Session,
 } from "./core/session"
 import { log } from "./utils/logger"
+
+/**
+ * The route a fresh install starts on: OpenRouter's free model, qualified so it
+ * is no longer an OpenRouter-only assumption (ADR-0006).
+ */
+const DEFAULT_MODEL = formatModelId(LEGACY_PROVIDER, "nvidia/nemotron-3-ultra-550b-a55b:free")
 
 const args = parseArgs(process.argv.slice(2))
 
@@ -44,27 +56,37 @@ if (existsSync(envPath)) {
 
 const sessionsDir = getSessionsDir(projectPath)
 
-const initialSession: Session | null = loadLatestSession(projectPath)
+const initialSession = loadLatestSession(projectPath)
 
 const config = loadConfig({
   projectPath,
 })
 
-const apiKey: string = config.apiKey ?? ""
+/**
+ * A resumed session's model wins over config: the conversation is on it. Both
+ * are already canonical after their own upgrade, so this only guards a
+ * hand-edited value that cannot be parsed.
+ */
+const model = initialSession?.model || config.model || DEFAULT_MODEL
+const parsedModel = parseModelId(model)
+const resolvedModel = parsedModel.provider ? parsedModel : resolveModelId(model)
+const activeProvider = resolvedModel.provider
+log("component mounted ", model)
 
-const model = config.model ?? "nvidia/nemotron-3-ultra-550b-a55b:free"
-log("component mounted ", model);
-
-const provider = createOpenRouterProvider({
-  apiKey,
-  model,
+// Boot on whatever catalog is already cached so the TUI renders immediately;
+// refresh in the background so pricing and context limits are current.
+loadCatalogOffline()
+void import("./core/catalog").then(({ ensureCatalog }) => {
+  ensureCatalog().catch(() => {
+    // Offline on first run: models, prices, and context limits stay unknown
+    // rather than blocking the session (ADR-0005).
+  })
 })
 
-const createProvider = (modelId: string, key = apiKey) =>
-  createOpenRouterProvider({
-    apiKey: key,
-    model: modelId,
-  })
+const keyFor = (provider: typeof activeProvider) => keyForProvider(config, provider) ?? ""
+const apiKey = keyFor(activeProvider)
+
+const provider = createProvider({ model: formatModelId(activeProvider, resolvedModel.model), apiKey })
 
 const commandRegistry = new CommandRegistry()
 commandRegistry.registerAll(createBuiltinCommands(commandRegistry))
@@ -72,19 +94,26 @@ commandRegistry.registerAll(createBuiltinCommands(commandRegistry))
 render(
   React.createElement(App, {
     provider,
-    createProvider,
+    createProvider: (canonicalModelId: string, key: string) =>
+      createProvider({ model: canonicalModelId, apiKey: key }),
     tools: allTools,
     projectPrompt: config.systemPrompt,
-    context: { projectPath, sensitivePatterns: config.sensitiveFiles, silentBashCommands: config.silentBashCommands },
+    context: {
+      projectPath,
+      sensitivePatterns: config.sensitiveFiles,
+      silentBashCommands: config.silentBashCommands,
+    },
     initialSession: initialSession ?? undefined,
     sessionsDir,
     commands: commandRegistry.getAll(),
-    initialApiKey: apiKey,
-    onSaveApiKey: (key: string) => {
-      saveApiKeyToGlobalConfig(key)
+    keyFor: (providerId) => keyForProvider(config, providerId),
+    onSaveApiKey: (providerId, key) => {
+      config.apiKeys[providerId] = key
+      saveApiKeyToGlobalConfig(providerId, key)
     },
-    onRemoveApiKey: () => {
-      removeApiKeyFromGlobalConfig()
+    onRemoveApiKey: (providerId) => {
+      delete config.apiKeys[providerId]
+      removeApiKeyFromGlobalConfig(providerId)
     },
   }),
   { stdin: createBackspaceRewritingStdin(process.stdin) },

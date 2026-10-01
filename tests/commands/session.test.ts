@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
-import { createSessionCommand, formatSessionMeta } from "@/commands/session"
+import { createSessionCommand, formatSessionName, formatSessionMeta } from "@/commands/session"
 import { saveSession, loadSession, type Session } from "@/core/session"
 import type { CommandContext, PickerRequest } from "@/core/types"
 import type { Message } from "@/core/types"
@@ -58,6 +58,7 @@ function createContext(opts: {
         getActiveSession: () => activeSession,
         switchTo: (session) => switchedTo.push(session),
         startFresh: () => {},
+        rename: () => {},
       },
     },
   }
@@ -85,6 +86,25 @@ describe("formatSessionMeta", () => {
     expect(meta).toContain(new Date("2025-01-15T10:35:00.000Z").toLocaleString())
     expect(meta).toContain("3 messages")
     expect(meta).toContain("m1")
+  })
+})
+
+describe("formatSessionName", () => {
+  const summary = { id: "s1", model: "m1", messageCount: 0, createdAt: "", updatedAt: "", totalTokens: 0, totalCost: 0 }
+
+  it("falls back to the id when the session has no name", () => {
+    expect(formatSessionName(summary)).toBe("s1")
+  })
+
+  it("leads with the name and keeps the id alongside it when named", () => {
+    const label = formatSessionName({ ...summary, name: "Deep work" })
+    expect(label).toContain("Deep work")
+    expect(label).toContain("s1")
+    expect(label.indexOf("Deep work")).toBeLessThan(label.indexOf("s1"))
+  })
+
+  it("ignores an empty stored name", () => {
+    expect(formatSessionName({ ...summary, name: "" })).toBe("s1")
   })
 })
 
@@ -131,6 +151,36 @@ describe("createSessionCommand", () => {
     expect(request.items[0]!.metadata).toContain("3 messages")
     expect(request.items[0]!.metadata).toContain("model-b")
     expect(request.items[1]!.metadata).toContain("model-a")
+  })
+
+  it("tells the user how to name a session in the picker", async () => {
+    const dir = tempDir
+    saveSession(makeSession({ id: "unnamed" }), dir)
+    const command = createSessionCommand()
+    const { context, pickerRequests } = createContext({ dir, pickerResult: null })
+
+    await command.execute([], context)
+
+    expect(pickerRequests[0]!.hint).toContain("/rename")
+  })
+
+  it("labels named sessions with their name and shows the name when switching", async () => {
+    const dir = tempDir
+    saveSession(
+      makeSession({ id: "named", name: "Deep work", updatedAt: "2025-06-01T10:00:00.000Z" }),
+      dir,
+    )
+    saveSession(makeSession({ id: "plain", updatedAt: "2025-05-01T10:00:00.000Z" }), dir)
+    const command = createSessionCommand()
+    const { context, pickerRequests } = createContext({ dir, pickerResult: 0 })
+
+    const output = await command.execute([], context)
+
+    const request = pickerRequests[0]!
+    expect(request.items[0]!.label).toContain("Deep work")
+    expect(request.items[0]!.label).toContain("named")
+    expect(request.items[1]!.label).toBe("plain")
+    expect(output).toContain("Deep work")
   })
 
   it("saves the current session before switching, then loads the chosen conversation losslessly", async () => {

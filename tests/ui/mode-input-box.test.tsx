@@ -1,10 +1,10 @@
 import React from "react"
 import { describe, it, expect } from "bun:test"
 import { render } from "ink-testing-library"
-import { Text } from "ink"
+import { renderToString, Box, Text } from "ink"
 import chalk from "../../node_modules/ink/node_modules/chalk/source/index.js"
 import { ModeInputBox } from "@/ui/mode-input-box"
-import { findMode } from "@/core/modes"
+import { findMode, MODES, type ModeId } from "@/core/modes"
 import { COLORS } from "@/ui/theme"
 
 chalk.level = 3
@@ -13,8 +13,16 @@ function frame(instance: { lastFrame: () => string | undefined }): string {
   return instance.lastFrame() ?? ""
 }
 
+function plain(text: string): string {
+  return text.replace(/\u001B\[[0-9;]*m/g, "")
+}
+
+function rows(node: React.ReactElement, columns: number): string[] {
+  return plain(renderToString(node, { columns })).split("\n")
+}
+
 describe("ModeInputBox", () => {
-  it("renders the Mode Tag alongside the input children", () => {
+  it("renders the Mode Switcher alongside the input children", () => {
     const inst = render(
       <ModeInputBox mode={findMode("build")!}>
         <Text>draft text</Text>
@@ -26,7 +34,63 @@ describe("ModeInputBox", () => {
     inst.unmount()
   })
 
-  it("paints the left-edge bar and the chip in the mode's design-token color (build blue)", () => {
+  it("shows every Mode name, with only the active one bracketed", () => {
+    const inst = render(
+      <ModeInputBox mode={findMode("plan")!}>
+        <Text>draft</Text>
+      </ModeInputBox>,
+    )
+    const out = plain(frame(inst))
+    for (const mode of MODES) {
+      expect(out).toContain(mode.name)
+    }
+    expect(out).toContain("[Plan]")
+    expect(out).not.toContain("[Build]")
+    expect(out).not.toContain("[Discuss]")
+    inst.unmount()
+  })
+
+  it("keeps the switcher and the draft on separate rows", () => {
+    const lines = rows(
+      <ModeInputBox mode={findMode("build")!}>
+        <Text>draft</Text>
+      </ModeInputBox>,
+      40,
+    )
+    const switcherRow = lines.findIndex((line) => line.trim().includes("[Build]"))
+    const draftRow = lines.findIndex((line) => line.trim().includes("draft"))
+    expect(switcherRow).toBeGreaterThanOrEqual(0)
+    expect(draftRow).toBe(switcherRow + 1)
+  })
+
+  it("keeps the switcher row intact instead of merging it with the draft when the container is too short", () => {
+    const lines = rows(
+      <Box height={2} flexDirection="column" width={40}>
+        <ModeInputBox mode={findMode("build")!}>
+          <Text>draft</Text>
+        </ModeInputBox>
+      </Box>,
+      40,
+    )
+    const switcherRow = lines.findIndex((line) => line.trim().includes("[Build]"))
+    expect(switcherRow).toBeGreaterThanOrEqual(0)
+    expect(lines[switcherRow]!.trim()).toBe("[Build] Discuss Plan")
+  })
+
+  it("leaves one column for the left-edge bar in every Mode", () => {
+    for (const id of MODES.map((mode) => mode.id)) {
+      const lines = rows(
+        <ModeInputBox mode={findMode(id as ModeId)!}>
+          <Text>draft</Text>
+        </ModeInputBox>,
+        100,
+      )
+      const stripLine = lines.find((line) => line.includes(`[${findMode(id as ModeId)!.name}]`)) ?? ""
+      expect(stripLine.length - stripLine.trimStart().length).toBe(3)
+    }
+  })
+
+  it("paints the left-edge bar and the switcher in the mode's design-token color (build blue)", () => {
     const inst = render(
       <ModeInputBox mode={findMode("build")!}>
         <Text>draft</Text>

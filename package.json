@@ -42,9 +42,11 @@
   },
   "homepage": "https://github.com/Vishesh-Verma-07/ViCode#readme",
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.69",
+    "@ai-sdk/openai": "^4.0.82",
     "@inkjs/ui": "^2.0.0",
     "@openrouter/ai-sdk-provider": "^3.0.0",
-    "ai": "^7.0.68",
+    "ai": "^7.0.123",
     "chalk": "^6.0.0",
     "diff": "^9.0.0",
     "ink": "^7.1.1",

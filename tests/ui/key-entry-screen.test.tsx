@@ -2,6 +2,7 @@ import React from "react"
 import { describe, it, expect, afterEach } from "bun:test"
 import { render } from "ink-testing-library"
 import { KeyEntryScreen } from "@/ui/key-entry-screen"
+import type { ProviderId } from "@/core/providers"
 
 async function sendKeys(instance: { stdin: { write: (s: string) => void } }, keys: string[]): Promise<void> {
   for (const key of keys) {
@@ -17,16 +18,25 @@ describe("KeyEntryScreen", () => {
     process.exit = originalExit
   })
 
-  it("renders the required title when requireKey is set", () => {
-    const instance = render(<KeyEntryScreen requireKey onSubmit={() => {}} />)
+  it("names the Provider it is collecting a key for", () => {
+    const instance = render(<KeyEntryScreen provider="anthropic" requireKey onSubmit={() => {}} />)
     const frame = instance.lastFrame() ?? ""
-    expect(frame).toContain("OpenRouter API key required")
-    expect(frame).toContain("Get a key at https://openrouter.ai/keys")
+    expect(frame).toContain("Anthropic API key required")
+    expect(frame).toContain("https://console.anthropic.com/settings/keys")
+    expect(frame).not.toContain("OpenRouter")
+    instance.unmount()
+  })
+
+  it("shows the gateway's own key URL, not OpenRouter's", () => {
+    const instance = render(<KeyEntryScreen provider="opencode" requireKey onSubmit={() => {}} />)
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("OpenCode Zen API key required")
+    expect(frame).toContain("https://opencode.ai/console")
     instance.unmount()
   })
 
   it("renders the plain title and Save hint in settings mode", () => {
-    const instance = render(<KeyEntryScreen onSubmit={() => {}} />)
+    const instance = render(<KeyEntryScreen provider="openrouter" onSubmit={() => {}} />)
     const frame = instance.lastFrame() ?? ""
     expect(frame).toContain("OpenRouter API key")
     expect(frame).not.toContain("required")
@@ -34,10 +44,18 @@ describe("KeyEntryScreen", () => {
     instance.unmount()
   })
 
+  it("says a required key is needed to chat on that Provider", () => {
+    const instance = render(<KeyEntryScreen provider="openai" requireKey onSubmit={() => {}} />)
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("chat on this provider")
+    instance.unmount()
+  })
+
   it("submits the typed key on Enter", async () => {
     const submitted: string[] = []
     const instance = render(
       <KeyEntryScreen
+        provider="openrouter"
         onSubmit={(key) => {
           submitted.push(key)
         }}
@@ -53,6 +71,7 @@ describe("KeyEntryScreen", () => {
     const submitted: string[] = []
     const instance = render(
       <KeyEntryScreen
+        provider="anthropic"
         requireKey
         onSubmit={(key) => {
           submitted.push(key)
@@ -61,45 +80,41 @@ describe("KeyEntryScreen", () => {
     )
     await sendKeys(instance, ["\r"])
     const frame = instance.lastFrame() ?? ""
-    expect(frame).toContain("Enter your OpenRouter API key to continue")
+    expect(frame).toContain("Enter your Anthropic API key to continue")
     await sendKeys(instance, ["\r"])
     expect(submitted).toEqual([])
     instance.unmount()
   })
 
-  it("warns on the first Enter with a non-prefixed key and submits on the second", async () => {
+  it("accepts a key with no recognisable prefix", async () => {
+    // The vendors do not document their key format, so nothing is validated
+    // beyond being non-empty.
     const submitted: string[] = []
     const instance = render(
       <KeyEntryScreen
+        provider="anthropic"
         onSubmit={(key) => {
           submitted.push(key)
         }}
       />,
     )
-    await sendKeys(instance, ["b", "a", "d", "k", "e", "y", "\r"])
-    const frame = instance.lastFrame() ?? ""
-    expect(frame).toContain("expected sk-or-v1-...")
-    expect(submitted).toEqual([])
-
-    await sendKeys(instance, ["\r"])
-    expect(submitted).toEqual(["badkey"])
+    await sendKeys(instance, ["n", "o", "-", "p", "r", "e", "f", "i", "x", "\r"])
+    expect(submitted).toEqual(["no-prefix"])
     instance.unmount()
   })
 
-  it("does not warn again when typing a prefixed key after a failed save attempt", async () => {
+  it("trims surrounding whitespace before submitting", async () => {
     const submitted: string[] = []
     const instance = render(
       <KeyEntryScreen
+        provider="openai"
         onSubmit={(key) => {
           submitted.push(key)
         }}
       />,
     )
-    await sendKeys(instance, ["b", "a", "d", "\r"])
-    expect(submitted).toEqual([])
-
-    await sendKeys(instance, ["s", "k", "-", "o", "r", "-", "v", "1", "-", "o", "k", "\r"])
-    expect(submitted).toEqual(["sk-or-v1-ok"])
+    await sendKeys(instance, ["s", "k", "-", "x", " ", " ", "\r"])
+    expect(submitted).toEqual(["sk-x"])
     instance.unmount()
   })
 
@@ -107,6 +122,7 @@ describe("KeyEntryScreen", () => {
     let cancelled = false
     const instance = render(
       <KeyEntryScreen
+        provider="openrouter"
         requireKey
         onSubmit={() => {}}
         onCancel={() => {
@@ -117,7 +133,7 @@ describe("KeyEntryScreen", () => {
     await sendKeys(instance, ["\u001B"])
     expect(cancelled).toBe(false)
     const frame = instance.lastFrame() ?? ""
-    expect(frame).toContain("An API key is required to chat")
+    expect(frame).toContain("API key is required to chat")
     instance.unmount()
   })
 
@@ -125,6 +141,7 @@ describe("KeyEntryScreen", () => {
     let cancelled = false
     const instance = render(
       <KeyEntryScreen
+        provider="openrouter"
         onSubmit={() => {}}
         onCancel={() => {
           cancelled = true
@@ -140,6 +157,7 @@ describe("KeyEntryScreen", () => {
     let cancelled = false
     const instance = render(
       <KeyEntryScreen
+        provider="openrouter"
         onSubmit={() => {}}
         onCancel={() => {
           cancelled = true
@@ -157,18 +175,50 @@ describe("KeyEntryScreen", () => {
       exitCalled = true
       expect(code).toBe(0)
     }) as unknown as typeof process.exit
-    const instance = render(<KeyEntryScreen requireKey onSubmit={() => {}} />)
+    const instance = render(<KeyEntryScreen provider="openrouter" requireKey onSubmit={() => {}} />)
     await sendKeys(instance, ["\u0003"])
     expect(exitCalled).toBe(true)
     instance.unmount()
   })
 
   it("only shows the inverse cursor block on the entered value", async () => {
-    const instance = render(<KeyEntryScreen requireKey onSubmit={() => {}} />)
+    const instance = render(<KeyEntryScreen provider="openrouter" requireKey onSubmit={() => {}} />)
     await sendKeys(instance, ["s", "k"])
     const frame = instance.lastFrame() ?? ""
     expect(frame).toContain("sk")
-    expect(frame).not.toContain("sk-or-v1-...")
+    expect(frame).not.toContain("paste your key")
     instance.unmount()
   })
+
+  it("shows the existing key so it can be edited in place", () => {
+    const instance = render(
+      <KeyEntryScreen
+        provider="openrouter"
+        initialValue="sk-or-v1-existing"
+        onSubmit={() => {}}
+      />,
+    )
+    expect(instance.lastFrame() ?? "").toContain("sk-or-v1-existing")
+    instance.unmount()
+  })
+})
+
+describe("KeyEntryScreen across Providers", () => {
+  const CASES: Array<[ProviderId, string, string]> = [
+    ["openrouter", "OpenRouter", "https://openrouter.ai/keys"],
+    ["openai", "OpenAI", "https://platform.openai.com/api-keys"],
+    ["anthropic", "Anthropic", "https://console.anthropic.com/settings/keys"],
+    ["opencode", "OpenCode Zen", "https://opencode.ai/console"],
+    ["opencode-go", "OpenCode Go", "https://opencode.ai/console"],
+  ]
+
+  for (const [provider, label, keyUrl] of CASES) {
+    it(`labels ${provider} correctly`, () => {
+      const instance = render(<KeyEntryScreen provider={provider} requireKey onSubmit={() => {}} />)
+      const frame = instance.lastFrame() ?? ""
+      expect(frame).toContain(`${label} API key required`)
+      expect(frame).toContain(keyUrl)
+      instance.unmount()
+    })
+  }
 })

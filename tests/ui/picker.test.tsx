@@ -19,6 +19,12 @@ async function sendKeys(instance: { stdin: { write: (s: string) => void } }, key
   }
 }
 
+function plainLines(frame: string | undefined): string[] {
+  return (frame ?? "")
+    .split("\n")
+    .map((l) => l.replace(/\[[0-9;]*m/g, "").replace(/[│╭╮╰╯─]/g, " ").trim())
+}
+
 describe("Picker", () => {
   it("renders the title, item labels and metadata lines", () => {
     const instance = render(
@@ -30,6 +36,49 @@ describe("Picker", () => {
     expect(frame).toContain("sess_b")
     expect(frame).toContain("2 messages | model-a")
     expect(frame).toContain("5 messages | model-b")
+    instance.unmount()
+  })
+
+  it("renders a hint line below the items when one is given", () => {
+    const instance = render(
+      <Picker
+        title="Switch to session"
+        items={items}
+        hint="/rename <name> to name this session"
+        onSelect={() => {}}
+        onCancel={() => {}}
+      />,
+    )
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("/rename <name> to name this session")
+    expect(frame.indexOf("sess_b")).toBeLessThan(frame.indexOf("/rename <name>"))
+    instance.unmount()
+  })
+
+  it("renders no hint line when none is given", () => {
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={() => {}} onCancel={() => {}} />,
+    )
+    const lines = plainLines(instance.lastFrame())
+    expect(lines.some((l) => l.includes("Type to search | Up/Down | Enter | Esc"))).toBe(true)
+    expect(lines.filter((l) => l.trim().startsWith("/"))).toEqual([])
+    instance.unmount()
+  })
+
+  it("still shows the hint when the search matches nothing", async () => {
+    const instance = render(
+      <Picker
+        title="Switch to session"
+        items={items}
+        hint="/rename <name> to name this session"
+        onSelect={() => {}}
+        onCancel={() => {}}
+      />,
+    )
+    await sendKeys(instance, ["z", "z", "z"])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("No matching items")
+    expect(frame).toContain("/rename <name>")
     instance.unmount()
   })
 

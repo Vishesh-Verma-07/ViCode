@@ -40,17 +40,31 @@ Options:
 
 Configuration:
   Config is loaded in priority order: project (.vicode.json) > global (~/.vicode/config.json).
-  Runtime configuration (model, skills, sessions, api key) is available via slash commands:
-  /model - switch LLM model mid-session
-  /skill - load skill markdown as System Prompt layer
-  /new   - save current session and start fresh
-  /session - switch to a saved session
-  /key   - set or change the OpenRouter API key (interactive prompt)
+  Runtime configuration (provider, model, skills, sessions, api keys) is available via slash commands:
+  /model     - switch model, and with it the provider
+  /provider  - switch provider
+  /skill     - load skill markdown as System Prompt layer
+  /new       - save current session and start fresh
+  /session   - switch to a saved session
+  /rename    - name the current session (or /rename clear)
+  /key       - set or change an API key (interactive prompt)
 
-  Set your API key in one of:
-  1. ~/.vicode/config.json  → { "apiKey": "your-key" }
-  2. .vicode.json in your project  → { "apiKey": "your-key" }
-  3. Environment variable  → OPENROUTER_API_KEY=your-key
+  Providers:
+    openrouter    OpenRouter    pay per token
+    openai        OpenAI        pay per token
+    anthropic     Anthropic     pay per token
+    opencode      OpenCode Zen  pay per token, prepaid balance
+    opencode-go   OpenCode Go   subscription plan
+
+  Models are named <provider>/<model>, e.g. anthropic/claude-opus-5-5.
+
+  Set your API keys in one of:
+  1. ~/.vicode/config.json  → { "apiKeys": { "openrouter": "your-key" } }
+  2. .vicode.json in your project  → { "apiKeys": { "openrouter": "your-key" } }
+  3. Environment variables:
+       OPENROUTER_API_KEY   OPENAI_API_KEY
+       ANTHROPIC_API_KEY    OPENCODE_API_KEY
+     OPENCODE_API_KEY authenticates both OpenCode Zen and OpenCode Go.
   4. Or type /key (or just start chatting) and you'll be prompted to enter your key
 
   Get a key at https://openrouter.ai/keys

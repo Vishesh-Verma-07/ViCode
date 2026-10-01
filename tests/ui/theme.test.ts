@@ -5,7 +5,7 @@ describe("COLORS palette", () => {
   it("carries the required new tokens", () => {
     expect(COLORS.appBackground).toBe("#000000")
     expect(COLORS.panelShade).toBe("#101010")
-    expect(COLORS.sidebarShade).toBe("#181818")
+    expect(COLORS.usagePanelShade).toBe("#181818")
     expect(COLORS.codeBlockShade).toBe("#1a1a1a")
     expect(COLORS.codeBlockBorder).toBe("#333333")
     expect(COLORS.statusBarShade).toBe("#202020")

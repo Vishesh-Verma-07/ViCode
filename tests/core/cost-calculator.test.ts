@@ -6,38 +6,90 @@ import {
   type ModelPricing,
 } from "@/core/cost-calculator"
 
+const PRICING: ModelPricing = {
+  inputPricePerToken: 3 / 1_000_000,
+  outputPricePerToken: 15 / 1_000_000,
+}
+
 describe("cost-calculator", () => {
   describe("calculateCost", () => {
     it("calculates cost for a known model", () => {
-      const pricing: ModelPricing = {
-        inputPricePerToken: 3 / 1_000_000,
-        outputPricePerToken: 15 / 1_000_000,
-      }
-      const cost = calculateCost(1000, 500, pricing)
+      const cost = calculateCost({ inputTokens: 1000, outputTokens: 500 }, PRICING)
       expect(cost).toBeCloseTo(0.0105, 6)
     })
 
     it("returns 0 when pricing is null", () => {
-      const cost = calculateCost(1000, 500, null)
+      const cost = calculateCost({ inputTokens: 1000, outputTokens: 500 }, null)
       expect(cost).toBe(0)
     })
 
     it("handles zero tokens", () => {
-      const pricing: ModelPricing = {
-        inputPricePerToken: 3 / 1_000_000,
-        outputPricePerToken: 15 / 1_000_000,
-      }
-      const cost = calculateCost(0, 0, pricing)
+      const cost = calculateCost({ inputTokens: 0, outputTokens: 0 }, PRICING)
       expect(cost).toBe(0)
     })
 
     it("handles large token counts", () => {
-      const pricing: ModelPricing = {
-        inputPricePerToken: 3 / 1_000_000,
-        outputPricePerToken: 15 / 1_000_000,
-      }
-      const cost = calculateCost(1_000_000, 1_000_000, pricing)
+      const cost = calculateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, PRICING)
       expect(cost).toBeCloseTo(18, 2)
+    })
+
+    it("prices cache reads at the cache rate, not the input rate", () => {
+      const pricing: ModelPricing = {
+        inputPricePerToken: 10 / 1_000_000,
+        outputPricePerToken: 10 / 1_000_000,
+        cacheReadPricePerToken: 1 / 1_000_000,
+      }
+      const cost = calculateCost({ inputTokens: 1000, outputTokens: 0, cacheReadTokens: 1000 }, pricing)
+      expect(cost).toBeCloseTo(0.001, 6)
+    })
+
+    it("prices cache writes at the cache rate, not the input rate", () => {
+      const pricing: ModelPricing = {
+        inputPricePerToken: 10 / 1_000_000,
+        outputPricePerToken: 10 / 1_000_000,
+        cacheWritePricePerToken: 12 / 1_000_000,
+      }
+      const cost = calculateCost(
+        { inputTokens: 1000, outputTokens: 0, cacheWriteTokens: 1000 },
+        pricing,
+      )
+      expect(cost).toBeCloseTo(0.012, 6)
+    })
+
+    it("bills cache reads, cache writes, and uncached input together", () => {
+      const pricing: ModelPricing = {
+        inputPricePerToken: 10 / 1_000_000,
+        outputPricePerToken: 10 / 1_000_000,
+        cacheReadPricePerToken: 1 / 1_000_000,
+        cacheWritePricePerToken: 12 / 1_000_000,
+      }
+      const cost = calculateCost(
+        {
+          inputTokens: 1000,
+          outputTokens: 0,
+          cacheReadTokens: 400,
+          cacheWriteTokens: 300,
+        },
+        pricing,
+      )
+      // 400 reads @1 + 300 writes @12 + 300 uncached @10, per million.
+      expect(cost).toBeCloseTo((400 * 1 + 300 * 12 + 300 * 10) / 1_000_000, 9)
+    })
+
+    it("falls back to the input rate when the catalog has no cache rate", () => {
+      const cost = calculateCost(
+        { inputTokens: 1000, outputTokens: 0, cacheReadTokens: 1000 },
+        PRICING,
+      )
+      expect(cost).toBeCloseTo(0.003, 6)
+    })
+
+    it("clamps cache tokens that exceed the input count instead of going negative", () => {
+      const cost = calculateCost(
+        { inputTokens: 100, outputTokens: 0, cacheReadTokens: 1000, cacheWriteTokens: 1000 },
+        PRICING,
+      )
+      expect(cost).toBeCloseTo(0.0003, 6)
     })
   })
 

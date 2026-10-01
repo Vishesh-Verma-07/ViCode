@@ -1,5 +1,5 @@
 import React from "react"
-import { describe, it, expect } from "bun:test"
+import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { mkdtempSync, existsSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -11,6 +11,7 @@ import { ICONS } from "@/ui/theme"
 import { CommandRegistry } from "@/core/command-registry"
 import { createHelpCommand } from "@/commands/help"
 import { createSessionCommand } from "@/commands/session"
+import { createRenameCommand } from "@/commands/rename"
 import { createNewCommand } from "@/commands/new"
 import { createExitCommand } from "@/commands/exit"
 import { createModelCommand } from "@/commands/model"
@@ -18,7 +19,9 @@ import { createHomeCommand } from "@/commands/home"
 import { createKeyCommand } from "@/commands/key"
 import { saveSession, loadSession, type Session } from "@/core/session"
 import type { Command, Message, ToolDefinition } from "@/core/types"
-import type { Provider, StreamEvent, ModelListing } from "@/core/provider"
+import type { Provider, StreamEvent } from "@/core/provider"
+import { setActiveCatalog } from "@/core/catalog"
+import { parseModelId } from "@/core/model-id"
 import { z } from "zod"
 import { allTools } from "@/tools/index"
 import { createSkillCommand } from "@/commands/skill"
@@ -32,13 +35,20 @@ function until(condition: () => boolean, timeoutMs = 5000): Promise<void> {
         return
       }
       if (Date.now() - start > timeoutMs) {
-        reject(new Error("timed out waiting for condition"))
+        // The frame is the only evidence of what the UI actually showed.
+        reject(new Error(`timed out waiting for condition\n--- frame ---\n${lastRenderedFrame()}`))
         return
       }
       setTimeout(tick, 10)
     }
     tick()
   })
+}
+
+/** The most recent frame any render in this file produced, for failure output. */
+let latestFrame = ""
+function lastRenderedFrame(): string {
+  return latestFrame
 }
 
 function createStubProvider(capturedMessages: Message[][], events?: StreamEvent[]): Provider {
@@ -75,10 +85,13 @@ function createTestCommands(): Command[] {
 }
 
 function normalizeFrame(lastFrame: () => string | undefined): () => string {
-  return () =>
-    (lastFrame() ?? "")
+  return () => {
+    const normalized = (lastFrame() ?? "")
       .replace(/\u001B\[[0-9;]*m/g, "")
       .replace(/\s+/g, " ")
+    latestFrame = normalized
+    return normalized
+  }
 }
 
 function frameLines(lastFrame: () => string | undefined): string[] {
@@ -169,7 +182,7 @@ describe("App command interception", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: join(sessionsDir, "project") }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         sessionsDir={sessionsDir}
         initialView="chat"
         commands={createTestCommands()}
@@ -269,7 +282,7 @@ describe("App command suggestion dropdown", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/suggestion-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -459,7 +472,7 @@ describe("App inline chip rendering", () => {
         provider={createStubProvider([])}
         tools={[]}
         context={{ projectPath: "/tmp/chips-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialSession={makeChipSession()}
         commands={createTestCommands()}
       />,
@@ -482,7 +495,7 @@ describe("App inline chip rendering", () => {
         provider={createStubProvider([])}
         tools={[]}
         context={{ projectPath: "/tmp/chips-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialSession={makeChipSession()}
         commands={createTestCommands()}
       />,
@@ -543,7 +556,7 @@ describe("App session switcher", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: join(sessionsDir, "project") }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         sessionsDir={sessionsDir}
         initialView="chat"
         commands={registry.getAll()}
@@ -592,7 +605,7 @@ describe("App session switcher", () => {
       await pressKey("\u001B")
       await until(() => !(lastFrame() ?? "").includes("sess_new"))
 
-      expect(lastFrame() ?? "").not.toContain("Switched to session")
+      expect(lastFrame() ?? "").not.toContain("Switched to ")
       expect(lastFrame() ?? "").not.toContain("newer convo")
       expect(readFileSync(join(sessionsDir, "sess_new.json"), "utf-8")).toBe(targetBefore)
     } finally {
@@ -621,7 +634,7 @@ describe("App session switcher", () => {
       await until(() => (lastFrame() ?? "").includes("sess_target"))
       await pressKey("\r")
 
-      await until(() => (lastFrame() ?? "").includes("Switched to session sess_target"))
+      await until(() => (lastFrame() ?? "").includes("Switched to sess_target"))
       expect(lastFrame() ?? "").toContain("earlier question")
 
       await typeAndSubmit("follow up question")
@@ -660,7 +673,7 @@ describe("App session switcher", () => {
       await until(() => (lastFrame() ?? "").includes("sess_totals"))
       await pressKey("\r")
 
-      await until(() => (lastFrame() ?? "").includes("Switched to session sess_totals"))
+      await until(() => (lastFrame() ?? "").includes("Switched to sess_totals"))
 
       const frame = lastFrame() ?? ""
       expect(frame).toContain("Tokens: 42")
@@ -672,15 +685,235 @@ describe("App session switcher", () => {
   }, 30000)
 })
 
+describe("App /rename command", () => {
+  function makeSession(overrides?: Partial<Session>): Session {
+    return {
+      id: "sess_rename",
+      model: "seed-model",
+      messages: [
+        {
+          id: "msg_seed",
+          role: "user",
+          content: [{ type: "text", text: "first question" }],
+          timestamp: Date.now(),
+        },
+      ],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+      ...overrides,
+    }
+  }
+
+  function setupRename(initialSession?: Session) {
+    const capturedMessages: Message[][] = []
+    const provider = createStubProvider(capturedMessages, [
+      { type: "text-delta" as const, text: "ok" },
+      { type: "finish" as const, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ])
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-rename-test-"))
+    if (initialSession) saveSession(initialSession, sessionsDir)
+
+    const registry = new CommandRegistry()
+    registry.register(createHelpCommand(registry))
+    registry.register(createRenameCommand())
+    registry.register(createSessionCommand())
+
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        context={{ projectPath: join(sessionsDir, "project") }}
+        keyFor={() => "test-key"}
+        sessionsDir={sessionsDir}
+        initialView="chat"
+        initialSession={initialSession}
+        commands={registry.getAll()}
+      />,
+    )
+
+    async function typeText(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+    }
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      await typeText(text)
+      instance.stdin.write("\r")
+    }
+
+    async function pressKey(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    return { ...instance, capturedMessages, sessionsDir, typeText, typeAndSubmit, pressKey }
+  }
+
+  it("writes the name to the active session's file and keeps it through the next turn", async () => {
+    const { lastFrame, sessionsDir, typeAndSubmit, unmount } = setupRename(makeSession())
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("/rename Deep work on the parser")
+      await until(() => (lastFrame() ?? "").includes('Renamed this session to "Deep work on the parser"'))
+
+      expect(loadSession("sess_rename", sessionsDir)!.name).toBe("Deep work on the parser")
+
+      await typeAndSubmit("a follow up question")
+      await until(() => {
+        const saved = loadSession("sess_rename", sessionsDir)
+        return !!saved?.messages.some((m) => JSON.stringify(m.content).includes("a follow up question"))
+      })
+
+      expect(loadSession("sess_rename", sessionsDir)!.name).toBe("Deep work on the parser")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("clears the name from disk and from the session picker label", async () => {
+    const { lastFrame, sessionsDir, typeAndSubmit, pressKey, unmount } = setupRename(
+      makeSession({ name: "Old Name" }),
+    )
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("/session")
+      await until(() => (lastFrame() ?? "").includes("Old Name"))
+
+      await pressKey("\u001B")
+      await typeAndSubmit("/rename clear")
+      await until(() => (lastFrame() ?? "").includes("Session name cleared."))
+
+      expect(loadSession("sess_rename", sessionsDir)!.name).toBeUndefined()
+
+      await typeAndSubmit("/session")
+      await until(() => (lastFrame() ?? "").includes("sess_rename"))
+      expect(lastFrame() ?? "").not.toContain("Old Name")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("shows the name in the session picker before anything is switched", async () => {
+    const { lastFrame, sessionsDir, typeAndSubmit, pressKey, unmount } = setupRename(
+      makeSession({ name: "Parser rewrite" }),
+    )
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("/session")
+      await until(() => (lastFrame() ?? "").includes("Parser rewrite"))
+
+      const frame = lastFrame() ?? ""
+      expect(frame).toContain("Parser rewrite")
+      expect(frame).toContain("sess_rename")
+
+      await pressKey("\u001B")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("shows the argument hint once /rename is typed, and drops it once a name is started", async () => {
+    const { lastFrame, sessionsDir, typeText, typeAndSubmit, unmount } = setupRename(makeSession())
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeText("/ren")
+      await until(() => (lastFrame() ?? "").includes("/rename"))
+      expect(lastFrame() ?? "").not.toContain("Give it a name")
+
+      await typeText("ame")
+      await until(() => (lastFrame() ?? "").includes("Give it a name"))
+
+      await typeText(" Deep")
+      await until(() => !(lastFrame() ?? "").includes("Give it a name"))
+
+      await typeAndSubmit(" work")
+      await until(() => (lastFrame() ?? "").includes('Renamed this session to "Deep work"'))
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("tells the user how to rename a session while the picker is open", async () => {
+    const { lastFrame, sessionsDir, typeAndSubmit, pressKey, unmount } = setupRename(
+      makeSession({ id: "sess_tip" }),
+    )
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("/session")
+      await until(() => (lastFrame() ?? "").includes("sess_tip"))
+
+      expect(lastFrame() ?? "").toContain("/rename <name>")
+
+      await pressKey("\u001B")
+      await until(() => !(lastFrame() ?? "").includes("Switch to session"))
+      expect(lastFrame() ?? "").not.toContain("/rename <name>")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("asks for a message first when the session has not started", async () => {
+    const { lastFrame, sessionsDir, typeAndSubmit, unmount } = setupRename()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("/rename Too early")
+      await until(() => (lastFrame() ?? "").includes("No session to rename yet"))
+
+      expect(existsSync(join(sessionsDir, "sess_rename.json"))).toBe(false)
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+})
+
 describe("App model switcher", () => {
-  const LISTINGS: ModelListing[] = [
-    { id: "free-alpha", name: "Alpha", pricing: { kind: "free" } },
-    {
-      id: "paid-beta",
-      name: "Beta",
-      pricing: { kind: "paid", inputPricePerToken: 2 / 1_000_000, outputPricePerToken: 8 / 1_000_000 },
+  const TEST_CATALOG = {
+    providers: {
+      openrouter: {
+        "free-alpha": {
+          id: "free-alpha",
+          name: "Alpha",
+          protocol: "openai" as const,
+          pricing: { inputPricePerToken: 0, outputPricePerToken: 0 },
+        },
+        "paid-beta": {
+          id: "paid-beta",
+          name: "Beta",
+          protocol: "openai" as const,
+          pricing: { inputPricePerToken: 2 / 1_000_000, outputPricePerToken: 8 / 1_000_000 },
+        },
+      },
+      openai: {},
+      anthropic: {},
+      opencode: {},
+      "opencode-go": {},
     },
-  ]
+  }
+
+  beforeEach(() => {
+    // The picker reads the Model Catalog, not the Provider's own listing.
+    setActiveCatalog(TEST_CATALOG)
+  })
+
+  afterEach(() => {
+    setActiveCatalog(null)
+  })
 
   function setupModelSwitcher() {
     const handledBy: string[] = []
@@ -694,18 +927,25 @@ describe("App model switcher", () => {
         { type: "finish", usage: { inputTokens: 3, outputTokens: 3, totalTokens: 6, cost: 0.002 } },
       ],
     }
-    const createProvider = (modelId: string): Provider => ({
-      getModelInfo: () => ({ id: modelId, name: `MODEL:${modelId}:ACTIVE` }),
-      async listModels() {
-        return [...LISTINGS]
-      },
-      async *streamChat(messages) {
-        capturedMessages.push([...messages])
-        handledBy.push(modelId)
-        for (const event of eventsByModel[modelId] ?? []) yield event
-      },
-    })
-    const provider = createProvider("free-alpha")
+    const createProvider = (canonicalModelId: string): Provider => {
+      const model = parseModelId(canonicalModelId).model
+      return {
+        getModelInfo: () => ({
+          id: canonicalModelId,
+          name: `MODEL:${canonicalModelId}:ACTIVE`,
+          provider: "openrouter" as const,
+        }),
+        async listModels() {
+          return []
+        },
+        async *streamChat(messages) {
+          capturedMessages.push([...messages])
+          handledBy.push(model)
+          for (const event of eventsByModel[model] ?? []) yield event
+        },
+      }
+    }
+    const provider = createProvider("openrouter/free-alpha")
     const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-model-test-"))
     const registry = new CommandRegistry()
     registry.register(createHelpCommand(registry))
@@ -717,7 +957,7 @@ describe("App model switcher", () => {
         createProvider={createProvider}
         tools={[]}
         context={{ projectPath: join(sessionsDir, "project") }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         sessionsDir={sessionsDir}
         initialView="chat"
         commands={registry.getAll()}
@@ -737,7 +977,13 @@ describe("App model switcher", () => {
       await new Promise((resolve) => setTimeout(resolve, 20))
     }
 
-    return { ...instance, capturedMessages, handledBy, sessionsDir, typeAndSubmit, pressKey }
+    /** Records every frame so a timeout can show what the UI actually displayed. */
+    const lastFrame = () => {
+      latestFrame = (instance.lastFrame() ?? "").replace(/\u001B\[[0-9;]*m/g, "")
+      return instance.lastFrame() ?? ""
+    }
+
+    return { ...instance, lastFrame, capturedMessages, handledBy, sessionsDir, typeAndSubmit, pressKey }
   }
 
   it("switches models mid-session: status bar updates immediately, the next turn uses the new model, and totals accumulate", async () => {
@@ -753,9 +999,13 @@ describe("App model switcher", () => {
       await typeAndSubmit("/model")
       await until(() => (lastFrame() ?? "").includes("Alpha"))
       const frameWithPicker = lastFrame() ?? ""
-      expect(frameWithPicker).toContain("free-alpha · free")
-      expect(frameWithPicker).toContain("paid-beta · $2.00/M in · $8.00/M out")
+      // One flat row per model under a Provider heading, each named canonically.
+      expect(frameWithPicker).toContain("openrouter/free-alpha · free")
+      expect(frameWithPicker).toContain(
+        "openrouter/paid-beta · $2.00/M in · $8.00/M out",
+      )
 
+      // heading, then Alpha, then Beta
       for (let i = 0; i < 10 && !(lastFrame() ?? "").includes("> Beta"); i++) {
         stdin.write("\u001B[B")
         await new Promise((resolve) => setTimeout(resolve, 30))
@@ -763,9 +1013,9 @@ describe("App model switcher", () => {
       expect(lastFrame()).toContain("> Beta")
       await pressKey("\r")
 
-      await until(() => (lastFrame() ?? "").includes("Switched to Beta"))
+      await until(() => (lastFrame() ?? "").includes("Switched to openrouter/paid-beta"))
 
-      expect(lastFrame()).toContain("MODEL:paid-beta:ACTIVE")
+      expect(lastFrame()).toContain("MODEL:openrouter/paid-beta:ACTIVE")
       expect(lastFrame()).toContain("Tokens: 2")
 
       await typeAndSubmit("second question")
@@ -778,7 +1028,11 @@ describe("App model switcher", () => {
         if (!existsSync(sessionsDir)) return false
         const files = readdirSync(sessionsDir).filter((f) => f.endsWith(".json"))
         if (files.length === 0) return false
-        return files.some((f) => readFileSync(join(sessionsDir, f), "utf-8").includes("MODEL:paid-beta:ACTIVE"))
+        // The session records the canonical id, not the display name, so a
+        // resumed session can actually be routed again.
+        return files.some((f) =>
+          readFileSync(join(sessionsDir, f), "utf-8").includes('"model": "openrouter/paid-beta"'),
+        )
       })
 
       const handledCountBefore = handledBy.length
@@ -788,7 +1042,7 @@ describe("App model switcher", () => {
       await pressKey("\u001B")
       await until(() => !(lastFrame() ?? "").includes("Switch model"))
 
-      expect(lastFrame()).toContain("MODEL:paid-beta:ACTIVE")
+      expect(lastFrame()).toContain("MODEL:openrouter/paid-beta:ACTIVE")
       expect(handledBy.length).toBe(handledCountBefore)
     } finally {
       unmount()
@@ -924,7 +1178,7 @@ describe("App /new command", () => {
         provider={provider}
         tools={[stampTool]}
         context={{ projectPath: join(sessionsDir, "project") }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialSession={seedSession}
         sessionsDir={sessionsDir}
         commands={registry.getAll()}
@@ -947,7 +1201,7 @@ describe("App /new command", () => {
     return { ...instance, capturedMessages, sessionsDir, typeAndSubmit, pressKey }
   }
 
-  it("persists the current conversation and clears chat panel, sidebar entries and usage counters; the next message starts a brand-new session", async () => {
+  it("persists the current conversation and clears chat panel, usage panel entries and usage counters; the next message starts a brand-new session", async () => {
     const seed = makeSeedSession()
     const { lastFrame, capturedMessages, sessionsDir, typeAndSubmit, pressKey, unmount } = setupLifecycle(seed)
     try {
@@ -1048,7 +1302,7 @@ describe("App /exit command", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: join(sessionsDir, "project") }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialSession={seedSession}
         sessionsDir={sessionsDir}
         commands={registry.getAll()}
@@ -1162,7 +1416,7 @@ describe("App streaming guard for commands", () => {
         provider={hangingProvider}
         tools={[]}
         context={{ projectPath: "/tmp/guard-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1215,7 +1469,7 @@ describe("App status bar indicator", () => {
         provider={provider}
         tools={tools}
         context={{ projectPath: "/tmp/status-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1745,7 +1999,7 @@ describe("App chat scrolling", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/scroll-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1868,7 +2122,7 @@ describe("App fenced code block rendering", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/code-block-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -1937,7 +2191,7 @@ describe("App mouse wheel scrolling", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/wheel-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2011,7 +2265,7 @@ describe("Inline tool bubbles in chat", () => {
         provider={provider}
         tools={tools}
         context={{ projectPath: "/tmp/bubble-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2274,7 +2528,7 @@ describe("Usage panel", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/usage-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2363,7 +2617,7 @@ describe("Error surfacing", () => {
         provider={failingProvider}
         tools={[]}
         context={{ projectPath: "/tmp/err-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2393,7 +2647,7 @@ describe("Chat input mouse-byte immunity", () => {
         provider={createStubProvider([])}
         tools={[]}
         context={{ projectPath: "/tmp/x10-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2493,7 +2747,7 @@ describe("Chat input mouse-byte immunity", () => {
           provider={provider}
           tools={[]}
           context={{ projectPath: "/tmp/wheel-click-test" }}
-          initialApiKey="test-key"
+          keyFor={() => "test-key"}
           initialView="chat"
           commands={createTestCommands()}
         />,
@@ -2545,7 +2799,7 @@ describe("ChatInput word deletion", () => {
         provider={createStubProvider([])}
         tools={[]}
         context={{ projectPath: "/tmp/wdel-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -2629,7 +2883,7 @@ describe("App Input History recall", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/history-recall-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView={overrides?.initialView ?? "chat"}
         initialSession={overrides?.initialSession}
         sessionsDir={overrides?.sessionsDir}
@@ -2639,8 +2893,12 @@ describe("App Input History recall", () => {
     const frameText = () =>
       (instance.lastFrame() ?? "").replace(/\u001B\[[0-9;]*m/g, "")
     const inputValue = () => {
-      const line = frameText()
-        .split("\n")
+      const lines = frameText().split("\n")
+      const width = Math.max(0, ...lines.map((l) => l.length))
+      const usagePanelWidth = Math.max(30, Math.floor(width * 0.3))
+      const chatWidth = width - usagePanelWidth - 1
+      const line = lines
+        .map((l) => l.slice(0, Math.max(0, chatWidth)))
         .find((l) => l.trimStart().startsWith("→ "))
       return line ? line.replace(/^.*?→\s*/, "").trimEnd() : ""
     }
@@ -2874,7 +3132,7 @@ describe("App Input History lifecycle", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/history-lifecycle-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView={opts?.initialView ?? "chat"}
         initialSession={opts?.initialSession}
         sessionsDir={opts?.sessionsDir}
@@ -2884,8 +3142,12 @@ describe("App Input History lifecycle", () => {
     const frameText = () =>
       (instance.lastFrame() ?? "").replace(/\u001B\[[0-9;]*m/g, "")
     const inputValue = () => {
-      const line = frameText()
-        .split("\n")
+      const lines = frameText().split("\n")
+      const width = Math.max(0, ...lines.map((l) => l.length))
+      const usagePanelWidth = Math.max(30, Math.floor(width * 0.3))
+      const chatWidth = width - usagePanelWidth - 1
+      const line = lines
+        .map((l) => l.slice(0, Math.max(0, chatWidth)))
         .find((l) => l.trimStart().startsWith("→ "))
       return line ? line.replace(/^.*?→\s*/, "").trimEnd() : ""
     }
@@ -3076,7 +3338,7 @@ describe("App Input History lifecycle", () => {
       await until(() => frameText().includes("Switch to session"))
       await pressKey("\u001B[B")
       await pressKey("\r")
-      await until(() => frameText().includes("Switched to session sess_old"))
+      await until(() => frameText().includes("Switched to sess_old"))
       await until(() => frameText().includes("ancient question"))
 
       await pressKey("\u001B[A")
@@ -3103,7 +3365,7 @@ describe("App Command Suggestion gating for recall", () => {
         provider={createStubProvider(capturedMessages)}
         tools={[]}
         context={{ projectPath: "/tmp/suggestion-gating-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView="chat"
         commands={createTestCommands()}
       />,
@@ -3111,8 +3373,12 @@ describe("App Command Suggestion gating for recall", () => {
     const frameText = () =>
       (instance.lastFrame() ?? "").replace(/\u001B\[[0-9;]*m/g, "")
     const inputValue = () => {
-      const line = frameText()
-        .split("\n")
+      const lines = frameText().split("\n")
+      const width = Math.max(0, ...lines.map((l) => l.length))
+      const usagePanelWidth = Math.max(30, Math.floor(width * 0.3))
+      const chatWidth = width - usagePanelWidth - 1
+      const line = lines
+        .map((l) => l.slice(0, Math.max(0, chatWidth)))
         .find((l) => l.trimStart().startsWith("→ "))
       return line ? line.replace(/^.*?→\s*/, "").trimEnd() : ""
     }
@@ -3264,7 +3530,7 @@ describe("App welcome-first flow", () => {
         provider={provider}
         tools={[]}
         context={{ projectPath: "/tmp/welcome-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         commands={createCommands()}
       />,
     )
@@ -3342,7 +3608,7 @@ describe("Welcome screen mouse-byte immunity", () => {
         provider={createStubProvider([])}
         tools={[]}
         context={{ projectPath: "/tmp/welcome-mouse-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         commands={createTestCommands()}
       />,
     )
@@ -3408,7 +3674,7 @@ describe("Welcome screen New Chat", () => {
         provider={createStubProvider(capturedMessages)}
         tools={[]}
         context={{ projectPath: "/tmp/welcome-new-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialSession={seed}
         initialView="home"
         sessionsDir={sessionsDir}
@@ -3448,7 +3714,7 @@ describe("Welcome screen word deletion", () => {
         provider={createStubProvider([])}
         tools={[]}
         context={{ projectPath: "/tmp/welcome-wdel-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         commands={createTestCommands()}
       />,
     )
@@ -3505,7 +3771,7 @@ describe("Welcome screen cursor-aware editing (whole-App seam)", () => {
         provider={createStubProvider([])}
         tools={[]}
         context={{ projectPath: "/tmp/welcome-cursor-seam-test" }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         commands={createTestCommands()}
       />,
     )
@@ -3686,6 +3952,9 @@ describe("API key entry flow", () => {
       return createStubProvider(captured, events)
     }
     const savedKeys: string[] = []
+    const savedProviders: string[] = []
+    // Mirrors the real config object: saving a key changes what keyFor reports.
+    let savedKey: string | undefined
     const instance = render(
       <App
         provider={initial}
@@ -3693,9 +3962,12 @@ describe("API key entry flow", () => {
         tools={[]}
         context={{ projectPath: "/tmp/key-flow-test" }}
         initialView="chat"
+        keyFor={() => savedKey}
         commands={[...createTestCommands(), createKeyCommand()]}
-        onSaveApiKey={(key) => {
+        onSaveApiKey={(provider, key) => {
+          savedProviders.push(provider)
           savedKeys.push(key)
+          savedKey = key
         }}
       />,
     )
@@ -3716,6 +3988,7 @@ describe("API key entry flow", () => {
       await until(() => frameText().includes("authed reply"))
 
       expect(savedKeys).toEqual(["sk-or-v1-testkey"])
+      expect(savedProviders).toEqual(["openrouter"])
       expect(keysSeen).toEqual(["sk-or-v1-testkey"])
       expect(captured).toHaveLength(1)
       expect(JSON.stringify(captured[0])).toContain("hello without a key")
@@ -3734,8 +4007,9 @@ describe("API key entry flow", () => {
         tools={[]}
         context={{ projectPath: "/tmp/key-cmd-test" }}
         initialView="chat"
+        keyFor={() => undefined}
         commands={[...createTestCommands(), createKeyCommand()]}
-        onSaveApiKey={(key) => {
+        onSaveApiKey={(_provider, key) => {
           savedKeys.push(key)
         }}
       />,
@@ -3774,6 +4048,8 @@ describe("API key entry flow", () => {
       return createStubProvider(captured, events)
     }
     const removed: string[] = []
+    // Removing the key must be visible to the next submit, as it is in config.
+    let savedKey: string | undefined = "test-key"
     const instance = render(
       <App
         provider={initial}
@@ -3781,10 +4057,11 @@ describe("API key entry flow", () => {
         tools={[]}
         context={{ projectPath: "/tmp/key-remove-test" }}
         initialView="chat"
-        initialApiKey="test-key"
+        keyFor={() => savedKey}
         commands={[...createTestCommands(), createKeyCommand()]}
-        onRemoveApiKey={() => {
-          removed.push("removed")
+        onRemoveApiKey={(provider) => {
+          removed.push(provider)
+          savedKey = undefined
         }}
       />,
     )
@@ -3794,9 +4071,9 @@ describe("API key entry flow", () => {
 
       await typeInto(instance, "/key remove")
       instance.stdin.write("\r")
-      await until(() => frameText().includes("API key removed"))
+      await until(() => frameText().includes("Removed the OpenRouter API key"))
 
-      expect(removed).toHaveLength(1)
+      expect(removed).toEqual(["openrouter"])
 
       await typeInto(instance, "hello after removal")
       instance.stdin.write("\r")
@@ -3815,6 +4092,7 @@ describe("API key entry flow", () => {
         tools={[]}
         context={{ projectPath: "/tmp/key-center-test" }}
         initialView="chat"
+        keyFor={() => undefined}
         commands={[...createTestCommands(), createKeyCommand()]}
       />,
     )
@@ -3852,7 +4130,7 @@ describe("API key entry flow", () => {
 })
 
 describe("Mode switching via Tab", () => {
-  function setupModeSwitching(initialView: "home" | "chat" = "chat", providerOverride?: Provider) {
+  function setupModeSwitching(initialView: "home" | "chat" = "chat", providerOverride?: Provider, initialSession?: Session) {
     const projectDir = mkdtempSync(join(tmpdir(), "vicode-mode-"))
     mkdirSync(join(projectDir, ".vicode", "skills"), { recursive: true })
     writeFileSync(
@@ -3878,8 +4156,9 @@ describe("Mode switching via Tab", () => {
         provider={provider}
         tools={allTools}
         context={{ projectPath: projectDir }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialView={initialView}
+        initialSession={initialSession}
         commands={registry.getAll()}
       />,
     )
@@ -3963,24 +4242,64 @@ describe("Mode switching via Tab", () => {
     }
   }, 30000)
 
-  it("renders the active Mode Tag in the chat input box on each Tab, and never in the status bar", async () => {
+  it("renders every Mode name with the active one tagged in the chat input box on each Tab, and never in the status bar", async () => {
     const { instance, frameText, projectDir, pressTab } = setupModeSwitching()
     const statusLine = () => frameLines(instance.lastFrame).findLast((l) => l.includes("Tokens:")) ?? ""
+    const modeStrip = () => frameLines(instance.lastFrame).findLast((l) => l.includes("Build") && l.includes("Plan") && l.includes("Discuss")) ?? ""
     try {
       await until(() => frameText().includes("Type your message"))
-      expect(frameText()).toContain("[Build]")
+      expect(modeStrip()).toContain("[Build]")
+      expect(modeStrip().replace(/[[\]]/g, "").trim()).toBe("Build Discuss Plan")
       expect(statusLine()).not.toContain("[Build]")
 
       await pressTab()
       await until(() => frameText().includes("[Discuss]"))
+      expect(modeStrip()).toContain("[Discuss]")
+      expect(modeStrip().replace(/[[\]]/g, "").trim()).toBe("Build Discuss Plan")
       expect(statusLine()).not.toContain("[Discuss]")
 
       await pressTab()
       await until(() => frameText().includes("[Plan]"))
+      expect(modeStrip()).toContain("[Plan]")
+      expect(modeStrip().replace(/[[\]]/g, "").trim()).toBe("Build Discuss Plan")
       expect(statusLine()).not.toContain("[Plan]")
 
       await pressTab()
       await until(() => frameText().includes("[Build]"))
+    } finally {
+      instance.unmount()
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("keeps the Mode Switcher and the first-message draft on separate rows on a 24-row terminal", async () => {
+    const resumable: Session = {
+      id: "sess_mode_strip",
+      model: "stub-model",
+      messages: [],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:35:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    const { instance, frameText, projectDir } = setupModeSwitching("home", undefined, resumable)
+    const draftRow = () =>
+      frameLines(instance.lastFrame).findLast((l) => l.includes("first-message draft")) ?? ""
+    try {
+      await until(() => frameText().includes("Ask anything or select an option"))
+      for (const char of "first-message draft") {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      await until(() => draftRow().includes("first-message draft"))
+
+      const lines = frameLines(instance.lastFrame)
+      const isStrip = (l: string) => l.includes("Build") && l.includes("Plan") && l.includes("Discuss")
+      const stripRow = lines.findIndex(isStrip)
+      const inputRow = lines.findIndex((l) => l.includes("first-message draft"))
+      expect(stripRow).toBeGreaterThanOrEqual(0)
+      expect(inputRow).toBe(stripRow + 1)
+      expect(lines[stripRow]).not.toContain("first-message draft")
     } finally {
       instance.unmount()
       rmSync(projectDir, { recursive: true, force: true })
@@ -4093,7 +4412,7 @@ describe("Mode persistence across sessions", () => {
         provider={provider}
         tools={allTools}
         context={{ projectPath: projectDir }}
-        initialApiKey="test-key"
+        keyFor={() => "test-key"}
         initialSession={opts.initialSession}
         initialView="chat"
         sessionsDir={sessionsDir}

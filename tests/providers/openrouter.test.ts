@@ -1,195 +1,76 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { convertMessages, convertTools, createOpenRouterProvider, type ListModelsOptions } from "@/providers/openrouter"
+import { describe, it, expect } from "bun:test"
+import { convertMessages, convertTools, createOpenRouterProvider } from "@/providers/openrouter"
+import { createProvider, UnsupportedModelError, UnknownProviderError } from "@/providers"
 import type { Message, ToolDefinition } from "@/core/types"
 import { z } from "zod"
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from "fs"
-import { join } from "path"
-import { tmpdir } from "os"
-import type { ModelListing } from "@/core/provider"
 
-function makeFetchOk(models: unknown[]): typeof fetch {
-  return (async () =>
-    new Response(JSON.stringify({ data: models }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    })) as unknown as typeof fetch
-}
-
-function makeFetchFailing(): typeof fetch {
-  return (async () => {
-    throw new Error("network unreachable")
-  }) as unknown as typeof fetch
-}
-
-const OPENROUTER_MODELS = [
-  {
-    id: "deepseek/deepseek-r1:free",
-    name: "DeepSeek: R1 (free)",
-    pricing: { prompt: "0", completion: "0" },
-  },
-  {
-    id: "anthropic/claude-sonnet-4",
-    name: "Anthropic: Claude Sonnet 4",
-    pricing: { prompt: "0.000003", completion: "0.000015" },
-  },
-]
-
-describe("provider.listModels", () => {
-  let tempDir: string
-  let cachePath: string
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "vicode-models-test-"))
-    cachePath = join(tempDir, "models-cache.json")
+describe("createOpenRouterProvider", () => {
+  it("reports the model as a canonical, provider-qualified id", () => {
+    const provider = createOpenRouterProvider({
+      apiKey: "test-key",
+      model: "anthropic/claude-sonnet-4",
+    })
+    const info = provider.getModelInfo()
+    expect(info.id).toBe("openrouter/anthropic/claude-sonnet-4")
+    expect(info.provider).toBe("openrouter")
   })
 
-  function cleanup(): void {
-    rmSync(tempDir, { recursive: true, force: true })
-  }
+  it("exposes streamChat, summarize and listModels", () => {
+    const provider = createOpenRouterProvider({ apiKey: "test-key", model: "openai/gpt-4o" })
+    expect(typeof provider.streamChat).toBe("function")
+    expect(typeof provider.summarize).toBe("function")
+    expect(typeof provider.listModels).toBe("function")
+  })
+})
 
-  function makeOpts(overrides?: Partial<ListModelsOptions>): ListModelsOptions {
-    return { cachePath, ...overrides }
-  }
-
-  function provider(opts?: Partial<ListModelsOptions>) {
-    return createOpenRouterProvider(
-      { apiKey: "test-key", model: "anthropic/claude-sonnet-4" },
-      makeOpts(opts),
+describe("createProvider", () => {
+  it("rejects a model id with no provider prefix", () => {
+    expect(() => createProvider({ model: "gpt-4o", apiKey: "k" })).toThrow(
+      /not provider-qualified/,
     )
-  }
-
-  it("fetches models and distinguishes free from paid", async () => {
-    let calls = 0
-    const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
-      calls++
-      expect(String(input)).toBe("https://openrouter.ai/api/v1/models")
-      return new Response(JSON.stringify({ data: OPENROUTER_MODELS }), { status: 200 })
-    }) as unknown as typeof fetch
-
-    const result = await provider({ fetchImpl }).listModels()
-
-    expect(calls).toBe(1)
-    expect(result).toHaveLength(2)
-    expect(result[0]).toEqual({
-      id: "deepseek/deepseek-r1:free",
-      name: "DeepSeek: R1 (free)",
-      pricing: { kind: "free" },
-    })
-    expect(result[1]?.id).toBe("anthropic/claude-sonnet-4")
-    expect(result[1]?.name).toBe("Anthropic: Claude Sonnet 4")
-    expect(result[1]?.pricing).toEqual({
-      kind: "paid",
-      inputPricePerToken: 0.000003,
-      outputPricePerToken: 0.000015,
-    })
   })
 
-  it("writes the cache on a successful fetch", async () => {
-    try {
-      await provider({ fetchImpl: makeFetchOk(OPENROUTER_MODELS) }).listModels()
+  it("routes OpenRouter through its own SDK", () => {
+    const provider = createProvider({ model: "openrouter/openai/gpt-4o", apiKey: "k" })
+    expect(provider.getModelInfo().id).toBe("openrouter/openai/gpt-4o")
+  })
 
-      expect(existsSync(cachePath)).toBe(true)
-      const cached = JSON.parse(readFileSync(cachePath, "utf-8")) as { models: ModelListing[] }
-      expect(cached.models).toHaveLength(2)
-      expect(cached.models[0]).toEqual({
-        id: "deepseek/deepseek-r1:free",
-        name: "DeepSeek: R1 (free)",
-        pricing: { kind: "free" },
-      })
-    } finally {
-      cleanup()
+  it("routes the Providers with a fixed transport without needing the catalog", () => {
+    for (const [model, expected] of [
+      ["openai/gpt-5.3-codex", "openai"],
+      ["anthropic/claude-opus-5-5", "anthropic"],
+    ] as const) {
+      const provider = createProvider({ model, apiKey: "k" })
+      expect(provider.getModelInfo().provider).toBe(expected)
     }
   })
 
-  it("falls back to the cache when the fetch fails", async () => {
-    try {
-      writeFileSync(
-        cachePath,
-        JSON.stringify({
-          fetchedAt: "2026-01-01T00:00:00.000Z",
-          models: [
-            {
-              id: "openai/gpt-4o",
-              name: "OpenAI: GPT-4o",
-              pricing: { kind: "paid", inputPricePerToken: 0.0000025, outputPricePerToken: 0.00001 },
-            },
-          ],
-        }),
-        "utf-8",
-      )
-
-      const result = await provider({ fetchImpl: makeFetchFailing() }).listModels()
-
-      expect(result).toEqual([
-        {
-          id: "openai/gpt-4o",
-          name: "OpenAI: GPT-4o",
-          pricing: { kind: "paid", inputPricePerToken: 0.0000025, outputPricePerToken: 0.00001 },
-        },
-      ])
-    } finally {
-      cleanup()
-    }
+  it("needs the catalog to route the gateways, which speak per-model protocols", () => {
+    // Zen and Go have no single transport: with no catalog loaded there is no
+    // way to know which wire format a given model wants, so this must fail
+    // loudly rather than guess a dialect.
+    expect(() => createProvider({ model: "opencode/claude-sonnet-4", apiKey: "k" })).toThrow(
+      UnsupportedModelError,
+    )
+    expect(() => createProvider({ model: "opencode-go/grok-code", apiKey: "k" })).toThrow(
+      UnsupportedModelError,
+    )
   })
 
-  it("rejects with a clear error when the fetch fails and no cache exists", async () => {
-    try {
-      let result: ModelListing[] | undefined
-      let error: unknown
-      try {
-        result = await provider({ fetchImpl: makeFetchFailing() }).listModels()
-      } catch (e) {
-        error = e
-      }
-
-      expect(result).toBeUndefined()
-      expect(error).toBeInstanceOf(Error)
-      expect((error as Error).message).toContain("no cached model list")
-    } finally {
-      cleanup()
-    }
+  it("throws UnsupportedModelError when the catalog has no protocol for the model", () => {
+    expect(() => createProvider({ model: "opencode/gemini-3-pro", apiKey: "k" })).toThrow(
+      UnsupportedModelError,
+    )
   })
 
-  it("treats a non-200 response as failure and serves the cache", async () => {
-    try {
-      writeFileSync(
-        cachePath,
-        JSON.stringify({
-          fetchedAt: "2026-01-01T00:00:00.000Z",
-          models: [{ id: "m/1", name: "Model One", pricing: { kind: "free" } }],
-        }),
-        "utf-8",
-      )
-
-      const fetchImpl = (async () => new Response("rate limited", { status: 429 })) as unknown as typeof fetch
-      const result = await provider({ fetchImpl }).listModels()
-
-      expect(result).toEqual([{ id: "m/1", name: "Model One", pricing: { kind: "free" } }])
-    } finally {
-      cleanup()
-    }
+  it("throws UnknownProviderError for a provider that is not in the registry", () => {
+    expect(() => createProvider({ model: "google/gemini-3-pro", apiKey: "k" })).toThrow(
+      UnknownProviderError,
+    )
+    expect(() => createProvider({ model: "google/gemini-3-pro", apiKey: "k" })).toThrow(
+      /not a known Provider/,
+    )
   })
-
-  it("treats a malformed cache file as missing", async () => {
-    try {
-      mkdirSync(tempDir, { recursive: true })
-      writeFileSync(cachePath, "{ not valid json", "utf-8")
-
-      let error: unknown
-      try {
-        await provider({ fetchImpl: makeFetchFailing() }).listModels()
-      } catch (e) {
-        error = e
-      }
-
-      expect(error).toBeInstanceOf(Error)
-      expect((error as Error).message).toContain("no cached model list")
-    } finally {
-      cleanup()
-    }
-  })
-
-  afterEach(cleanup)
 })
 
 describe("convertMessages", () => {

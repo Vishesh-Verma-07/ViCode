@@ -1,7 +1,8 @@
 import type { Message, ToolDefinition } from "./types"
+import type { ProviderId } from "./providers"
 
 export interface StreamEvent {
-  type: "text-delta" | "tool-call-start" | "tool-call-delta" | "tool-call-end" | "finish" | "error"
+  type: "text-delta" | "reasoning-delta" | "tool-call-start" | "tool-call-delta" | "tool-call-end" | "finish" | "error"
   text?: string
   toolCallId?: string
   toolName?: string
@@ -16,12 +17,23 @@ export interface TokenUsage {
   outputTokens: number
   totalTokens: number
   cost: number
+  /** Prompt tokens served from the Provider's cache. A subset of inputTokens. */
+  cacheReadTokens?: number
+  /** Prompt tokens written to the Provider's cache. A subset of inputTokens. */
+  cacheWriteTokens?: number
+  /**
+   * Output tokens spent reasoning. A subset of outputTokens — already billed
+   * as output, so this is a breakdown, not an extra charge.
+   */
+  reasoningTokens?: number
 }
 
 export interface ModelInfo {
   id: string
   name: string
   contextLength?: number
+  /** The Provider serving this Model, as a canonical `provider/model` prefix. */
+  provider?: ProviderId
 }
 
 export type ModelListingPricing =

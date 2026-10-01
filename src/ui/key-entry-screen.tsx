@@ -3,26 +3,33 @@ import { Box, Text, useInput } from "ink"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { deletePreviousWord } from "./word-delete"
 import { COLORS, ICONS } from "./theme"
-
-const OPENROUTER_KEY_URL = "https://openrouter.ai/keys"
-const KEY_PREFIX_HINT = /^sk-or-v1-/
+import { getProvider, type ProviderId } from "../core/providers"
 
 interface KeyEntryScreenProps {
+  /** The Provider whose key is being collected. */
+  provider: ProviderId
   requireKey?: boolean
   initialValue?: string
   onSubmit: (apiKey: string) => void
   onCancel?: () => void
 }
 
+/**
+ * No key-format validation. OpenRouter's `sk-or-v1-` prefix was the only one
+ * ever verifiable, and the vendors do not document theirs — rejecting an
+ * unfamiliar key would block valid ones. An empty key is still refused,
+ * because that is never useful.
+ */
 export function KeyEntryScreen({
+  provider,
   requireKey = false,
   initialValue = "",
   onSubmit,
   onCancel,
 }: KeyEntryScreenProps) {
+  const descriptor = getProvider(provider)
   const [value, setValue] = useState(initialValue)
   const [warning, setWarning] = useState("")
-  const [confirmOverride, setConfirmOverride] = useState(false)
   const [saved, setSaved] = useState(false)
   const filterStateRef = useRef<MouseInputFilterState>(MOUSE_INPUT_FILTER_INITIAL)
   const valueRef = useRef(value)
@@ -35,17 +42,8 @@ export function KeyEntryScreen({
   const submit = () => {
     const trimmed = valueRef.current.trim()
     if (!trimmed) {
-      setWarning(`Enter your OpenRouter API key to continue. Get one at ${OPENROUTER_KEY_URL}`)
+      setWarning(`Enter your ${descriptor.label} API key to continue. Get one at ${descriptor.keyUrl}`)
       return
-    }
-    if (!KEY_PREFIX_HINT.test(trimmed)) {
-      if (!confirmOverride) {
-        setConfirmOverride(true)
-        setWarning(
-          "This doesn't look like an OpenRouter key (expected sk-or-v1-...). Press Enter again to save anyway.",
-        )
-        return
-      }
     }
     setSaved(true)
     onSubmit(trimmed)
@@ -62,7 +60,7 @@ export function KeyEntryScreen({
   const cancel = () => {
     if (requireKey) {
       setWarning(
-        `An API key is required to chat. Get one at ${OPENROUTER_KEY_URL} or press Ctrl+C to quit.`,
+        `An API key is required to chat on ${descriptor.label}. Get one at ${descriptor.keyUrl} or press Ctrl+C to quit.`,
       )
       return
     }
@@ -87,15 +85,11 @@ export function KeyEntryScreen({
       (key.ctrl && (input === "w" || input === "\u0017")) ||
       ((key.backspace || key.delete) && (key.ctrl || key.meta))
     ) {
-      const next = deletePreviousWord(valueRef.current)
-      setConfirmOverride(false)
-      commit(next)
+      commit(deletePreviousWord(valueRef.current))
       return
     }
     if (key.backspace || key.delete) {
-      const next = valueRef.current.slice(0, -1)
-      setConfirmOverride(false)
-      commit(next)
+      commit(valueRef.current.slice(0, -1))
       return
     }
     if (!input || key.ctrl || key.meta || key.tab || key.upArrow || key.downArrow || key.leftArrow || key.rightArrow || key.pageUp || key.pageDown || key.home || key.end) {
@@ -104,32 +98,35 @@ export function KeyEntryScreen({
     const result = filterMouseInput(input, filterStateRef.current)
     filterStateRef.current = result.state
     if (result.keptInput.length > 0) {
-      const wasConfirming = confirmOverride
-      setConfirmOverride(false)
       setWarning("")
-      if (wasConfirming) {
-        commit(result.keptInput)
-      } else {
-        commit(valueRef.current + result.keptInput)
-      }
+      commit(valueRef.current + result.keptInput)
     }
   })
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={COLORS.primary} paddingX={2} paddingY={1} width={72} flexShrink={0}>
       <Text bold color={COLORS.primary}>
-        {requireKey ? `${ICONS.dot} OpenRouter API key required` : "OpenRouter API key"}
+        {requireKey ? `${ICONS.dot} ${descriptor.label} API key required` : `${descriptor.label} API key`}
       </Text>
       <Text color={COLORS.muted} wrap="truncate-end">
-        Your key is stored in ~/.vicode/config.json and used for all projects. {requireKey ? "You need it to chat." : ""}
+        Stored in ~/.vicode/config.json and used for all projects.
       </Text>
+      {requireKey ? (
+        <Text color={COLORS.muted} wrap="truncate-end">
+          You need one to chat on this provider.
+        </Text>
+      ) : (
+        <Text color={COLORS.muted} wrap="truncate-end">
+          Other providers keep their own keys.
+        </Text>
+      )}
       <Box marginTop={1} backgroundColor={COLORS.inputShade} paddingX={2} paddingY={1}>
         <Text>
           <Text color={COLORS.primary} bold>{ICONS.arrow} </Text>
           {value ? (
             <Text color={COLORS.text}>{value}</Text>
           ) : (
-            <Text color={COLORS.muted} italic>sk-or-v1-...</Text>
+            <Text color={COLORS.muted} italic>paste your key</Text>
           )}
           <Text inverse> </Text>
         </Text>
@@ -140,7 +137,7 @@ export function KeyEntryScreen({
         </Text>
       ) : null}
       <Box marginTop={1} flexDirection="column">
-        <Text color={COLORS.dimText}>Get a key at https://openrouter.ai/keys</Text>
+        <Text color={COLORS.dimText}>Get a key at {descriptor.keyUrl}</Text>
         <Text color={COLORS.dimText}>
           Enter Save • {requireKey ? "Esc Help" : "Esc Cancel"} • Ctrl+C {requireKey ? "Quit" : "Cancel"}
         </Text>

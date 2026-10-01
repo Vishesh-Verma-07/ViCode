@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApp } from "ink"
-import type { Command, CommandContext, Message, PickerRequest, ToolContext, ToolDefinition } from "../core/types"
+import type { Command, CommandContext, Message, PickerRequest, ProviderOffering, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
-import type { Provider, TokenUsage } from "../core/provider"
+import type { ModelListing, Provider, TokenUsage } from "../core/provider"
+import type { ProviderId } from "../core/providers"
+import { ensureCatalog, loadCatalogOffline, listCatalogModels } from "../core/catalog"
+import { listProviders } from "../core/providers"
+import { formatModelId, LEGACY_PROVIDER, parseModelId } from "../core/model-id"
 import { runAgentLoop } from "../core/agent-loop"
 import { assembleSystemPrompt } from "../core/system-prompt"
 import { DEFAULT_MODE, MODES, cycleMode as cycleModeId, findMode, selectModeTools, type ModeDefinition, type ModeId } from "../core/modes"
 import { compactHistory } from "../core/compaction"
 import { CommandRegistry } from "../core/command-registry"
 import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
-import { createSession, saveSession } from "../core/session"
+import { createSession, renameSession, saveSession } from "../core/session"
 import { discoverSkills } from "../core/skills"
 import { log } from "../utils/logger"
 import { extractDiff } from "./format"
@@ -30,9 +34,41 @@ export interface ToolCallEntry {
 
 const DONE_REVERT_MS = 3000
 
+/**
+ * Every Provider with the Models it offers, in registry order. Driven by the
+ * Model Catalog rather than per-Provider listing endpoints, so one load fills
+ * all five (ADR-0005).
+ */
+async function listOfferings(
+  resolveKey: (provider: ProviderId) => string | undefined,
+): Promise<ProviderOffering[]> {
+  // Never block the picker on the network. Whatever is already known is shown
+  // now; a refresh runs alongside and simply lands in time for next time.
+  void ensureCatalog().catch(() => {
+    // Offline: prices and context limits stay unknown rather than failing.
+  })
+  const catalog = loadCatalogOffline()
+  return listProviders().map((descriptor) => ({
+    provider: descriptor.id,
+    label: descriptor.label,
+    kind: descriptor.kind,
+    billingNote: descriptor.billingNote,
+    models: listCatalogModels(descriptor.id, catalog),
+    hasKey: resolveKey(descriptor.id) !== undefined,
+  }))
+}
+
+/**
+ * The Model a Provider lands on when the current one is not offered there:
+ * its cheapest paid model. Free models are skipped because a free tier is
+ * rate-limited and, on some gateways, refuses third-party clients outright.
+ */
+function defaultModelFor(offering: ProviderOffering): ModelListing | undefined {
+  return offering.models.find((m) => m.pricing.kind === "paid") ?? offering.models[0]
+}
+
 export interface UseAgentSessionArgs {
   provider: Provider
-  createProvider?: (modelId: string, apiKey?: string) => Provider
   tools: ToolDefinition[]
   projectPrompt?: string
   cliPrompt?: string
@@ -46,10 +82,15 @@ export interface UseAgentSessionArgs {
   view: "home" | "chat"
   enterChat: () => void
   enterHome: () => void
-  apiKey?: string
-  ensureKey?: () => Promise<boolean>
-  openKeyEntry?: () => Promise<boolean>
-  removeApiKey?: () => Promise<boolean>
+  /**
+   * Resolves a Provider's key, consulting the environment as a fallback.
+   * Injected so the session never reads config or `process.env` itself.
+   */
+  keyFor: (provider: ProviderId) => string | undefined
+  createProvider?: (canonicalModelId: string, apiKey: string) => Provider
+  ensureKeyFor?: (provider: ProviderId) => Promise<boolean>
+  openKeyEntryFor?: (provider: ProviderId) => Promise<boolean>
+  removeApiKeyFor?: (provider: ProviderId) => Promise<boolean>
 }
 
 export interface AgentSession {
@@ -75,7 +116,8 @@ export interface AgentSession {
   resolveApproval: (approved: boolean) => void
   requestExitSummary: () => void
   abortCurrent: () => void
-  applyApiKey: (apiKey: string) => void
+  /** Records a newly-entered key for a Provider and rebuilds it. */
+  applyApiKey: (provider: ProviderId, apiKey: string) => void
 }
 
 /**
@@ -99,10 +141,10 @@ export function useAgentSession({
   view,
   enterChat,
   enterHome,
-  apiKey,
-  ensureKey,
-  openKeyEntry,
-  removeApiKey,
+  keyFor,
+  ensureKeyFor,
+  openKeyEntryFor,
+  removeApiKeyFor,
 }: UseAgentSessionArgs): AgentSession {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
@@ -125,23 +167,69 @@ export function useAgentSession({
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
   const providerRef = useRef<Provider>(provider)
-  const apiKeyRef = useRef(apiKey ?? "")
+  /**
+   * Keys as they stand at runtime. Seeded from `keyFor` (config plus
+   * environment) and updated when a key is entered, so a Provider switch never
+   * has to re-read either.
+   */
+  const keysRef = useRef<Partial<Record<ProviderId, string>>>({})
   const { exit } = useApp()
+
+  const resolveKey = useCallback(
+    (provider: ProviderId) => keysRef.current[provider] ?? keyFor(provider),
+    [keyFor],
+  )
+
+  /** The active Provider, taken from the live provider's model info. */
+  const currentProvider = useCallback((): ProviderId => {
+    const info = providerRef.current.getModelInfo()
+    if (info.provider) return info.provider
+    return parseModelId(info.id).provider ?? LEGACY_PROVIDER
+  }, [])
+
+  /**
+   * Rebuilds the Provider from a canonical id. Refuses when the target
+   * Provider has no key, so a route is never switched onto a credential that
+   * does not exist.
+   */
+  const switchTo = useCallback(
+    (canonicalModelId: string): boolean => {
+      if (!createProvider) return false
+      const parsed = parseModelId(canonicalModelId)
+      if (!parsed.provider) return false
+      const key = resolveKey(parsed.provider)
+      if (!key) return false
+      const next = createProvider(canonicalModelId, key)
+      providerRef.current = next
+      setProviderState(next)
+      return true
+    },
+    [createProvider, resolveKey],
+  )
 
   useEffect(() => {
     providerRef.current = providerState
   }, [providerState])
 
   const applyApiKey = useCallback(
-    (nextApiKey: string) => {
-      apiKeyRef.current = nextApiKey
+    (provider: ProviderId, nextApiKey: string) => {
+      if (nextApiKey) {
+        keysRef.current[provider] = nextApiKey
+      } else {
+        delete keysRef.current[provider]
+      }
       if (!createProvider) return
-      const modelId = providerState.getModelInfo().id
-      const next = createProvider(modelId, nextApiKey)
+
+      // A key only takes effect on the live route. Entering one for another
+      // Provider stores it without moving the conversation — switching there is
+      // what `/provider` and `/model` are for.
+      if (currentProvider() !== provider) return
+
+      const next = createProvider(providerRef.current.getModelInfo().id, resolveKey(provider) ?? "")
       providerRef.current = next
       setProviderState(next)
     },
-    [createProvider, providerState],
+    [createProvider, currentProvider, resolveKey],
   )
 
   useEffect(() => {
@@ -253,6 +341,12 @@ export function useAgentSession({
                 })
               },
               startFresh: clearSessionState,
+              rename: (name) => {
+                if (!session) return
+                const renamed = renameSession(session, name)
+                saveSession(renamed, sessionsDir)
+                setSession(renamed)
+              },
             }
           : undefined,
         exit: {
@@ -263,12 +357,38 @@ export function useAgentSession({
         },
         models: createProvider
           ? {
-              list: () => providerRef.current.listModels(),
+              listProviders: () => listOfferings(resolveKey),
               getCurrentModelId: () => providerRef.current.getModelInfo().id,
-              switchTo: (modelId) => {
-                const next = createProvider(modelId, apiKeyRef.current)
-                providerRef.current = next
-                setProviderState(next)
+              getCurrentProvider: currentProvider,
+              switchTo,
+            }
+          : undefined,
+        providers: createProvider
+          ? {
+              list: () => listOfferings(resolveKey),
+              getCurrent: currentProvider,
+              switchTo: async (provider: ProviderId) => {
+                const offering = (await listOfferings(resolveKey)).find((o) => o.provider === provider)
+                if (!offering) return `Unknown provider ${provider}.`
+
+                const parsed = parseModelId(providerRef.current.getModelInfo().id)
+                const kept = offering.models.find((m) => m.id === parsed.model)
+                const target = kept ?? defaultModelFor(offering)
+                if (!target) {
+                  return `${offering.label} has no models ViCode can call.`
+                }
+
+                if (!resolveKey(provider) && ensureKeyFor) {
+                  const got = await ensureKeyFor(provider)
+                  if (!got) return `No API key for ${offering.label}. Set one with /key ${provider}.`
+                }
+
+                if (!switchTo(formatModelId(provider, target.id))) {
+                  return resolveKey(provider)
+                    ? `Cannot talk to ${target.id} on ${offering.label}.`
+                    : `No API key for ${offering.label}. Set one with /key ${provider}.`
+                }
+                return formatModelId(provider, target.id)
               },
             }
           : undefined,
@@ -297,13 +417,13 @@ export function useAgentSession({
                   }
 
                   const base = session ?? createSession({
-                    model: providerRef.current.getModelInfo().name,
+                    model: providerRef.current.getModelInfo().id,
                     messages: result.messages,
                   })
                   const savedSession: Session = {
                     ...base,
                     messages: result.messages,
-                    model: providerRef.current.getModelInfo().name,
+                    model: providerRef.current.getModelInfo().id,
                     updatedAt: new Date().toISOString(),
                     totalTokens: base.totalTokens + (result.usage?.totalTokens ?? 0),
                     totalCost: base.totalCost + (result.usage?.cost ?? 0),
@@ -328,10 +448,11 @@ export function useAgentSession({
               },
             }
           : undefined,
-        key: openKeyEntry
+        key: openKeyEntryFor
           ? {
-              set: () => openKeyEntry(),
-              remove: removeApiKey ?? (async () => false),
+              set: (provider) => openKeyEntryFor(provider ?? currentProvider()),
+              remove: (provider) =>
+                (removeApiKeyFor ?? (async () => false))(provider ?? currentProvider()),
             }
           : undefined,
         onSkillActivate: (content: string) => {
@@ -352,8 +473,8 @@ export function useAgentSession({
         return
       }
 
-      if (ensureKey) {
-        const ok = await ensureKey()
+      if (ensureKeyFor) {
+        const ok = await ensureKeyFor(currentProvider())
         if (!ok) return
       }
 
@@ -484,13 +605,13 @@ export function useAgentSession({
 
           if (sessionsDir) {
             const activeSession = session ?? createSession({
-              model: providerRef.current.getModelInfo().name,
+              model: providerRef.current.getModelInfo().id,
               messages: result.messages,
             })
             const savedSession: Session = {
               ...activeSession,
               messages: result.messages,
-              model: providerRef.current.getModelInfo().name,
+              model: providerRef.current.getModelInfo().id,
               updatedAt: new Date().toISOString(),
               totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
               totalCost: activeSession.totalCost + result.totalUsage.cost,
@@ -527,7 +648,7 @@ export function useAgentSession({
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, providerState, createProvider, tools, projectPrompt, cliPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, activeMode, view, enterChat, enterHome, resetDraft, clearSessionState, ensureKey, openKeyEntry],
+    [messages, providerState, createProvider, tools, projectPrompt, cliPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, activeMode, view, enterChat, enterHome, resetDraft, clearSessionState, ensureKeyFor, openKeyEntryFor, currentProvider, switchTo, resolveKey],
   )
 
   return {

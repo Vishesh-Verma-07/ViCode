@@ -35,14 +35,31 @@ _Avoid_: silent command, approval-free bash
 ### Model access
 
 **Provider**:
-An LLM backend (e.g., OpenRouter) that the agent sends messages to and receives responses from, abstracted behind a `Provider` interface.
+A credentialed route to an LLM backend that the agent sends messages to and receives responses from — a base URL, an API Key, and a set of Models. Five exist: `openrouter`, `openai`, `anthropic`, `opencode` (Zen), `opencode-go` (Go). One Model is reachable through more than one Provider, so a Model alone never identifies the route.
+_Avoid_: backend, vendor, engine (a Provider is a route you pay through, not a company)
+
+**Provider kind**:
+Whether a Provider is a **vendor** (`openai`, `anthropic` — first-party, billed by its maker) or a **gateway** (`openrouter`, `opencode`, `opencode-go` — resells other Vendors' Models and adds its own margin). This is why the same Model can cost different amounts through different Providers.
+_Avoid_: tier, plan type
+
+**Model Vendor**:
+The company that trains a Model. Independent of any Provider: Anthropic is the Model Vendor for `claude-opus-5-5` whether it is reached through `anthropic` or through `opencode`.
+_Avoid_: provider (the two are not interchangeable), lab
+
+**Model**:
+A specific language model as offered by a Provider, identified by a `provider/model` id. A Model has a context window and a price, both read from the Model Catalog rather than assumed.
+_Avoid_: checkpoint, model name
+
+**Model Catalog**:
+The catalogue of Models, prices, and context windows fetched from models.dev and cached locally. It is the only source of pricing and context length; when it has no entry for a Model, cost reads as zero and the context window falls back to a default rather than the app failing.
+_Avoid_: model list (collides with the per-Provider listing the picker shows)
 
 **API Key**:
-The credential that authenticates the user to the Provider. Stored as the `apiKey` field of the Global Config. It is a credential, not a configuration choice, so it lives in the global config file rather than the project config.
+The credential that authenticates the user to one Provider. Each Provider holds its own, so the Global Config holds a map of them. It is a credential, not a configuration choice, so keys live in the global config file rather than the project config. OpenCode Zen and OpenCode Go share a single key — one console, one key, two routes.
 _Avoid_: token (ambiguity with LLM token budget), secret key
 
 **API Key Entry Screen**:
-The focused full-overlay surface that prompts the user for an API Key when one is missing. It has two modes: required (must be satisfied before the user can chat, Cancel disabled) and optional (dismissible, opened via `/key`). Saving the key runs the current Session's pending request and the provider is recreated with the fresh key.
+The focused full-overlay surface that prompts the user for the active Provider's API Key when that Provider has none. It has two modes: required (must be satisfied before the user can chat on that Provider, Cancel disabled) and optional (dismissible, opened via `/key`). It names the Provider it is collecting a key for. A missing key for one Provider never blocks chatting through another. Saving the key runs the current Session's pending request and the Provider is recreated with the fresh key.
 _Avoid_: key screen, key modal, credential prompt
 
 **Global Config**:
@@ -50,13 +67,17 @@ The `~/.vicode/config.json` file. Config Layering gives it priority below Projec
 _Avoid_: settings file, config file (unqualified)
 
 **Config Layering**:
-Configuration priority: project config (.vicode.json) > global config (~/.vicode/config.json). Runtime changes (model, skills) happen via Commands, not CLI flags.
+Configuration priority: project config (.vicode.json) > global config (~/.vicode/config.json). Runtime changes (Provider, Model, skills) happen via Commands, not CLI flags. A Project Config may pin the Model but never carries a key.
 
 ### Conversation persistence
 
 **Session**:
-A saved conversation between the user and the agent, stored as JSON at `<project>/.vicode/sessions/<id>.json` — one file per Session. Scoping is physical: a Session lives inside the directory it belongs to, so a project only ever surfaces its own sessions.
+A saved conversation between the user and the agent, stored as JSON at `<project>/.vicode/sessions/<id>.json` — one file per Session. Scoping is physical: a Session lives inside the directory it belongs to, so a project only ever surfaces its own sessions. A Session may carry an optional **name** — a short human name, up to 60 characters, set by `/rename` and shown by `/session` alongside the raw id.
 _Avoid_: chat (the view), history
+
+**Session name**:
+The optional human name on a Session, set with `/rename <name>` and cleared with `/rename clear` (or `remove`, or `delete` — but only as the sole argument, so `/rename delete the parser` names a session "delete the parser"). It is cosmetic: it changes how a Session is *listed*, never what it contains, and renaming does not change its position in the most-recent-first order. A Session has no name until a first message has been sent, because that is when the Session record comes into being.
+_Avoid_: title (a name is not a heading). "label" stays correct for a picker *row* — `PickerItem.label` is the rendering concern, the Session name is the stored fact.
 
 **New Chat**:
 The Welcome Screen action that begins a fresh conversation. Identical in behaviour to the `/new` command: the current Session (if any) is saved, then messages, usage, unit counters and active Skills are cleared and the chat view opens empty.
@@ -120,7 +141,12 @@ The overlay shown while a Tool Call awaits user consent, displaying the Tool nam
 A file path protected from unsupervised access — matched by default patterns (`.env*`, key material, credential stores, `.ssh/**`) plus user-configured patterns. Reads, writes, and edits pause for approval (reads too, not just writes and edits); search results omit matches inside them.
 
 **Project Root**:
-The allowed boundary for file operations — the directory a Session lives in. Operations inside it on normal project files run silently; operations outside it require approval and proceed once approved.
+The allowed boundary for file operations — the directory a Session lives in. Operations inside it on normal project files run silently; operations outside it require approval and proceed once approved. Surfaced to the user as the Project Root Path.
+_Avoid_: current directory, cwd, working directory
+
+**Project Root Path**:
+The on-screen rendering of the Project Root — the path alone, with no label and no icon. A path under the user's home directory is shortened to a leading `~`; a Project Root that *is* the home directory collapses to `~` alone; anywhere else shows the path raw. Separators are always forward slashes, so a Windows path reads the same as a POSIX one. Truncated from the left, never wrapped, so the directory name at the end of the path always stays visible; the budget is whatever width the surface it sits on allows, so the same Project Root may render shorter in the narrow Usage Panel than on the wide Welcome Screen. Appears pinned to the bottom edge of the Usage Panel and at the bottom left of the Welcome Screen — the two chrome regions that sit where a user looks to orient themselves. The Status Bar does not carry it.
+_Avoid_: cwd indicator, path label, directory breadcrumb
 
 ### Layout & rendering
 
@@ -134,10 +160,14 @@ A region of the TUI separated from its neighbours by a background shade rather t
 The color painted behind the entire TUI — applied via a background token on the root container, filling every panel and overlay. Any gaps between Surfaces show App Background.
 
 **Input Box**:
-The text-entry region rendered as a borderless box with a raised background shade (`inputShade`), distinct from surrounding surfaces purely by its lighter background. The active Mode is indicated inside it as a colored left-edge bar plus a Mode Tag, rendered from the Design Token palette; the rest of its styling (background shade, cursor) is untouched. Covers both the Welcome Screen's first-message box and the Chat window's full-width input strip.
+The text-entry region rendered as a borderless box with a raised background shade (`inputShade`), distinct from surrounding surfaces purely by its lighter background. The active Mode is indicated inside it by a Mode Switcher and a one-column left-edge bar, rendered from the Design Token palette; the rest of its styling (background shade, cursor) is untouched. It never yields vertical space, so on a terminal too short for the whole surrounding layout the Switcher and the draft keep their own rows and the overflow is clipped instead. Covers both the Welcome Screen's first-message box and the Chat window's full-width input strip.
+
+**Mode Switcher**:
+The strip inside an Input Box that names every registered Mode in registry order (`Build Discuss Plan`), so the whole Mode set is visible at once rather than only the active one. The active Mode carries the Mode Tag — bracketed and painted in its own Design Token color (build blue, discuss purple, plan orange) — while the inactive names sit in the muted token; the one-column left-edge bar beside the strip repeats the active Mode's color. It is a display, not a control: Tab cycles the Mode, and the switcher updates immediately without interrupting a running Turn. Distinct from an Inline Chip, which marks inline code inside prose.
+_Avoid_: mode indicator, mode bar, mode picker
 
 **Mode Tag**:
-The colored `[Build]`-style label plus left-edge bar rendered inside an Input Box from the Mode's Design Token color (build blue, discuss purple, plan orange), marking the active Mode. Updating it on a Tab cycle is immediate and never interrupts a running Turn. Distinct from an Inline Chip, which marks inline code inside prose.
+The colored `[Build]`-style label that marks the active Mode inside a Mode Switcher, painted from that Mode's Design Token color (build blue, discuss purple, plan orange). Distinct from the Switcher itself, which also names the inactive Modes, and from an Inline Chip, which marks inline code inside prose.
 
 **Cursor**:
 The movable insertion position inside an Input Box draft, rendered as a block (an inverse space) between the text halves. Moved one grapheme cluster at a time by Left/Right arrow keys, or jumped to the start/end with Home/End. Every edit operation acts at it rather than at the string end.
@@ -159,9 +189,6 @@ A short code snippet inside prose (single-backtick `` `cmd` ``) rendered with a 
 **Command Line**:
 The first line inside a Tool-Result Code Block — `$ npm run dev` — painted in the primary color to show which command was executed.
 
-**Sidebar**:
-The right panel of the two-panel layout, showing Tool Call logs and file diffs in tabbed view.
-
 **Status Bar**:
 Bottom bar showing model name, token count, and estimated cost.
 
@@ -170,7 +197,7 @@ The Status Bar's live indication of agent activity: idle, thinking, running a To
 _Avoid_: status, activity state
 
 **Usage Panel**:
-The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count.
+The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count. Its reading of the Project Root Path is pinned to the panel's bottom edge rather than trailing the rows above it, so the panel keeps a fixed look as the terminal grows; the exit hint sits beneath it.
 
 **Welcome Screen**:
-The "home" view shown at startup (and returned to via `/home`): banner, model info, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections.
+The "home" view shown at startup (and returned to via `/home`): banner, model info, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections. Banner, menu, and input sit centred; the keyboard hint and the Project Root Path share a single footer pinned to the bottom left, so the view has one bottom edge rather than a hint adrift mid-screen.

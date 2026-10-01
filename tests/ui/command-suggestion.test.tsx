@@ -2,16 +2,19 @@ import React from "react"
 import { describe, it, expect } from "bun:test"
 import { render } from "ink-testing-library"
 import { renderToString } from "ink"
-import { CommandSuggestion, filterCommands, moveHighlight, NO_COMMANDS_MATCH_MESSAGE } from "@/ui/command-suggestion"
+import { CommandSuggestion, filterCommands, findUsageHint, moveHighlight, NO_COMMANDS_MATCH_MESSAGE } from "@/ui/command-suggestion"
 import { COLORS } from "@/ui/theme"
 import { ansiCode } from "@/ui/ansi-test"
 import type { Command } from "@/core/types"
+
+const RENAME_USAGE = "Give it a name: /rename <name>, or /rename clear to drop the current one."
 
 const commands: Command[] = [
   { name: "help", description: "List available commands", execute: async () => "" },
   { name: "model", description: "Switch the model", execute: async () => "" },
   { name: "session", description: "Switch sessions", execute: async () => "" },
   { name: "skill", description: "Load a skill", execute: async () => "" },
+  { name: "rename", description: "Name the current session", execute: async () => "", usage: RENAME_USAGE },
 ]
 
 describe("filterCommands", () => {
@@ -30,6 +33,36 @@ describe("filterCommands", () => {
 
   it("returns an empty array when nothing matches", () => {
     expect(filterCommands(commands, "/frobnicate")).toEqual([])
+  })
+})
+
+describe("findUsageHint", () => {
+  it("returns the usage of a command whose name has just been typed in full", () => {
+    expect(findUsageHint(commands, "/rename")).toBe(RENAME_USAGE)
+  })
+
+  it("stays quiet while the name is still being typed", () => {
+    expect(findUsageHint(commands, "/re")).toBeUndefined()
+    expect(findUsageHint(commands, "/r")).toBeUndefined()
+  })
+
+  it("stays quiet once the user has started typing arguments", () => {
+    expect(findUsageHint(commands, "/rename ")).toBeUndefined()
+    expect(findUsageHint(commands, "/rename Deep work")).toBeUndefined()
+  })
+
+  it("returns nothing for a command that takes no arguments", () => {
+    expect(findUsageHint(commands, "/help")).toBeUndefined()
+  })
+
+  it("matches the name exactly, the way the dispatcher does", () => {
+    expect(findUsageHint(commands, "/Rename")).toBeUndefined()
+    expect(findUsageHint(commands, "/renames")).toBeUndefined()
+  })
+
+  it("returns nothing for input that is not a command attempt", () => {
+    expect(findUsageHint(commands, "rename")).toBeUndefined()
+    expect(findUsageHint(commands, "")).toBeUndefined()
   })
 })
 
@@ -81,6 +114,20 @@ describe("CommandSuggestion", () => {
     const { lastFrame } = render(<CommandSuggestion items={[]} highlightIndex={0} />)
     const frame = lastFrame() ?? ""
     expect(frame).toContain(NO_COMMANDS_MATCH_MESSAGE)
+  })
+
+  it("renders a hint line below the commands when one is given", () => {
+    const { lastFrame } = render(
+      <CommandSuggestion items={[commands[4]!]} highlightIndex={0} hint={RENAME_USAGE} />,
+    )
+    const frame = lastFrame() ?? ""
+    expect(frame).toContain("Give it a name: /rename <name>")
+    expect(frame.indexOf("/rename")).toBeLessThan(frame.indexOf("Give it a name"))
+  })
+
+  it("renders no hint line when none is given", () => {
+    const { lastFrame } = render(<CommandSuggestion items={commands} highlightIndex={0} />)
+    expect(lastFrame() ?? "").not.toContain("Give it a name")
   })
 
   it("colors the highlight and description from the palette tokens", () => {

@@ -46,7 +46,7 @@ vicode
 **Agent**
 
 - **Manual ReAct loop** — the agent reasons, calls tools, observes results, and repeats until it's done; you see every step as it happens
-- **Modes** — `build`, `discuss`, and `plan` scope which tools the model can even see, and layer their own instructions on top of the System Prompt; the active one is marked by a Mode Tag and colored bar inside the Input Box
+- **Modes** — `build`, `discuss`, and `plan` scope which tools the model can even see, and layer their own instructions on top of the System Prompt; all three are listed in the Mode Switcher inside the Input Box, with the active one tagged in its own color
 - **Six core tools** — `read_file`, `list_files`, `search`, `write_file`, `edit_file`, `bash`
 - **Streaming responses** — token-by-token output; `Esc` cancels an in-progress response
 - **Doom-loop detection** — three identical tool calls in a row (compared on key-sorted arguments) are detected and the turn is stopped
@@ -66,12 +66,16 @@ vicode
 - **Automatic compaction** — once the history grows past a threshold, older messages are folded into a running summary; `/compact` forces it on demand
 - **Session persistence** — conversations auto-save as JSON inside the project and resume automatically on the next start
 - **Skills** — activate Markdown files that are injected as extra System Prompt layers
-- **Layered configuration** — project config overrides global config; API key from config, `/key`, or `OPENROUTER_API_KEY`
+- **Layered configuration** — project config overrides global config; API keys from config, `/key`, or the provider's environment variable
 
 ## Requirements
 
 - **Node.js 22 or newer** to run the published CLI. (Bun is only needed to *build* from source.) The runtime dependencies — `ink`, `ai`, `@openrouter/ai-sdk-provider`, and `chalk` — all declare `engines.node >= 22`.
-- **An OpenRouter API key** — <https://openrouter.ai/keys>
+- **An API key for at least one provider** — ViCode ships five routes and asks for a key only when you first use one:
+  - `openrouter` — <https://openrouter.ai/keys>
+  - `openai` — <https://platform.openai.com/api-keys>
+  - `anthropic` — <https://console.anthropic.com/settings/keys>
+  - `opencode` (Zen) and `opencode-go` — <https://opencode.ai/auth>
 - **A `bash` binary on `PATH`** — the `bash` tool shells out to `bash -c`. On Windows that means Git Bash or WSL; on stock `cmd`/PowerShell, `bash` calls will fail until you install one.
 
 ## Installation
@@ -105,7 +109,23 @@ npm install vicode-ai
 npx vicode
 ```
 
-If no API key is configured, ViCode prompts for one the first time you try to chat, and saves it to your global config. Set, change, or remove it at any time with `/key`.
+If no API key is configured for the active provider, ViCode prompts for one the first time you try to chat, and saves it to your global config. Set, change, or remove it at any time with `/key`.
+
+## Providers and models
+
+ViCode talks to five routes. Each has its own credential, base URL, and billing, so a model is always identified by `provider/model`:
+
+| Provider | Route | Environment fallback |
+|---|---|---|
+| `openrouter` | OpenRouter's catalog of many vendors | `OPENROUTER_API_KEY` |
+| `openai` | OpenAI directly | `OPENAI_API_KEY` |
+| `anthropic` | Anthropic directly | `ANTHROPIC_API_KEY` |
+| `opencode` | OpenCode Zen | `OPENCODE_API_KEY` |
+| `opencode-go` | OpenCode Zen, Go plan | `OPENCODE_API_KEY` |
+
+`/model` lists everything the Model Catalog knows, grouped by provider and annotated with price and whether you hold a key for that route. `/provider` skips the list and moves to a provider's recommended model. Switching never prompts mid-turn, and a route you have no key for is not offered as a target.
+
+The catalog comes from [models.dev](https://models.dev), cached in `~/.vicode/models-dev-cache.json` for a day. A cold first run populates it; until then, prices and context windows read as unknown rather than blocking the picker.
 
 ## Configuration
 
@@ -113,14 +133,17 @@ ViCode reads a layered configuration. Project config wins over global config for
 
 1. **Project:** `.vicode.json` in your project root
 2. **Global:** `~/.vicode/config.json`
-3. **Fallback:** the `OPENROUTER_API_KEY` environment variable (a `.env` file in the project root is loaded too, without overwriting existing environment variables)
+3. **Fallback:** each provider's environment variable (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`) — a `.env` file in the project root is loaded too, without overwriting existing environment variables
 
 The schema is **strict** — an unknown key is a hard error, so typos fail loudly instead of being silently ignored.
 
 ```json
 {
-  "apiKey": "your-openrouter-key",
-  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "apiKeys": {
+    "openrouter": "your-openrouter-key",
+    "anthropic": "your-anthropic-key"
+  },
+  "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
   "systemPrompt": "Optional extra system prompt text, or a path to a .md file",
   "sensitiveFiles": ["secrets/**.custom"],
   "silentBashCommands": ["ls", "cat", "git", "bun", "npm"]
@@ -129,17 +152,20 @@ The schema is **strict** — an unknown key is a hard error, so typos fail loudl
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `apiKey` | `string` | `OPENROUTER_API_KEY` | OpenRouter API key. `/key` writes this to the global config only. |
-| `model` | `string` | `nvidia/nemotron-3-ultra-550b-a55b:free` | Model id passed to OpenRouter. Switch mid-session with `/model`. |
+| `apiKeys` | `object` | per-provider environment variables | API keys keyed by provider id. `/key` writes here, in the global config only. |
+| `apiKey` | `string` | — | Legacy single key. Read as the `openrouter` key and migrated on first write. |
+| `model` | `string` | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | Provider-qualified model id. Switch mid-session with `/model`. |
 | `systemPrompt` | `string` | — | Extra System Prompt text, or a path to a Markdown file. Overridden by `.vicode/system.md` if that file exists. |
 | `sensitiveFiles` | `string[]` | seven built-in patterns | Extra glob patterns treated as Sensitive Paths, merged across config layers. |
 | `silentBashCommands` | `string[]` | `[]` | Bash Allowlist: first command tokens that may run without approval. Merged across config layers. **Empty means every `bash` call asks.** |
+
+A `model` written before multi-provider support was a bare id, and those files are migrated to `openrouter/<id>` on read. Config written by a current version is read literally. See [ADR-0006](docs/adr/0006-provider-qualified-model-ids.md).
 
 Sensitive Paths are matched by default against `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa*`, `.git-credentials`, and `.ssh/**`, plus any patterns you add.
 
 ## Modes
 
-The Mode governs each Turn. Press `Tab` to cycle `build → discuss → plan`; the current one is marked inside **both** Input Boxes — the Chat window's input strip and the Welcome Screen's first-message box — as a colored left-edge bar plus a `[Build]` / `[Discuss]` / `[Plan]` Mode Tag. The Status Bar and the Welcome Screen's model line deliberately do *not* repeat it. Cycling is immediate and never interrupts a running Turn — the Mode is captured when you send a message, so a change takes effect on your *next* message. It is stored on the Session and restored when you resume.
+The Mode governs each Turn. Press `Tab` to cycle `build → discuss → plan`; **both** Input Boxes — the Chat window's input strip and the Welcome Screen's first-message box — show a Mode Switcher listing `Build Discuss Plan`, where the current one is bracketed (`[Build]` / `[Discuss]` / `[Plan]`) and painted in its own color beside a one-column bar in the same color, while the inactive names stay muted. The Status Bar and the Welcome Screen's model line deliberately do *not* repeat it. Cycling is immediate and never interrupts a running Turn — the Mode is captured when you send a message, so a change takes effect on your *next* message. It is stored on the Session and restored when you resume.
 
 | Mode | Tools the model can see | Behaviour |
 |---|---|---|
@@ -151,18 +177,20 @@ Mode scoping is enforced twice: the model is only *shown* the in-scope tools, an
 
 ## Slash commands
 
-Only the **first word** of an input is treated as a command attempt, so `/help me` runs `/help` and a mid-sentence `see /new` is just text. While a response is streaming, every input except `/exit` is ignored.
+Only the **first word** of an input is treated as a command attempt, so `/help me` runs `/help` and a mid-sentence `see /new` is just text. While a response is streaming, every input except `/exit` is ignored. Typing `/` opens the Command Suggestion; once a command that takes arguments is named in full, a muted line under the dropdown shows its syntax.
 
 | Command | Description |
 |---|---|
 | `/help` | List available commands |
 | `/session` | Switch to a saved session |
+| `/rename` | Name the current session so it is easy to find later (`/rename clear` to drop the name; `remove` and `delete` work too) — type `/rename` to see this hint in the dropdown |
 | `/new` | Save the current session and start a new one |
 | `/exit` | Stop any response in progress, save the session and quit |
-| `/model` | Switch the LLM model mid-session (from OpenRouter's model list) |
+| `/model` | Switch the LLM model mid-session, grouped by provider, priced from the Model Catalog |
 | `/skill` | Load a skill Markdown file as a System Prompt layer |
 | `/home` | Return to the Welcome Screen |
-| `/key` | Set, change, or remove your OpenRouter API key (`/key remove`) |
+| `/provider` | Jump straight to a provider's recommended model |
+| `/key` | Set, change, or remove an API key — `/key`, `/key anthropic`, or `/key anthropic remove` |
 | `/compact` | Fold older messages into a summary and keep the context window lean |
 
 ## Key shortcuts
@@ -182,7 +210,7 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `PageUp` / `PageDown` | Scroll chat history by a screen |
 | Mouse wheel | Scroll chat history by three lines |
 
-Picky surfaces (model, skill, and session pickers) take `↑`/`↓` to move, `Enter` to select, `Esc` to cancel, and plain typing to filter.
+Picky surfaces (model, skill, and session pickers) take `↑`/`↓` to move, `Enter` to select, `Esc` to cancel, and plain typing to filter. A picker may carry a muted hint line under its items; the session picker uses it to point at `/rename`.
 
 ## How approval works
 
@@ -226,9 +254,9 @@ Everything ViCode knows about a project lives inside that project, so history tr
 
 ViCode does not touch your `.gitignore`; add `.vicode/sessions/` yourself if you don't want session history in your commits.
 
-Global state lives in `~/.vicode/`: `config.json`, `skills/`, and `models-cache.json` (a cached copy of OpenRouter's model list, used to avoid refetching it).
+Global state lives in `~/.vicode/`: `config.json`, `skills/`, and `models-dev-cache.json` (the Model Catalog, refetched at most once a day).
 
-A Session record holds the model id, messages, timestamps, running token and cost totals, the active Mode, and the last compaction.
+A Session record holds an optional **name** (set by `/rename`), the model id, messages, timestamps, running token and cost totals, the active Mode, and the last compaction.
 
 ## Usage
 
@@ -258,12 +286,12 @@ The codebase is organized into four layers with clear dependency boundaries. The
 ```mermaid
 flowchart LR
     CLI["cli.ts (composition root)"] --> CONFIG["config · layered settings"]
-    CLI --> PROVIDER["provider · OpenRouter via Vercel AI SDK"]
+    CLI --> PROVIDER["providers · five routes via Vercel AI SDK"]
     CLI --> CORE["core · agent loop, tool registry, modes, sessions"]
     CORE --> PROVIDER
     CORE --> TOOLS["tools · read_file, write_file, edit_file, list_files, search, bash"]
     UI["ui · Ink/React panels"] --> CORE
-    OPENROUTER["OpenRouter API"] --> PROVIDER
+    PROVIDERS["OpenRouter · OpenAI · Anthropic · Zen"] --> PROVIDER
 ```
 
 The agent loop (`src/core/agent-loop.ts`) is a manual ReAct loop: it compacts if needed, projects the history to fit the context budget, streams text and tool-call events from the provider, checks each tool against the active Mode and the Approval Rule, executes approved calls, feeds results back into the conversation, and repeats until the model stops calling tools.
@@ -280,9 +308,9 @@ vicode/
 │   ├── cli.ts                # Entry point: wires config → provider → core → UI
 │   ├── core/                 # Agent loop, tool registry, modes, sessions, skills, pricing, prompts
 │   ├── config/               # Layered config loading + CLI arg parsing
-│   ├── providers/            # OpenRouter provider (Vercel AI SDK)
+│   ├── providers/            # Provider adapters + the registry-driven factory
 │   ├── tools/                # read_file, list_files, search, write_file, edit_file, bash
-│   ├── commands/             # /help, /session, /new, /exit, /model, /skill, /home, /key, /compact
+│   ├── commands/             # /help, /session, /rename, /new, /exit, /model, /skill, /home, /key, /compact
 │   └── ui/                   # Ink React components (app, panels, input, picker, theme, mouse)
 ├── tests/                    # Mirrors src/ (core, config, commands, tools, ui, providers; uses @/ alias)
 ├── docs/
@@ -329,10 +357,10 @@ Coverage is organised around the four seams — Provider, Tool, Config, and Sess
 
 ## Known limitations
 
-- **Cost display only covers eight models.** Pricing is a hardcoded table (`anthropic/claude-sonnet-4`, `anthropic/claude-3.5-sonnet`, `anthropic/claude-3.5-haiku`, `openai/gpt-4o`, `openai/gpt-4o-mini`, `google/gemini-2.0-flash-001`, `google/gemini-2.5-pro`, `deepseek/deepseek-chat`). Any other model — including the default — shows `$0.00` even though tokens are still counted correctly.
-- **The `Context` row needs a warm model cache.** It only appears once the active model's context length is known, which ViCode learns from `~/.vicode/models-cache.json`. Open `/model` once to populate it; until then budgeting falls back to a 200k window.
+- **Cost and context windows depend on the Model Catalog.** Both come from models.dev, so they read as unknown until the first run has populated `~/.vicode/models-dev-cache.json`, and a model missing from that catalog shows `$0.00` even though tokens are still counted correctly. Context budgeting falls back to a 200k window in the meantime.
+- **A gateway model is only offered if its protocol is supported.** The catalog lists models speaking many wire protocols; only OpenAI and Anthropic ones are routed. Everything else is left out of `/model` deliberately rather than failing at call time.
 - **`./debug.log` grows without bound.** ViCode appends a verbose run log to `<cwd>/debug.log` with no level check and no size cap, including raw model responses. Worth deleting periodically, and worth adding to your `.gitignore`.
-- **Sessions cannot be deleted from the UI.** `/session` lists and switches; pruning old `<project>/.vicode/sessions/*.json` files is manual.
+- **Sessions cannot be deleted from the UI.** `/session` lists and switches; pruning old `<project>/.vicode/sessions/*.json` files is manual. `/rename` names the current session (up to 60 characters) and the name shows in the `/session` picker, but nothing renames sessions other than the one you are in.
 - **No `@` file mentions.** There is no mention autocomplete or file-picker — the model finds files with `list_files` and `search`.
 
 ## Roadmap

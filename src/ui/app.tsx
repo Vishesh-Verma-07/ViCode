@@ -5,8 +5,9 @@ import { COLORS } from "./theme"
 import type { Command, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider } from "../core/provider"
+import type { ProviderId } from "../core/providers"
 import { CommandRegistry } from "../core/command-registry"
-import { filterCommands, moveHighlight } from "./command-suggestion"
+import { filterCommands, findUsageHint, moveHighlight } from "./command-suggestion"
 import { Picker } from "./picker"
 import { WelcomeScreen } from "./welcome"
 import { ChatPanel, CHAT_CHROME_LINES } from "./chat-panel"
@@ -27,7 +28,7 @@ export { extractDiff } from "./format"
 
 interface AppProps {
   provider: Provider
-  createProvider?: (modelId: string, apiKey?: string) => Provider
+  createProvider?: (canonicalModelId: string, apiKey: string) => Provider
   tools: ToolDefinition[]
   projectPrompt?: string
   cliPrompt?: string
@@ -36,9 +37,10 @@ interface AppProps {
   initialView?: View
   sessionsDir?: string
   commands?: Command[]
-  initialApiKey?: string
-  onSaveApiKey?: (apiKey: string) => void
-  onRemoveApiKey?: () => void
+  /** Resolves a Provider's key from config plus environment. */
+  keyFor: (provider: ProviderId) => string | undefined
+  onSaveApiKey?: (provider: ProviderId, apiKey: string) => void
+  onRemoveApiKey?: (provider: ProviderId) => void
   onSkillActivate?: (content: string) => void
 }
 
@@ -47,9 +49,10 @@ type View = "home" | "chat"
 interface KeyEntryRequest {
   resolve: (ok: boolean) => void
   requireKey: boolean
+  provider: ProviderId
 }
 
-export function App({ provider, createProvider, tools, projectPrompt, cliPrompt, context, initialSession, initialView, sessionsDir, commands, initialApiKey, onSaveApiKey, onRemoveApiKey }: AppProps) {
+export function App({ provider, createProvider, tools, projectPrompt, cliPrompt, context, initialSession, initialView, sessionsDir, commands, keyFor, onSaveApiKey, onRemoveApiKey }: AppProps) {
   const [view, setView] = useState<View>(initialView ?? (initialSession ? "chat" : "home"))
   const { exit } = useApp()
   const { columns, rows } = useWindowSize()
@@ -72,39 +75,28 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
 
   const drafting = useChatDrafting()
 
-  const apiKeyRef = useRef(initialApiKey ?? "")
   const [keyEntry, setKeyEntry] = useState<KeyEntryRequest | null>(null)
-  const [, setApiKeyTick] = useState(0)
 
-  const openKeyEntry = useCallback(
-    (requireKey: boolean) =>
+  /**
+   * Opens the API Key Entry Screen for a Provider and resolves to whether a key
+   * was supplied. `requireKey` decides whether Escape can dismiss it.
+   */
+  const promptForKey = useCallback(
+    (target: ProviderId, requireKey: boolean) =>
       new Promise<boolean>((resolve) => {
-        setKeyEntry({ resolve, requireKey })
+        setKeyEntry({ resolve, requireKey, provider: target })
       }),
     [],
   )
 
-  const ensureKey = useCallback(
-    () =>
-      new Promise<boolean>((resolve) => {
-        if (apiKeyRef.current) {
-          resolve(true)
-          return
-        }
-        setKeyEntry({ resolve, requireKey: true })
-      }),
-    [],
+  const removeKey = useCallback(
+    async (target: ProviderId) => {
+      const hadKey = keyFor(target) !== undefined
+      onRemoveApiKey?.(target)
+      return hadKey
+    },
+    [keyFor, onRemoveApiKey],
   )
-
-  const sessionRef = useRef<ReturnType<typeof useAgentSession> | null>(null)
-
-  const removeKey = useCallback(async () => {
-    const hadKey = apiKeyRef.current !== ""
-    apiKeyRef.current = ""
-    sessionRef.current?.applyApiKey("")
-    onRemoveApiKey?.()
-    return hadKey
-  }, [onRemoveApiKey])
 
   const session = useAgentSession({
     provider,
@@ -122,39 +114,36 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
     view,
     enterChat: () => setView("chat"),
     enterHome: () => setView("home"),
-    apiKey: initialApiKey,
-    ensureKey,
-    openKeyEntry: () => openKeyEntry(false),
-    removeApiKey: removeKey,
+    keyFor,
+    ensureKeyFor: (target) =>
+      keyFor(target) ? Promise.resolve(true) : promptForKey(target, true),
+    openKeyEntryFor: (target) => promptForKey(target, false),
+    removeApiKeyFor: removeKey,
   })
-  sessionRef.current = session
 
   const submitKey = useCallback(
     (apiKey: string) => {
-      onSaveApiKey?.(apiKey)
-      apiKeyRef.current = apiKey
-      session.applyApiKey(apiKey)
-      setApiKeyTick((n) => n + 1)
-      setKeyEntry((prev) => {
-        prev?.resolve(true)
-        return null
-      })
+      if (!keyEntry) return
+      onSaveApiKey?.(keyEntry.provider, apiKey)
+      session.applyApiKey(keyEntry.provider, apiKey)
+      keyEntry.resolve(true)
+      setKeyEntry(null)
     },
-    [onSaveApiKey, session],
+    [keyEntry, onSaveApiKey, session],
   )
 
   const cancelKey = useCallback(() => {
-    setKeyEntry((prev) => {
-      prev?.resolve(false)
-      return null
-    })
-  }, [])
+    if (!keyEntry) return
+    keyEntry.resolve(false)
+    setKeyEntry(null)
+  }, [keyEntry])
 
   const renderKeyEntry = (entry: KeyEntryRequest) => (
     <CenteredOverlay width={columns} height={rows}>
       <KeyEntryScreen
+        provider={entry.provider}
         requireKey={entry.requireKey}
-        initialValue={apiKeyRef.current}
+        initialValue={keyFor(entry.provider) ?? ""}
         onSubmit={submitKey}
         onCancel={cancelKey}
       />
@@ -175,6 +164,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
     !drafting.suggestionDismissed
   const clampedSuggestionHighlight = Math.min(drafting.suggestionHighlight, Math.max(0, suggestedCommands.length - 1))
   const suggestionArrows = suggestionVisible && suggestedCommands.length > 0
+  const suggestionHint = suggestionVisible ? findUsageHint(allCommands, drafting.inputValue) : undefined
 
   useInput(
     (input, key) => {
@@ -255,6 +245,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           hasResumableSession={!!initialSession}
           onTab={session.cycleMode}
           mode={session.activeModeDefinition}
+          projectRoot={context.projectPath}
           onSendFirstMessage={(text) => {
             drafting.setInputValue(text)
             setView("chat")
@@ -266,8 +257,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
         />
         {drafting.pickerRequest && (
           <Picker
-            title={drafting.pickerRequest.title}
-            items={drafting.pickerRequest.items}
+            {...drafting.pickerRequest}
             onSelect={(index) => drafting.closePicker(index)}
             onCancel={() => drafting.closePicker(null)}
             rows={rows}
@@ -278,8 +268,8 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
     )
   }
 
-  const sidebarWidth = Math.max(30, Math.floor(columns * 0.3))
-  const chatWidth = columns - sidebarWidth - 1
+  const usagePanelWidth = Math.max(30, Math.floor(columns * 0.3))
+  const chatWidth = columns - usagePanelWidth - 1
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
@@ -298,25 +288,25 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           inputValue={drafting.inputValue}
           inputDisabled={drafting.pickerRequest !== null || keyEntry !== null}
           onInputChange={drafting.handleInputChange}
-          suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight } : undefined}
+          suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight, hint: suggestionHint } : undefined}
           modelName={session.providerState.getModelInfo().name}
           mode={session.activeModeDefinition}
           onTab={session.cycleMode}
         />
         <UsagePanel
-          width={sidebarWidth}
+          width={usagePanelWidth}
           model={session.providerState.getModelInfo().name}
           contextLength={session.providerState.getModelInfo().contextLength}
           usage={session.usage}
           turns={session.turnCount}
           status={session.turnStatus}
+          projectRoot={context.projectPath}
         />
       </Box>
       <StatusBar usage={session.usage} model={session.providerState.getModelInfo().name} status={session.turnStatus} />
       {drafting.pickerRequest && (
         <Picker
-          title={drafting.pickerRequest.title}
-          items={drafting.pickerRequest.items}
+          {...drafting.pickerRequest}
           onSelect={(index) => drafting.closePicker(index)}
           onCancel={() => drafting.closePicker(null)}
           rows={rows}

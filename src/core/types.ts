@@ -1,5 +1,6 @@
 import type { z } from "zod"
 import type { ModelListing } from "./provider"
+import type { ProviderId, ProviderKind } from "./providers"
 import type { Skill } from "./skills"
 import type { ModeId } from "./modes"
 
@@ -60,6 +61,7 @@ export interface ToolContext {
 export interface Command {
   name: string
   description: string
+  usage?: string
   execute: (args: string[], context: CommandContext) => Promise<string>
 }
 
@@ -72,6 +74,7 @@ export interface PickerRequest {
   title: string
   items: PickerItem[]
   defaultIndex?: number
+  hint?: string
 }
 
 export type OpenPicker = (request: PickerRequest) => Promise<number | null>
@@ -81,6 +84,7 @@ export interface SessionsCapability {
   getActiveSession(): Session | null
   switchTo(session: Session): void
   startFresh(): void
+  rename(name: string | null): void
 }
 
 export interface ExitCapability {
@@ -92,14 +96,39 @@ export interface NavigationCapability {
 }
 
 export interface ModelsCapability {
-  list(): Promise<ModelListing[]>
+  /** Every Provider and the Models it offers, grouped for display. */
+  listProviders(): Promise<ProviderOffering[]>
+  /** The active canonical `provider/model` id. */
   getCurrentModelId(): string
-  switchTo(modelId: string): void
+  getCurrentProvider(): ProviderId
+  /** Switches route and model in one step. The id must be provider-qualified. */
+  switchTo(canonicalModelId: string): void
+}
+
+export interface ProviderOffering {
+  provider: ProviderId
+  label: string
+  kind: ProviderKind
+  billingNote?: string
+  models: ModelListing[]
+  /** Whether a key is configured for this Provider. A missing key never hides
+   *  its Models — switching to it prompts for one instead. */
+  hasKey: boolean
+}
+
+export interface ProvidersCapability {
+  list(): Promise<ProviderOffering[]>
+  getCurrent(): ProviderId
+  /** Switches Provider, keeping the current Model when that Provider offers
+   *  it and otherwise moving to the Provider's top-ranked Model. */
+  switchTo(provider: ProviderId): Promise<string | null>
 }
 
 export interface KeyCapability {
-  set(): Promise<boolean>
-  remove(): Promise<boolean>
+  /** Defaults to the active Provider. */
+  set(provider?: ProviderId): Promise<boolean>
+  /** Defaults to the active Provider. */
+  remove(provider?: ProviderId): Promise<boolean>
 }
 
 export interface SkillContext {
@@ -123,6 +152,7 @@ export interface CommandContext {
   exit?: ExitCapability
   navigation?: NavigationCapability
   models?: ModelsCapability
+  providers?: ProvidersCapability
   skills?: SkillContext
   key?: KeyCapability
   compaction?: CompactionCapability
@@ -131,7 +161,18 @@ export interface CommandContext {
 
 export interface Session {
   id: string
+  name?: string
+  /**
+   * Canonical `provider/model` id. Stored in qualified form only from
+   * `QUALIFIED_MODEL_FORMAT_VERSION` onward; see model-id.ts.
+   */
   model: string
+  /**
+   * On-disk format version. A session without it predates provider
+   * qualification, which is the only thing that makes its stored model id
+   * unambiguous. See `QUALIFIED_MODEL_FORMAT_VERSION`.
+   */
+  version?: number
   messages: Message[]
   createdAt: string
   updatedAt: string
