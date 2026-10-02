@@ -1,5 +1,6 @@
 import type { ModelListingPricing } from "../core/provider"
-import type { Command, PickerItem, ProviderOffering } from "../core/types"
+import type { Command, ModelSwitchResult, PickerItem, ProviderOffering } from "../core/types"
+import { providerLabel } from "../core/providers"
 import { formatModelId } from "../core/model-id"
 
 export function formatModelPricing(pricing: ModelListingPricing): string {
@@ -18,6 +19,21 @@ export function formatModelPricing(pricing: ModelListingPricing): string {
 /** How this Provider bills, which is what distinguishes one route from another. */
 function kindLabel(offering: ProviderOffering): string {
   return offering.kind === "vendor" ? "first-party" : offering.billingNote ?? "gateway"
+}
+
+/** A switch that left the route where it was, and why. */
+type SwitchRefusal = Exclude<ModelSwitchResult, { kind: "switched" }>
+
+/**
+ * The line to print when a switch did not happen.
+ *
+ * `/model` and `/provider` both report through this, so neither can announce a
+ * route the host refused to change — and a refused switch names its cause
+ * instead of failing silently.
+ */
+function refusalLine(result: SwitchRefusal): string {
+  if (result.kind === "refused") return result.reason
+  return `No API key for ${providerLabel(result.provider)}. Set one with /key ${result.provider}.`
 }
 
 /**
@@ -84,8 +100,9 @@ export function createModelCommand(): Command {
       if (!chosen) return ""
       if (chosen === currentModelId) return `Already using ${chosen}`
 
-      ctx.models.switchTo(chosen)
-      return `Switched to ${chosen}`
+      const result = await ctx.models.switchTo(chosen)
+      if (result.kind === "switched") return `Switched to ${result.modelId}`
+      return refusalLine(result)
     },
   }
 }
@@ -122,8 +139,8 @@ export function createProviderCommand(): Command {
       }
 
       const result = await ctx.providers.switchTo(chosen.provider)
-      if (result === null) return `Cannot switch to ${chosen.label}.`
-      return `Switched to ${chosen.label} (${result})`
+      if (result.kind === "switched") return `Switched to ${chosen.label} (${result.modelId})`
+      return refusalLine(result)
     },
   }
 }

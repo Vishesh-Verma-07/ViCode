@@ -1,6 +1,11 @@
 import { describe, it, expect } from "bun:test"
 import { createModelCommand, createProviderCommand, formatModelPricing } from "@/commands/model"
-import type { CommandContext, PickerRequest, ProviderOffering } from "@/core/types"
+import type {
+  CommandContext,
+  ModelSwitchResult,
+  PickerRequest,
+  ProviderOffering,
+} from "@/core/types"
 import type { ModelListing } from "@/core/provider"
 import type { ProviderId } from "@/core/providers"
 
@@ -53,18 +58,20 @@ function createContext(opts: {
   currentProvider?: ProviderId
   pickerResult: number | null
   listError?: Error
+  /** What the host reports back from the switch. Defaults to a success. */
+  switchResult?: ModelSwitchResult
 }): {
   context: CommandContext
   pickerRequests: PickerRequest[]
-  switchedTo: string[]
+  switchRequests: string[]
 } {
   const pickerRequests: PickerRequest[] = []
-  const switchedTo: string[] = []
+  const switchRequests: string[] = []
   const offerings = opts.offerings ?? []
   const currentModelId = opts.currentModelId ?? ""
   return {
     pickerRequests,
-    switchedTo,
+    switchRequests,
     context: {
       projectPath: "/tmp/project",
       openPicker: async (request) => {
@@ -78,7 +85,10 @@ function createContext(opts: {
         },
         getCurrentModelId: () => currentModelId,
         getCurrentProvider: () => opts.currentProvider ?? "openrouter",
-        switchTo: (modelId) => switchedTo.push(modelId),
+        switchTo: async (modelId) => {
+          switchRequests.push(modelId)
+          return opts.switchResult ?? { kind: "switched", modelId }
+        },
       },
     },
   }
@@ -130,7 +140,7 @@ describe("createModelCommand", () => {
 
   it("reports when no models are available without opening the picker", async () => {
     const command = createModelCommand()
-    const { context, pickerRequests, switchedTo } = createContext({
+    const { context, pickerRequests, switchRequests } = createContext({
       offerings: [offering({ provider: "opencode-go" })],
       pickerResult: null,
     })
@@ -139,7 +149,7 @@ describe("createModelCommand", () => {
 
     expect(output).toContain("No models available")
     expect(pickerRequests).toHaveLength(0)
-    expect(switchedTo).toHaveLength(0)
+    expect(switchRequests).toHaveLength(0)
   })
 
   it("groups models under a heading per Provider", async () => {
@@ -236,7 +246,7 @@ describe("createModelCommand", () => {
 
   it("switches to the chosen model with its Provider prefix", async () => {
     const command = createModelCommand()
-    const { context, switchedTo } = createContext({
+    const { context, switchRequests } = createContext({
       offerings: [OPENROUTER, ANTHROPIC],
       currentModelId: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
       pickerResult: 4,
@@ -244,13 +254,13 @@ describe("createModelCommand", () => {
 
     const output = await command.execute([], context)
 
-    expect(switchedTo).toEqual(["anthropic/gpt-5.3-codex"])
+    expect(switchRequests).toEqual(["anthropic/gpt-5.3-codex"])
     expect(output).toContain("anthropic/gpt-5.3-codex")
   })
 
   it("changes nothing when the picker is cancelled", async () => {
     const command = createModelCommand()
-    const { context, switchedTo } = createContext({
+    const { context, switchRequests } = createContext({
       offerings: [OPENROUTER],
       pickerResult: null,
     })
@@ -258,25 +268,25 @@ describe("createModelCommand", () => {
     const output = await command.execute([], context)
 
     expect(output).toBe("")
-    expect(switchedTo).toHaveLength(0)
+    expect(switchRequests).toHaveLength(0)
   })
 
   it("treats selecting a Provider heading as a no-op", async () => {
     const command = createModelCommand()
-    const { context, switchedTo } = createContext({
+    const { context, switchRequests } = createContext({
       offerings: [OPENROUTER],
       pickerResult: 0,
     })
 
     const output = await command.execute([], context)
 
-    expect(switchedTo).toHaveLength(0)
+    expect(switchRequests).toHaveLength(0)
     expect(output).toBe("")
   })
 
   it("does not recreate the provider when the selected model is already active", async () => {
     const command = createModelCommand()
-    const { context, switchedTo } = createContext({
+    const { context, switchRequests } = createContext({
       offerings: [OPENROUTER],
       currentModelId: "openrouter/claude-sonnet-4",
       pickerResult: 2,
@@ -284,7 +294,7 @@ describe("createModelCommand", () => {
 
     const output = await command.execute([], context)
 
-    expect(switchedTo).toHaveLength(0)
+    expect(switchRequests).toHaveLength(0)
     expect(output).toContain("Already using")
     expect(output).toContain("openrouter/claude-sonnet-4")
   })
@@ -299,6 +309,49 @@ describe("createModelCommand", () => {
     await expect(command.execute([], context)).rejects.toThrow(/no cache available/)
   })
 
+  it("reports the missing key rather than a switch that did not happen", async () => {
+    const command = createModelCommand()
+    const { context, switchRequests } = createContext({
+      offerings: [OPENROUTER, ANTHROPIC],
+      currentModelId: "openrouter/claude-sonnet-4",
+      pickerResult: 4,
+      switchResult: { kind: "needs-key", provider: "anthropic" },
+    })
+
+    const output = await command.execute([], context)
+
+    expect(switchRequests).toEqual(["anthropic/gpt-5.3-codex"])
+    expect(output).toBe("No API key for Anthropic. Set one with /key anthropic.")
+  })
+
+  it("reports why a switch was refused", async () => {
+    const command = createModelCommand()
+    const { context } = createContext({
+      offerings: [OPENROUTER, ANTHROPIC],
+      currentModelId: "openrouter/claude-sonnet-4",
+      pickerResult: 4,
+      switchResult: { kind: "refused", reason: "anthropic/gpt-5.3-codex cannot be reached." },
+    })
+
+    const output = await command.execute([], context)
+
+    expect(output).toBe("anthropic/gpt-5.3-codex cannot be reached.")
+  })
+
+  it("confirms the model the host reports, not the one it asked for", async () => {
+    const command = createModelCommand()
+    const { context } = createContext({
+      offerings: [OPENROUTER, ANTHROPIC],
+      currentModelId: "openrouter/claude-sonnet-4",
+      pickerResult: 4,
+      switchResult: { kind: "switched", modelId: "anthropic/gpt-5.3-codex-preview" },
+    })
+
+    const output = await command.execute([], context)
+
+    expect(output).toBe("Switched to anthropic/gpt-5.3-codex-preview")
+  })
+
   it("throws a helpful error when interactive capabilities are missing", async () => {
     const command = createModelCommand()
     await expect(command.execute([], { projectPath: "/tmp/project" })).rejects.toThrow(/interactive/)
@@ -310,10 +363,11 @@ describe("createProviderCommand", () => {
     offerings?: ProviderOffering[]
     current?: ProviderId
     pickerResult: number | null
-    switchResult?: string | null
+    /** What the host reports back from the switch. Defaults to a success. */
+    switchResult?: ModelSwitchResult
   }) {
     const pickerRequests: PickerRequest[] = []
-    const switchedTo: ProviderId[] = []
+    const switchRequests: ProviderId[] = []
     const offerings = opts.offerings ?? [OPENROUTER, ANTHROPIC]
     const context: CommandContext = {
       projectPath: "/tmp/project",
@@ -325,12 +379,12 @@ describe("createProviderCommand", () => {
         list: async () => offerings,
         getCurrent: () => opts.current ?? "openrouter",
         switchTo: async (provider) => {
-          switchedTo.push(provider)
-          return opts.switchResult === undefined ? "anthropic/gpt-5.3-codex" : opts.switchResult
+          switchRequests.push(provider)
+          return opts.switchResult ?? { kind: "switched", modelId: "anthropic/gpt-5.3-codex" }
         },
       },
     }
-    return { context, pickerRequests, switchedTo }
+    return { context, pickerRequests, switchRequests }
   }
 
   it("is named provider with a description", () => {
@@ -362,41 +416,56 @@ describe("createProviderCommand", () => {
 
   it("switches Provider and reports the model it landed on", async () => {
     const command = createProviderCommand()
-    const { context, switchedTo } = providerContext({ pickerResult: 1 })
+    const { context, switchRequests } = providerContext({ pickerResult: 1 })
 
     const output = await command.execute([], context)
 
-    expect(switchedTo).toEqual(["anthropic"])
+    expect(switchRequests).toEqual(["anthropic"])
     expect(output).toContain("Anthropic")
     expect(output).toContain("anthropic/gpt-5.3-codex")
   })
 
-  it("explains when the Provider cannot be switched to", async () => {
+  it("names the missing key when the Provider has none", async () => {
     const command = createProviderCommand()
-    const { context } = providerContext({ pickerResult: 1, switchResult: null })
+    const { context } = providerContext({
+      pickerResult: 1,
+      switchResult: { kind: "needs-key", provider: "anthropic" },
+    })
 
     const output = await command.execute([], context)
 
-    expect(output).toContain("Cannot switch to Anthropic")
+    expect(output).toBe("No API key for Anthropic. Set one with /key anthropic.")
+  })
+
+  it("explains when the Provider cannot be switched to", async () => {
+    const command = createProviderCommand()
+    const { context } = providerContext({
+      pickerResult: 1,
+      switchResult: { kind: "refused", reason: "Anthropic has no models ViCode can call." },
+    })
+
+    const output = await command.execute([], context)
+
+    expect(output).toBe("Anthropic has no models ViCode can call.")
   })
 
   it("changes nothing when the picker is cancelled", async () => {
     const command = createProviderCommand()
-    const { context, switchedTo } = providerContext({ pickerResult: null })
+    const { context, switchRequests } = providerContext({ pickerResult: null })
 
     const output = await command.execute([], context)
 
     expect(output).toBe("")
-    expect(switchedTo).toHaveLength(0)
+    expect(switchRequests).toHaveLength(0)
   })
 
   it("does not switch when the current Provider is chosen", async () => {
     const command = createProviderCommand()
-    const { context, switchedTo } = providerContext({ pickerResult: 0 })
+    const { context, switchRequests } = providerContext({ pickerResult: 0 })
 
     const output = await command.execute([], context)
 
-    expect(switchedTo).toHaveLength(0)
+    expect(switchRequests).toHaveLength(0)
     expect(output).toContain("Already using")
   })
 

@@ -1070,6 +1070,200 @@ describe("App model switcher", () => {
   }, 30000)
 })
 
+describe("App /model across Providers", () => {
+  const CROSS_PROVIDER_CATALOG = {
+    providers: {
+      openrouter: {
+        "free-alpha": {
+          id: "free-alpha",
+          name: "Alpha",
+          protocol: "openai" as const,
+          pricing: { inputPricePerToken: 0, outputPricePerToken: 0 },
+        },
+      },
+      openai: {},
+      anthropic: {
+        "claude-test": {
+          id: "claude-test",
+          name: "Claude Test",
+          protocol: "anthropic" as const,
+          pricing: { inputPricePerToken: 3 / 1_000_000, outputPricePerToken: 15 / 1_000_000 },
+        },
+      },
+      opencode: {},
+      "opencode-go": {},
+    },
+  }
+
+  beforeEach(() => {
+    setActiveCatalog(CROSS_PROVIDER_CATALOG)
+  })
+
+  afterEach(() => {
+    setActiveCatalog(null)
+  })
+
+  /** A key for OpenRouter only — the setup the issue was reported from. */
+  function setupKeylessTarget() {
+    const handledBy: string[] = []
+    const savedKeys: string[] = []
+    const events: StreamEvent[] = [
+      { type: "text-delta", text: "ok" },
+      { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ]
+    const createProvider = (canonicalModelId: string): Provider => {
+      const model = parseModelId(canonicalModelId).model
+      return {
+        getModelInfo: () => ({
+          id: canonicalModelId,
+          name: `MODEL:${canonicalModelId}:ACTIVE`,
+          provider: parseModelId(canonicalModelId).provider ?? "openrouter",
+        }),
+        async listModels() {
+          return []
+        },
+        async *streamChat() {
+          handledBy.push(model)
+          for (const event of events) yield event
+        },
+      }
+    }
+    let anthropicKey: string | undefined
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-keyless-target-"))
+    const instance = render(
+      <App
+        provider={createProvider("openrouter/free-alpha")}
+        createProvider={createProvider}
+        tools={[]}
+        context={{ projectPath: join(sessionsDir, "project") }}
+        initialView="chat"
+        sessionsDir={sessionsDir}
+        keyFor={(provider) => (provider === "openrouter" ? "openrouter-key" : anthropicKey)}
+        commands={[createModelCommand()]}
+        onSaveApiKey={(provider, key) => {
+          savedKeys.push(`${provider}:${key}`)
+          anthropicKey = key
+        }}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    async function pressKey(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    /** Moves the picker cursor onto the row named by `label`. */
+    async function selectInPicker(label: string): Promise<void> {
+      await until(() => frameText().includes(label))
+      for (let i = 0; i < 10 && !frameText().includes(`> ${label}`); i++) {
+        await pressKey("\u001B[B")
+      }
+      expect(frameText()).toContain(`> ${label}`)
+    }
+
+    return {
+      ...instance,
+      frameText,
+      handledBy,
+      savedKeys,
+      sessionsDir,
+      typeAndSubmit,
+      pressKey,
+      selectInPicker,
+    }
+  }
+
+  it("offers the missing key rather than reporting a switch that did not happen", async () => {
+    const {
+      frameText,
+      handledBy,
+      savedKeys,
+      sessionsDir,
+      typeAndSubmit,
+      pressKey,
+      selectInPicker,
+      unmount,
+    } = setupKeylessTarget()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      expect(frameText()).toContain("MODEL:openrouter/free-alpha:ACTIVE")
+
+      await typeAndSubmit("/model")
+      await selectInPicker("Claude Test")
+      expect(frameText()).toContain("anthropic/claude-test")
+      expect(frameText()).toContain("no key")
+
+      await pressKey("\r")
+
+      // The key prompt is the honest outcome: no switch, no "Switched to".
+      await until(() => frameText().includes("Anthropic API key"))
+      expect(frameText()).toContain("Other providers keep their own keys.")
+      expect(frameText()).not.toContain("Switched to")
+
+      await typeAndSubmit("sk-ant-test-key")
+      await until(() => frameText().includes("Switched to anthropic/claude-test"))
+
+      expect(savedKeys).toEqual(["anthropic:sk-ant-test-key"])
+      expect(frameText()).toContain("MODEL:anthropic/claude-test:ACTIVE")
+
+      // The next Turn is billed to the Provider that was just switched to.
+      await typeAndSubmit("who is on the hook")
+      await until(() => handledBy.length >= 1)
+      expect(handledBy).toEqual(["claude-test"])
+
+      // The Session record agrees with the Status Bar and the confirmation.
+      await until(() => {
+        if (!existsSync(sessionsDir)) return false
+        return readdirSync(sessionsDir)
+          .filter((f) => f.endsWith(".json"))
+          .some((f) =>
+            readFileSync(join(sessionsDir, f), "utf-8").includes('"model": "anthropic/claude-test"'),
+          )
+      })
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("says which key is missing when the prompt is declined, and stays put", async () => {
+    const { frameText, handledBy, savedKeys, sessionsDir, typeAndSubmit, pressKey, selectInPicker, unmount } =
+      setupKeylessTarget()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("/model")
+      await selectInPicker("Claude Test")
+      await pressKey("\r")
+      await until(() => frameText().includes("Anthropic API key"))
+
+      await pressKey("\u001B")
+
+      await until(() => frameText().includes("No API key for Anthropic"))
+      expect(frameText()).toContain("/key anthropic")
+      expect(frameText()).not.toContain("Switched to")
+      expect(frameText()).toContain("MODEL:openrouter/free-alpha:ACTIVE")
+      expect(savedKeys).toHaveLength(0)
+
+      await typeAndSubmit("still on OpenRouter")
+      await until(() => handledBy.length >= 1)
+      expect(handledBy).toEqual(["free-alpha"])
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+})
+
 class TestStdout extends EventEmitter {
   get columns() {
     return 100

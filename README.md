@@ -123,7 +123,7 @@ ViCode talks to five routes. Each has its own credential, base URL, and billing,
 | `opencode` | OpenCode Zen | `OPENCODE_API_KEY` |
 | `opencode-go` | OpenCode Zen, Go plan | `OPENCODE_API_KEY` |
 
-`/model` lists everything the Model Catalog knows, grouped by provider and annotated with price and whether you hold a key for that route. `/provider` skips the list and moves to a provider's recommended model. Switching never prompts mid-turn, and a route you have no key for is not offered as a target.
+`/model` lists everything the Model Catalog knows, grouped by provider and annotated with price and whether you hold a key for that route. `/provider` skips the list and moves to a provider's recommended model. Switching never prompts mid-turn. Picking a model on a route you hold no key for opens that route's API Key prompt; `Esc` leaves the conversation on the model it already had and tells you which key is missing.
 
 The catalog comes from [models.dev](https://models.dev), cached in `~/.vicode/models-dev-cache.json` for a day. A cold first run populates it; until then, prices and context windows read as unknown rather than blocking the picker.
 

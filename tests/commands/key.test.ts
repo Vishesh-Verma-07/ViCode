@@ -16,7 +16,7 @@ function createContext(opts: {
       listProviders: async () => [],
       getCurrentModelId: () => "openrouter/gpt-4o",
       getCurrentProvider: () => opts.activeProvider ?? "openrouter",
-      switchTo: () => {},
+      switchTo: async (modelId) => ({ kind: "switched", modelId }),
     },
     key: {
       set: async (provider) => {
@@ -48,7 +48,7 @@ describe("key command", () => {
       providers: {
         list: async () => [],
         getCurrent: () => "anthropic",
-        switchTo: async () => null,
+        switchTo: async (provider) => ({ kind: "switched", modelId: `${provider}/gpt-4o` }),
       },
       key: {
         set: async (provider) => {

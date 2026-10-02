@@ -95,6 +95,19 @@ export interface NavigationCapability {
   home(): void
 }
 
+/**
+ * What actually happened to the route when a Command asked to change Model.
+ * The confirmation a Command prints is built from this rather than from the
+ * request, so the two can never disagree about which Provider is live.
+ */
+export type ModelSwitchResult =
+  /** The live Provider now serves `modelId`. */
+  | { kind: "switched"; modelId: string }
+  /** The target Provider holds no API Key. `provider` names whose is missing. */
+  | { kind: "needs-key"; provider: ProviderId }
+  /** Anything else, in words the user can act on. */
+  | { kind: "refused"; reason: string }
+
 export interface ModelsCapability {
   /** Every Provider and the Models it offers, grouped for display. */
   listProviders(): Promise<ProviderOffering[]>
@@ -102,7 +115,7 @@ export interface ModelsCapability {
   getCurrentModelId(): string
   getCurrentProvider(): ProviderId
   /** Switches route and model in one step. The id must be provider-qualified. */
-  switchTo(canonicalModelId: string): void
+  switchTo(canonicalModelId: string): Promise<ModelSwitchResult>
 }
 
 export interface ProviderOffering {
@@ -121,7 +134,7 @@ export interface ProvidersCapability {
   getCurrent(): ProviderId
   /** Switches Provider, keeping the current Model when that Provider offers
    *  it and otherwise moving to the Provider's top-ranked Model. */
-  switchTo(provider: ProviderId): Promise<string | null>
+  switchTo(provider: ProviderId): Promise<ModelSwitchResult>
 }
 
 export interface KeyCapability {

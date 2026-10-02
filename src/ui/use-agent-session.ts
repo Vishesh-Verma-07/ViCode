@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApp } from "ink"
-import type { Command, CommandContext, Message, PickerRequest, ProviderOffering, ToolContext, ToolDefinition } from "../core/types"
+import type { Command, CommandContext, Message, ModelSwitchResult, PickerRequest, ProviderOffering, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
 import type { ModelListing, Provider, TokenUsage } from "../core/provider"
 import type { ProviderId } from "../core/providers"
@@ -188,23 +188,46 @@ export function useAgentSession({
   }, [])
 
   /**
+   * Asks for the key a switch (or `/key`) needs. The cancellable screen, not
+   * the required one the pre-chat gate uses: walking into `/model` is not a
+   * reason to hold the user on the API Key Entry Screen, and declining leaves
+   * the route where it was for the Command to report.
+   */
+  const requestKeyFor = openKeyEntryFor ?? ensureKeyFor
+
+  /**
    * Rebuilds the Provider from a canonical id. Refuses when the target
    * Provider has no key, so a route is never switched onto a credential that
-   * does not exist.
+   * does not exist — offering the key prompt first, and reporting which of the
+   * two it was rather than leaving the caller to guess.
    */
   const switchTo = useCallback(
-    (canonicalModelId: string): boolean => {
-      if (!createProvider) return false
+    async (canonicalModelId: string): Promise<ModelSwitchResult> => {
+      if (!createProvider) {
+        return { kind: "refused", reason: "ViCode cannot build a Provider here, so the model cannot be switched." }
+      }
       const parsed = parseModelId(canonicalModelId)
-      if (!parsed.provider) return false
+      if (!parsed.provider) {
+        return {
+          kind: "refused",
+          reason: `"${canonicalModelId}" is not a provider-qualified model id.`,
+        }
+      }
+
+      if (!resolveKey(parsed.provider) && requestKeyFor) {
+        const entered = await requestKeyFor(parsed.provider)
+        if (!entered) return { kind: "needs-key", provider: parsed.provider }
+      }
+      // Read again: the prompt may have just stored one.
       const key = resolveKey(parsed.provider)
-      if (!key) return false
+      if (!key) return { kind: "needs-key", provider: parsed.provider }
+
       const next = createProvider(canonicalModelId, key)
       providerRef.current = next
       setProviderState(next)
-      return true
+      return { kind: "switched", modelId: next.getModelInfo().id }
     },
-    [createProvider, resolveKey],
+    [createProvider, resolveKey, requestKeyFor],
   )
 
   useEffect(() => {
@@ -367,28 +390,18 @@ export function useAgentSession({
           ? {
               list: () => listOfferings(resolveKey),
               getCurrent: currentProvider,
-              switchTo: async (provider: ProviderId) => {
+              switchTo: async (provider: ProviderId): Promise<ModelSwitchResult> => {
                 const offering = (await listOfferings(resolveKey)).find((o) => o.provider === provider)
-                if (!offering) return `Unknown provider ${provider}.`
+                if (!offering) return { kind: "refused", reason: `Unknown provider ${provider}.` }
 
                 const parsed = parseModelId(providerRef.current.getModelInfo().id)
                 const kept = offering.models.find((m) => m.id === parsed.model)
                 const target = kept ?? defaultModelFor(offering)
                 if (!target) {
-                  return `${offering.label} has no models ViCode can call.`
+                  return { kind: "refused", reason: `${offering.label} has no models ViCode can call.` }
                 }
 
-                if (!resolveKey(provider) && ensureKeyFor) {
-                  const got = await ensureKeyFor(provider)
-                  if (!got) return `No API key for ${offering.label}. Set one with /key ${provider}.`
-                }
-
-                if (!switchTo(formatModelId(provider, target.id))) {
-                  return resolveKey(provider)
-                    ? `Cannot talk to ${target.id} on ${offering.label}.`
-                    : `No API key for ${offering.label}. Set one with /key ${provider}.`
-                }
-                return formatModelId(provider, target.id)
+                return switchTo(formatModelId(provider, target.id))
               },
             }
           : undefined,
@@ -448,9 +461,9 @@ export function useAgentSession({
               },
             }
           : undefined,
-        key: openKeyEntryFor
+        key: requestKeyFor
           ? {
-              set: (provider) => openKeyEntryFor(provider ?? currentProvider()),
+              set: (provider) => requestKeyFor(provider ?? currentProvider()),
               remove: (provider) =>
                 (removeApiKeyFor ?? (async () => false))(provider ?? currentProvider()),
             }

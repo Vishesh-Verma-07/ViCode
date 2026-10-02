@@ -54,12 +54,16 @@ _Avoid_: checkpoint, model name
 The catalogue of Models, prices, and context windows fetched from models.dev and cached locally. It is the only source of pricing and context length; when it has no entry for a Model, cost reads as zero and the context window falls back to a default rather than the app failing.
 _Avoid_: model list (collides with the per-Provider listing the picker shows)
 
+**Model Switch**:
+The change of the live Model, and with it of Provider, that `/model` and `/provider` ask for. It either happens — reported with the Model now live, so the Status Bar, the Session record and the confirmation agree — or it is refused, and the refusal names its cause: a Provider holding no API Key, or a request ViCode cannot act on. The confirmation is built from the outcome, never from the request, so it cannot outrun the state change.
+_Avoid_: model change, route switch (a switch is refused as often as it happens)
+
 **API Key**:
 The credential that authenticates the user to one Provider. Each Provider holds its own, so the Global Config holds a map of them. It is a credential, not a configuration choice, so keys live in the global config file rather than the project config. OpenCode Zen and OpenCode Go share a single key — one console, one key, two routes.
 _Avoid_: token (ambiguity with LLM token budget), secret key
 
 **API Key Entry Screen**:
-The focused full-overlay surface that prompts the user for the active Provider's API Key when that Provider has none. It has two modes: required (must be satisfied before the user can chat on that Provider, Cancel disabled) and optional (dismissible, opened via `/key`). It names the Provider it is collecting a key for. A missing key for one Provider never blocks chatting through another. Saving the key runs the current Session's pending request and the Provider is recreated with the fresh key.
+The focused full-overlay surface that prompts the user for a Provider's API Key. It names the Provider it is collecting a key for, and has two modes: required (must be satisfied before the user can chat on that Provider, Cancel disabled) and optional (dismissible). The required mode is the pre-chat gate for the active Provider; the optional mode is opened by `/key` and by `/model` or `/provider` when the picked Model sits on a Provider with no key — walking into a switch is not a reason to hold the user on the screen. Declining a switch's prompt leaves the route as it was and says which key is missing. Saving the key runs the current Session's pending request and the Provider is recreated with the fresh key. A missing key for one Provider never blocks chatting through another.
 _Avoid_: key screen, key modal, credential prompt
 
 **Global Config**:
