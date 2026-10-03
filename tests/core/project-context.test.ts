@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test"
-import { project } from "@/core/project-context"
+import { contextBudget, project } from "@/core/project-context"
 import { VICODE_TRUNCATION_SENTINEL } from "@/core/cap-result"
+import { CONTEXT_BUDGET_RATIO } from "@/core/constants"
+import type { Provider } from "@/core/provider"
 import type { Message } from "@/core/types"
 
 function byteLen(s: string): number {
@@ -195,5 +197,25 @@ describe("project", () => {
     const original = JSON.stringify(history)
     project(history, 2000)
     expect(JSON.stringify(history)).toBe(original)
+  })
+})
+
+describe("contextBudget", () => {
+  function providerWith(contextLength: number | null): Provider {
+    return {
+      async *streamChat() {},
+      getModelInfo: () => ({ id: "mock", name: "Mock", contextLength }),
+      async listModels() {
+        return []
+      },
+    }
+  }
+
+  it("derives the budget from the Provider's own window", () => {
+    expect(contextBudget(providerWith(200_000))).toBe(Math.floor(200_000 * CONTEXT_BUDGET_RATIO))
+  })
+
+  it("reports no budget when the Provider names no window, rather than assuming 200k", () => {
+    expect(contextBudget(providerWith(null))).toBeNull()
   })
 })

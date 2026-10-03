@@ -2,6 +2,8 @@ import { describe, it, expect } from "bun:test"
 import {
   compactHistory,
   compactableIndex,
+  compactThresholdTokens,
+  contextLengthOf,
   foldableMessages,
   isAtCompactThreshold,
   needsCompaction,
@@ -31,7 +33,7 @@ function summaryMsg(summary: string, id = "summary_1"): Message {
   }
 }
 
-function createProvider(contextLength = 100_000, summarizeText = "New condensed state."): Provider {
+function createProvider(contextLength: number | null = 100_000, summarizeText = "New condensed state."): Provider {
   return {
     async *streamChat(): AsyncIterable<StreamEvent> {
       return
@@ -48,7 +50,7 @@ function createProvider(contextLength = 100_000, summarizeText = "New condensed 
   }
 }
 
-function noCapProvider(contextLength = 100_000): Provider {
+function noCapProvider(contextLength: number | null = 100_000): Provider {
   return {
     async *streamChat(): AsyncIterable<StreamEvent> {
       return
@@ -100,6 +102,23 @@ describe("metric helpers", () => {
   it("canCompact reflects provider support", () => {
     expect(canCompact(createProvider())).toBe(true)
     expect(canCompact(noCapProvider())).toBe(false)
+  })
+
+  it("reports a Provider that names no context window as unknown, not as a default", () => {
+    expect(contextLengthOf(createProvider(1000))).toBe(1000)
+    expect(contextLengthOf(createProvider(null))).toBeNull()
+    expect(compactThresholdTokens(createProvider(null))).toBeNull()
+  })
+
+  it("never compacts against a guessed window, however long the history grows", () => {
+    const unmeasured = createProvider(null)
+    const enormous = [
+      msg("user", "x".repeat(4_000_000), "u1"),
+      msg("assistant", "y".repeat(4_000_000), "a1"),
+      msg("user", "z".repeat(4_000_000), "u2"),
+    ]
+    expect(isAtCompactThreshold(enormous, unmeasured)).toBe(false)
+    expect(needsCompaction(enormous, unmeasured)).toBe(false)
   })
 })
 

@@ -236,6 +236,8 @@ The conversation is projected to fit **70%** of the model's context window befor
 
 At **60%** context load, the older history is folded into a running summary automatically at the top of the next turn. `/compact` forces it immediately. Compaction keeps the most recent user message and everything after it verbatim, appends the new summary to any previous one, and never lets a failed summary kill a turn. Summaries are structured briefs with five sections — **Goals · Decisions · Files touched · Changes made · Open threads** — and every path and command line is preserved verbatim.
 
+Both percentages are relative to a context window read from the Model Catalog. When that window is unknown there is nothing to measure against, so history is sent unprojected and no automatic compaction fires rather than being sized against a guessed window.
+
 > **Two different meters.** The 60% threshold is measured against the estimated size of the messages *in the window* (a 4-bytes-per-token heuristic). The Usage Panel's `Context` row is measured against the *cumulative* session token counter. The row will therefore read high on a long session whose history has been compacted, even though the actual in-window size is small.
 
 ## On-disk layout
@@ -357,7 +359,7 @@ Coverage is organised around the four seams — Provider, Tool, Config, and Sess
 
 ## Known limitations
 
-- **Cost and context windows depend on the Model Catalog.** Both come from models.dev, so they read as unknown until the first run has populated `~/.vicode/models-dev-cache.json`, and a model missing from that catalog shows `$0.00` even though tokens are still counted correctly. Context budgeting falls back to a 200k window in the meantime.
+- **Cost and context windows depend on the Model Catalog.** Both come from models.dev, so they read as unknown (`—`) until the first run has populated `~/.vicode/models-dev-cache.json`. A Model missing from that catalog is never shown as free: its cost and context window stay unknown for as long as they are unknown. Tokens are still counted correctly. While a context window is unknown there is no percentage to compare against the compact threshold, so automatic compaction stays off — `/compact` still works on demand.
 - **A gateway model is only offered if its protocol is supported.** The catalog lists models speaking many wire protocols; only OpenAI and Anthropic ones are routed. Everything else is left out of `/model` deliberately rather than failing at call time.
 - **`./debug.log` grows without bound.** ViCode appends a verbose run log to `<cwd>/debug.log` with no level check and no size cap, including raw model responses. Worth deleting periodically, and worth adding to your `.gitignore`.
 - **Sessions cannot be deleted from the UI.** `/session` lists and switches; pruning old `<project>/.vicode/sessions/*.json` files is manual. `/rename` names the current session (up to 60 characters) and the name shows in the `/session` picker, but nothing renames sessions other than the one you are in.

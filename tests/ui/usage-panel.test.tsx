@@ -10,6 +10,7 @@ import { ansiCode } from "@/ui/ansi-test"
 
 const BASE = {
   model: "stub-model",
+  contextLength: null,
   usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, cost: 0 },
   turns: 1,
   status: { kind: "idle" as const },
@@ -140,5 +141,49 @@ describe("UsagePanel project root path", () => {
     const hintIdx = lines.findIndex((l) => l.includes("Ctrl+C to exit"))
     expect(hintIdx).toBe(lines.length - 1)
     expect(lines[hintIdx - 1]).not.toContain("~")
+  })
+})
+
+describe("UsagePanel unknown figures", () => {
+  function rowValue(frame: string, label: string): string {
+    const row = linesOf(frame).find((l) => l.includes(`${label}:`))
+    if (!row) throw new Error(`no ${label} row in:\n${frame}`)
+    return row.slice(row.indexOf(`${label}:`) + label.length + 1).trim()
+  }
+
+  it("reads an unpriced Model's cost as a dash, not as $0.00", () => {
+    const frame = renderToString(
+      <UsagePanel
+        width={60}
+        {...BASE}
+        usage={{ ...BASE.usage, totalTokens: 3000, cost: null }}
+      />,
+      { columns: 60 },
+    )
+    expect(rowValue(frame, "Cost")).toBe("—")
+  })
+
+  it("still reads a genuinely free Model's cost as $0.00", () => {
+    const frame = renderToString(<UsagePanel width={60} {...BASE} />, { columns: 60 })
+    expect(rowValue(frame, "Cost")).toBe("$0.00")
+  })
+
+  it("shows the Context row as a dash rather than hiding it when the window is unmeasured", () => {
+    const frame = renderToString(<UsagePanel width={60} {...BASE} />, { columns: 60 })
+    expect(rowValue(frame, "Context")).toBe("—")
+  })
+
+  it("shows the measured window and its share of the context when known", () => {
+    const frame = renderToString(
+      <UsagePanel
+        width={60}
+        {...BASE}
+        contextLength={200_000}
+        usage={{ ...BASE.usage, totalTokens: 100_000, cost: 0.42 }}
+      />,
+      { columns: 60 },
+    )
+    expect(rowValue(frame, "Context")).toBe("200.0k (50.0%)")
+    expect(rowValue(frame, "Cost")).toBe("$0.420")
   })
 })

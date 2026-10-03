@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Superseded in part by ADR 0008, which replaces the "degrade to zero cost" consequence with an explicit Unknown.
 
 ## Context
 
@@ -43,7 +43,7 @@ Fetch `https://models.dev/api.json` once, cache it under `~/.vicode/`, and treat
 - **Positive**: the `$0.00` cost-display bug is fixed as a side effect rather than carried forward.
 - **Positive**: context length, and therefore the Compaction threshold, becomes correct on every provider.
 - **Positive**: the provider registry and each model's wire protocol become data, so adding a provider is a descriptor plus a transport, not a new code path.
-- **Negative**: ViCode now depends on a third-party dataset at runtime. If models.dev is unreachable or changes shape, we degrade to zero cost and unknown context length — never to a crash.
+- **Negative**: ViCode now depends on a third-party dataset at runtime. If models.dev is unreachable or changes shape, cost and context length read as unknown — never to a crash. (Superseded by ADR 0008, which makes both explicitly Unknown rather than a cost of zero.)
 - **Negative**: the first run on a clean machine pays a ~5.26 MB download.
 - **Negative**: the cache is machine-local, so it can go stale until its TTL expires; pricing shown may lag a vendor's actual price by up to the TTL.
 - **Negative**: a protocol we do not implement is now invisible rather than merely unsupported, which will read as "that model does not exist" to anyone who knows better.

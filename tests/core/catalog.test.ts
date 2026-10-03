@@ -104,8 +104,8 @@ describe("parseCatalog", () => {
 
   it("omits cache rates the catalog does not publish", () => {
     const entry = parseCatalog(MODELS_DEV_PAYLOAD)!.providers.openai!["gpt-6.1-sol"]!
-    expect(entry.pricing.cacheWritePricePerToken).toBeUndefined()
-    expect(entry.pricing.cacheReadPricePerToken).toBe(0.5 / 1_000_000)
+    expect(entry.pricing!.cacheWritePricePerToken).toBeUndefined()
+    expect(entry.pricing!.cacheReadPricePerToken).toBe(0.5 / 1_000_000)
   })
 
   it("reads the context limit", () => {
@@ -153,14 +153,30 @@ describe("parseCatalog", () => {
     expect(catalog.providers.openai!.nameless!.name).toBe("nameless")
   })
 
-  it("treats unparseable prices as zero rather than NaN", () => {
+  it("treats unparseable prices as unknown rather than free", () => {
     const catalog = parseCatalog({
       openai: { npm: "@ai-sdk/openai", models: { m: { cost: { input: "abc", output: null } } } },
     })!
-    expect(catalog.providers.openai!.m!.pricing).toEqual({
-      inputPricePerToken: 0,
-      outputPricePerToken: 0,
-    })
+    expect(catalog.providers.openai!.m!.pricing).toBeNull()
+  })
+
+  it("treats a model with no cost at all as unknown rather than free", () => {
+    const catalog = parseCatalog({
+      openai: { npm: "@ai-sdk/openai", models: { m: { name: "M" } } },
+    })!
+    expect(catalog.providers.openai!.m!.pricing).toBeNull()
+  })
+
+  it("keeps a genuinely zero-priced model priced, so it still reads as free", () => {
+    const entry = parseCatalog(MODELS_DEV_PAYLOAD)!.providers.openrouter![
+      "nvidia/nemotron-3-ultra-550b-a55b:free"
+    ]!
+    expect(entry.pricing).toEqual({ inputPricePerToken: 0, outputPricePerToken: 0 })
+  })
+
+  it("records a missing context limit as null rather than omitting it", () => {
+    const entry = parseCatalog(MODELS_DEV_PAYLOAD)!.providers.opencode!["gpt-5.3-codex"]!
+    expect(entry.contextLength).toBeNull()
   })
 })
 
@@ -185,11 +201,11 @@ describe("isModelReachable", () => {
   })
 
   it("rejects a gateway model we have no protocol for", () => {
-    expect(isModelReachable("opencode", { id: "m", name: "m", protocol: "google", pricing: { inputPricePerToken: 0, outputPricePerToken: 0 } })).toBe(false)
+    expect(isModelReachable("opencode", { id: "m", name: "m", protocol: "google", contextLength: null, pricing: { inputPricePerToken: 0, outputPricePerToken: 0 } })).toBe(false)
   })
 
   it("rejects a gateway model with an unknown protocol", () => {
-    expect(isModelReachable("opencode-go", { id: "m", name: "m", protocol: "unknown", pricing: { inputPricePerToken: 0, outputPricePerToken: 0 } })).toBe(false)
+    expect(isModelReachable("opencode-go", { id: "m", name: "m", protocol: "unknown", contextLength: null, pricing: { inputPricePerToken: 0, outputPricePerToken: 0 } })).toBe(false)
   })
 })
 
@@ -211,6 +227,28 @@ describe("listCatalogModels", () => {
     expect(models[0]?.id).toBe("nvidia/nemotron-3-ultra-550b-a55b:free")
   })
 
+  it("marks an unpriced model unknown, distinct from a free one", () => {
+    const unpriced = parseCatalog({
+      openai: { npm: "@ai-sdk/openai", models: { m: { name: "M" } } },
+    })!
+    const models = listCatalogModels("openai", unpriced)
+    expect(models[0]?.pricing).toEqual({ kind: "unknown" })
+  })
+
+  it("sorts unknown-priced models last, where nobody is misled into picking them for free", () => {
+    const mixed = parseCatalog({
+      openai: {
+        npm: "@ai-sdk/openai",
+        models: {
+          unpriced: { name: "Unpriced" },
+          paid: { name: "Paid", cost: { input: "1", output: "1" } },
+          free: { name: "Free", cost: { input: "0", output: "0" } },
+        },
+      },
+    })!
+    expect(listCatalogModels("openai", mixed).map((m) => m.id)).toEqual(["free", "paid", "unpriced"])
+  })
+
   it("excludes models ViCode cannot call", () => {
     const ids = listCatalogModels("opencode", catalog).map((m) => m.id)
     expect(ids.sort()).toEqual(["claude-sonnet-4", "gpt-5.3-codex"])
@@ -219,6 +257,11 @@ describe("listCatalogModels", () => {
   it("carries the context length through to the listing", () => {
     const sol = listCatalogModels("openai", catalog)[0]!
     expect(sol.contextLength).toBe(400000)
+  })
+
+  it("lists a model with no context limit as null rather than leaving it out", () => {
+    const codex = listCatalogModels("opencode", catalog).find((m) => m.id === "gpt-5.3-codex")!
+    expect(codex.contextLength).toBeNull()
   })
 })
 
@@ -235,6 +278,14 @@ describe("lookups", () => {
 
   it("returns null for an unknown model", () => {
     expect(resolvePricing("openai/nope", catalog)).toBeNull()
+  })
+
+  it("returns null for a model the catalog prices but never gives a context limit", () => {
+    expect(resolveContextLength("opencode/gpt-5.3-codex", catalog)).toBeNull()
+  })
+
+  it("returns null for an unknown model's context length", () => {
+    expect(resolveContextLength("openai/nope", catalog)).toBeNull()
   })
 
   it("returns undefined for an unqualified id", () => {

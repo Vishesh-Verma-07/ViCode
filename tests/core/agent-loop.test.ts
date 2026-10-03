@@ -34,7 +34,7 @@ function createMockProvider(events: StreamEvent[][]): Provider {
       return { text: "[mock summary]", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
     },
     getModelInfo() {
-      return { id: "mock", name: "Mock Model" }
+      return { id: "mock", name: "Mock Model", contextLength: null }
     },
     async listModels() {
       return []
@@ -284,7 +284,7 @@ describe("agent-loop", () => {
         return { text: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
       },
       getModelInfo() {
-        return { id: "mock", name: "Mock" }
+        return { id: "mock", name: "Mock", contextLength: null }
       },
       async listModels() {
         return []
@@ -552,6 +552,40 @@ describe("agent-loop", () => {
     )
 
     expect(result.totalUsage.cost).toBeCloseTo(0.06, 4)
+  })
+
+  it("totals an unknown-priced step as an unknown total, not as the sum of the priced ones", async () => {
+    const echoTool: ToolDefinition = {
+      name: "echo",
+      description: "Echo",
+      parameters: z.object({ x: z.string() }),
+      execute: async (args) => String(args.x),
+      dangerous: false,
+    }
+
+    const provider = createMockProvider([
+      [
+        { type: "tool-call-start", toolCallId: "c1", toolName: "echo" },
+        { type: "tool-call-end", toolCallId: "c1", toolName: "echo", args: { x: "1" } },
+        { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: null } },
+      ],
+      [
+        { type: "text-delta", text: "done" },
+        { type: "finish", usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, cost: 0.03 } },
+      ],
+    ])
+
+    const result = await runAgentLoop(
+      [userMessage("echo")],
+      provider,
+      [echoTool],
+      "system",
+      mockContext,
+      createMockCallbacks(),
+    )
+
+    expect(result.totalUsage.totalTokens).toBe(22)
+    expect(result.totalUsage.cost).toBeNull()
   })
 
   it("reports per-call usage via onUsage as each AI call finishes", async () => {
@@ -952,6 +986,54 @@ describe("agent-loop", () => {
       for (const m of secondTurn) totalTokens += estimateTokens(m)
       expect(totalTokens).toBeLessThanOrEqual(budget)
     })
+
+    it("truncates nothing when the Provider names no context window", async () => {
+      // A guessed 200k budget would silently amputate this. Not knowing the
+      // window is the honest answer: send it whole and let the Provider judge.
+      const giantResult = "z".repeat(40_000)
+      const giantTool: ToolDefinition = {
+        name: "leak",
+        description: "returns a giant blob",
+        parameters: z.object({}),
+        dangerous: false,
+        execute: async () => giantResult,
+      }
+
+      const receivedHistory: Message[][] = []
+      const unmeasuredProvider: Provider = {
+        async *streamChat(messages: Message[]): AsyncIterable<StreamEvent> {
+          receivedHistory.push([...messages])
+          const turn = receivedHistory.length
+          if (turn === 1) {
+            yield { type: "tool-call-start", toolCallId: "c1", toolName: "leak" }
+            yield { type: "tool-call-end", toolCallId: "c1", toolName: "leak", args: {} }
+            yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: null } }
+          } else {
+            yield { type: "text-delta", text: "done" }
+            yield { type: "finish", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: null } }
+          }
+        },
+        getModelInfo() {
+          return { id: "mock", name: "Mock", contextLength: null }
+        },
+        async listModels() {
+          return []
+        },
+      }
+
+      await runAgentLoop(
+        [userMessage("run")],
+        unmeasuredProvider,
+        [giantTool],
+        "system",
+        mockContext,
+        createMockCallbacks(),
+      )
+
+      const secondTurn = receivedHistory[1]!
+      expect(JSON.stringify(secondTurn)).toContain(giantResult)
+      expect(JSON.stringify(secondTurn)).not.toContain("tokens omitted")
+    })
   })
 
   describe("turn-scoped approved-path memory", () => {
@@ -1213,7 +1295,7 @@ describe("agent-loop", () => {
           return { text: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 } }
         },
         getModelInfo() {
-          return { id: "mock", name: "Mock" }
+          return { id: "mock", name: "Mock", contextLength: null }
         },
         async listModels() {
           return []

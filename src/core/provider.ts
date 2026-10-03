@@ -16,7 +16,11 @@ export interface TokenUsage {
   inputTokens: number
   outputTokens: number
   totalTokens: number
-  cost: number
+  /**
+   * Dollars spent, or null when the Model has no known price. Never 0 as a
+   * stand-in for unknown: that reads as a free turn.
+   */
+  cost: number | null
   /** Prompt tokens served from the Provider's cache. A subset of inputTokens. */
   cacheReadTokens?: number
   /** Prompt tokens written to the Provider's cache. A subset of inputTokens. */
@@ -31,12 +35,20 @@ export interface TokenUsage {
 export interface ModelInfo {
   id: string
   name: string
-  contextLength?: number
+  /** The window in tokens, or null when the Model Catalog publishes none. */
+  contextLength: number | null
   /** The Provider serving this Model, as a canonical `provider/model` prefix. */
   provider?: ProviderId
 }
 
+/**
+ * What the Model Catalog knows about a Model's price.
+ *
+ * `unknown` is not `free`: a Model the catalog never priced must not be shown
+ * or totalled as though it cost nothing.
+ */
 export type ModelListingPricing =
+  | { kind: "unknown" }
   | { kind: "free" }
   | { kind: "paid"; inputPricePerToken: number; outputPricePerToken: number }
 
@@ -44,7 +56,7 @@ export interface ModelListing {
   id: string
   name: string
   pricing: ModelListingPricing
-  contextLength?: number
+  contextLength: number | null
 }
 
 export interface Provider {

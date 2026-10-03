@@ -13,18 +13,28 @@ const freeModel: ModelListing = {
   id: "nvidia/nemotron-3-ultra-550b-a55b:free",
   name: "Nemotron 3 Ultra (free)",
   pricing: { kind: "free" },
+  contextLength: 128_000,
 }
 
 const paidModel: ModelListing = {
   id: "claude-sonnet-4",
   name: "Claude Sonnet 4",
   pricing: { kind: "paid", inputPricePerToken: 3 / 1_000_000, outputPricePerToken: 15 / 1_000_000 },
+  contextLength: 200_000,
 }
 
 const cheapPaidModel: ModelListing = {
   id: "gpt-5.3-codex",
   name: "GPT-5.3 Codex",
   pricing: { kind: "paid", inputPricePerToken: 0, outputPricePerToken: 0.6 / 1_000_000 },
+  contextLength: null,
+}
+
+const unpricedModel: ModelListing = {
+  id: "mystery-model",
+  name: "Mystery Model",
+  pricing: { kind: "unknown" },
+  contextLength: null,
 }
 
 function offering(overrides: Partial<ProviderOffering> & { provider: ProviderId }): ProviderOffering {
@@ -48,7 +58,7 @@ const OPENROUTER = offering({
 const ANTHROPIC = offering({
   provider: "anthropic",
   label: "Anthropic",
-  models: [cheapPaidModel],
+  models: [cheapPaidModel, unpricedModel],
   hasKey: false,
 })
 
@@ -97,6 +107,12 @@ function createContext(opts: {
 describe("formatModelPricing", () => {
   it("labels free models as free", () => {
     expect(formatModelPricing({ kind: "free" })).toBe("free")
+  })
+
+  it("labels an unpriced model as unknown, never as free", () => {
+    const meta = formatModelPricing({ kind: "unknown" })
+    expect(meta).toBe("—")
+    expect(meta).not.toBe(formatModelPricing({ kind: "free" }))
   })
 
   it("shows per-million-token rates for paid models", () => {
@@ -163,13 +179,14 @@ describe("createModelCommand", () => {
 
     expect(pickerRequests).toHaveLength(1)
     const labels = pickerRequests[0]!.items.map((i) => i.label)
-    // heading, two models, heading, one model
+    // heading, two models, heading, two models
     expect(labels).toEqual([
       "OpenRouter",
       "Nemotron 3 Ultra (free)",
       "Claude Sonnet 4",
       "Anthropic",
       "GPT-5.3 Codex",
+      "Mystery Model",
     ])
   })
 
@@ -200,6 +217,20 @@ describe("createModelCommand", () => {
     expect(items[1]!.metadata).toContain("free")
     expect(items[2]!.metadata).toContain("$3.00/M")
     expect(items[2]!.metadata).toContain("$15.00/M")
+  })
+
+  it("shows an unpriced model as a dash, so it cannot be picked as if it were free", async () => {
+    const command = createModelCommand()
+    const { context, pickerRequests } = createContext({
+      offerings: [ANTHROPIC],
+      pickerResult: null,
+    })
+
+    await command.execute([], context)
+
+    const items = pickerRequests[0]!.items
+    expect(items[2]!.metadata).toContain("anthropic/mystery-model · —")
+    expect(items[2]!.metadata).not.toContain("free")
   })
 
   it("marks a Provider with no key rather than hiding its models", async () => {
@@ -402,7 +433,7 @@ describe("createProviderCommand", () => {
     const items = pickerRequests[0]!.items
     expect(items.map((i) => i.label)).toEqual(["OpenRouter (current)", "Anthropic"])
     expect(items[0]!.metadata).toContain("2 models")
-    expect(items[1]!.metadata).toContain("1 models")
+    expect(items[1]!.metadata).toContain("2 models")
   })
 
   it("marks a Provider with no key", async () => {

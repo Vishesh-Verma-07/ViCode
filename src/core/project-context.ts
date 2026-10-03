@@ -1,7 +1,7 @@
 import type { Message } from "./types"
 import type { Provider } from "./provider"
 import { VICODE_TRUNCATION_SENTINEL } from "./cap-result"
-import { CONTEXT_BUDGET_RATIO, FALLBACK_CONTEXT_LENGTH } from "./constants"
+import { CONTEXT_BUDGET_RATIO } from "./constants"
 
 const BYTE_PER_TOKEN = 4
 const MESSAGE_OVERHEAD_TOKENS = 4
@@ -31,10 +31,18 @@ function truncationMarker(omittedTokens: number): string {
   )
 }
 
-export function contextBudget(provider: Provider): number {
+/**
+ * The token budget the Agent Loop may fill, or null when the Provider names no
+ * context window.
+ *
+ * There is deliberately no default. A guessed 200k window is a confident lie
+ * about a Model that may really take 32k: the loop would send a request the
+ * Provider rejects, and nothing on screen would say why.
+ */
+export function contextBudget(provider: Provider): number | null {
   const contextLength = provider.getModelInfo().contextLength
-  const base = contextLength && contextLength > 0 ? contextLength : FALLBACK_CONTEXT_LENGTH
-  return Math.floor(base * CONTEXT_BUDGET_RATIO)
+  if (contextLength === null) return null
+  return Math.floor(contextLength * CONTEXT_BUDGET_RATIO)
 }
 
 export function project(history: Message[], budget: number): Message[] {

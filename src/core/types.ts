@@ -190,7 +190,8 @@ export interface Session {
   createdAt: string
   updatedAt: string
   totalTokens: number
-  totalCost: number
+  /** Dollars spent, or null when any turn in the Session was unpriced. */
+  totalCost: number | null
   mode?: ModeId
   lastCompaction?: {
     before: Message[]

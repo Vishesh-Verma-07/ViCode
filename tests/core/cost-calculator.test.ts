@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test"
 import {
+  addCost,
   calculateCost,
   formatCost,
   formatTokens,
@@ -18,9 +19,15 @@ describe("cost-calculator", () => {
       expect(cost).toBeCloseTo(0.0105, 6)
     })
 
-    it("returns 0 when pricing is null", () => {
-      const cost = calculateCost({ inputTokens: 1000, outputTokens: 500 }, null)
+    it("prices a free model as zero rather than unknown", () => {
+      const free: ModelPricing = { inputPricePerToken: 0, outputPricePerToken: 0 }
+      const cost = calculateCost({ inputTokens: 1000, outputTokens: 500 }, free)
       expect(cost).toBe(0)
+    })
+
+    it("reports null when the Model has no known price", () => {
+      const cost = calculateCost({ inputTokens: 1000, outputTokens: 500 }, null)
+      expect(cost).toBeNull()
     })
 
     it("handles zero tokens", () => {
@@ -93,9 +100,30 @@ describe("cost-calculator", () => {
     })
   })
 
+  describe("addCost", () => {
+    it("sums two known costs", () => {
+      expect(addCost(0.01, 0.02)).toBeCloseTo(0.03, 6)
+    })
+
+    it("keeps an unknown total unknown rather than pretending the other half was free", () => {
+      expect(addCost(null, 0.02)).toBeNull()
+      expect(addCost(0.02, null)).toBeNull()
+      expect(addCost(null, null)).toBeNull()
+    })
+
+    it("treats zero as known, so a free turn keeps the total known", () => {
+      expect(addCost(0.02, 0)).toBe(0.02)
+    })
+  })
+
   describe("formatCost", () => {
     it("formats zero cost", () => {
       expect(formatCost(0)).toBe("$0.00")
+    })
+
+    it("renders an unknown cost as a dash, distinct from a free one", () => {
+      expect(formatCost(null)).toBe("—")
+      expect(formatCost(null)).not.toBe(formatCost(0))
     })
 
     it("formats small cost in cents", () => {

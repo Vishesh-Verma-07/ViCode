@@ -12,7 +12,7 @@ import { ansiCode } from "@/ui/ansi-test"
 import type { Provider } from "@/core/provider"
 
 const provider: Provider = {
-  getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+  getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
   async listModels() {
     return []
   },
@@ -183,7 +183,7 @@ describe("WelcomeScreen project root footer", () => {
 describe("Chat window Status Bar scope", () => {
   it("does not carry the Project Root Path", async () => {
     const stubProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },

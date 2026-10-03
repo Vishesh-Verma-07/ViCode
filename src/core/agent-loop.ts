@@ -2,6 +2,7 @@ import type { Message, ToolDefinition, ToolContext } from "./types"
 import type { Provider, StreamEvent, TokenUsage } from "./provider"
 import { ToolRegistry } from "./tool-registry"
 import { capResult } from "./cap-result"
+import { addCost } from "./cost-calculator"
 import { project, contextBudget } from "./project-context"
 import { compactHistory, needsCompaction } from "./compaction"
 import { selectModeTools, type ModeDefinition } from "./modes"
@@ -106,18 +107,18 @@ export async function runAgentLoop(
         try {
           const compacted = await compactHistory(allMessages, provider, abortSignal)
           folded = compacted.foldedMessages
-          if (folded > 0) {
-            allMessages = compacted.messages
-            if (compacted.usage.totalTokens > 0) {
-              callbacks.onUsage(compacted.usage)
-              totalUsage = {
-                inputTokens: totalUsage.inputTokens + compacted.usage.inputTokens,
-                outputTokens: totalUsage.outputTokens + compacted.usage.outputTokens,
-                totalTokens: totalUsage.totalTokens + compacted.usage.totalTokens,
-                cost: (totalUsage.cost ?? 0) + (compacted.usage.cost ?? 0),
+if (folded > 0) {
+              allMessages = compacted.messages
+              if (compacted.usage.totalTokens > 0) {
+                callbacks.onUsage(compacted.usage)
+                totalUsage = {
+                  inputTokens: totalUsage.inputTokens + compacted.usage.inputTokens,
+                  outputTokens: totalUsage.outputTokens + compacted.usage.outputTokens,
+                  totalTokens: totalUsage.totalTokens + compacted.usage.totalTokens,
+                  cost: addCost(totalUsage.cost, compacted.usage.cost),
+                }
               }
             }
-          }
         } catch (error) {
           // Compaction is opportunistic: a failed summary must never kill a turn.
           log("Compaction failed:", error)
@@ -139,7 +140,9 @@ export async function runAgentLoop(
     let stepUsage: TokenUsage | undefined
 
     try {
-      const modelContext = project(allMessages, budget)
+      // No measured window means no budget to project against: send the history
+// whole rather than amputate it to a limit nobody has stated.
+const modelContext = budget === null ? allMessages : project(allMessages, budget)
       for await (const event of provider.streamChat(modelContext, registeredTools, systemPrompt, abortSignal)) {
         if (abortSignal?.aborted) break
 
@@ -192,7 +195,7 @@ export async function runAgentLoop(
         inputTokens: totalUsage.inputTokens + stepUsage.inputTokens,
         outputTokens: totalUsage.outputTokens + stepUsage.outputTokens,
         totalTokens: totalUsage.totalTokens + stepUsage.totalTokens,
-        cost: (totalUsage.cost ?? 0) + (stepUsage.cost ?? 0),
+        cost: addCost(totalUsage.cost, stepUsage.cost),
       }
     }
 

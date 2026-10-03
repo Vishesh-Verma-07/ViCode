@@ -1,7 +1,7 @@
 import type { Message, ContextSummaryContent } from "./types"
 import type { Provider, TokenUsage } from "./provider"
 import { estimateMessageTokens } from "./project-context"
-import { COMPACT_THRESHOLD_RATIO, FALLBACK_CONTEXT_LENGTH } from "./constants"
+import { COMPACT_THRESHOLD_RATIO } from "./constants"
 
 export const COMPACT_SUMMARY_SYSTEM_PROMPT = `You are a session summariser for ViCode, an AI coding agent.
 
@@ -33,13 +33,21 @@ export function emptyUsage(): TokenUsage {
   return { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
 }
 
-export function contextLengthOf(provider: Provider): number {
-  const length = provider.getModelInfo().contextLength
-  return length && length > 0 ? length : FALLBACK_CONTEXT_LENGTH
+/**
+ * The Model's context window, or null when the Provider reports none.
+ *
+ * No default: a threshold guessed from an invented window fires at the wrong
+ * moment and never says which window it assumed.
+ */
+export function contextLengthOf(provider: Provider): number | null {
+  return provider.getModelInfo().contextLength
 }
 
-export function compactThresholdTokens(provider: Provider): number {
-  return Math.floor(contextLengthOf(provider) * COMPACT_THRESHOLD_RATIO)
+/** Tokens at which Compaction should fire, or null when the window is unknown. */
+export function compactThresholdTokens(provider: Provider): number | null {
+  const length = contextLengthOf(provider)
+  if (length === null) return null
+  return Math.floor(length * COMPACT_THRESHOLD_RATIO)
 }
 
 export function estimateContextTokens(messages: Message[]): number {
@@ -75,8 +83,11 @@ export function foldableMessages(messages: Message[]): Message[] {
   return messages.slice(0, cut).filter((m) => !isRunningSummaryMessage(m))
 }
 
+/** False when the Provider names no context window, so Compaction waits for a real threshold. */
 export function isAtCompactThreshold(messages: Message[], provider: Provider): boolean {
-  return estimateContextTokens(messages) >= compactThresholdTokens(provider)
+  const threshold = compactThresholdTokens(provider)
+  if (threshold === null) return false
+  return estimateContextTokens(messages) >= threshold
 }
 
 export function canCompact(provider: Provider): boolean {

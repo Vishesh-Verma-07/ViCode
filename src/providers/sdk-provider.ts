@@ -77,9 +77,14 @@ export function createSdkProvider(config: SdkProviderConfig): Provider {
     },
 
     getModelInfo() {
-      const contextLength = resolveContextLength(canonicalId)
-      const info = { id: canonicalId, name: model, provider: descriptor.id }
-      return contextLength === undefined ? info : { ...info, contextLength }
+      // contextLength is always present, null included: an unmeasured window is
+      // a fact about the Model, not a missing field.
+      return {
+        id: canonicalId,
+        name: model,
+        provider: descriptor.id,
+        contextLength: resolveContextLength(canonicalId),
+      }
     },
 
     async listModels(): Promise<ModelListing[]> {

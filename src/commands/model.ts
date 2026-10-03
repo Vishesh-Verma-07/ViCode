@@ -1,9 +1,12 @@
+import { UNKNOWN_DISPLAY } from "../core/cost-calculator"
 import type { ModelListingPricing } from "../core/provider"
 import type { Command, ModelSwitchResult, PickerItem, ProviderOffering } from "../core/types"
 import { providerLabel } from "../core/providers"
 import { formatModelId } from "../core/model-id"
 
+/** What a Model costs, or the dash standing in for a price nobody has. */
 export function formatModelPricing(pricing: ModelListingPricing): string {
+  if (pricing.kind === "unknown") return UNKNOWN_DISPLAY
   if (pricing.kind === "free") return "free"
   const perMillion = (ratePerToken: number) => {
     const dollarsPerMillion = ratePerToken * 1_000_000

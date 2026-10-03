@@ -110,6 +110,34 @@ describe("saveSession and loadSession", () => {
     expect(loaded!.mode).toBe("plan")
   })
 
+  it("keeps an unpriced session's total unknown across a save and load", () => {
+    const sessionsDir = getSessionsDir(tempDir)
+    saveSession(makeSession({ id: "sess_unpriced", totalCost: null }), sessionsDir)
+
+    expect(JSON.parse(readFileSync(join(sessionsDir, "sess_unpriced.json"), "utf-8")).totalCost).toBeNull()
+    expect(loadSession("sess_unpriced", sessionsDir)!.totalCost).toBeNull()
+  })
+
+  it("reads a stored total with no cost figure as unknown rather than leaving it undefined", () => {
+    const sessionsDir = getSessionsDir(tempDir)
+    mkdirSync(sessionsDir, { recursive: true })
+    writeFileSync(
+      join(sessionsDir, "sess_nocost.json"),
+      JSON.stringify({
+        id: "sess_nocost",
+        model: "anthropic/claude-sonnet-4",
+        messages: [],
+        createdAt: "2025-01-15T10:30:00.000Z",
+        updatedAt: "2025-01-15T10:35:00.000Z",
+        totalTokens: 100,
+      }),
+      "utf-8",
+    )
+
+    expect(loadSession("sess_nocost", sessionsDir)!.totalCost).toBeNull()
+    expect(listSessions(sessionsDir)[0]!.totalCost).toBeNull()
+  })
+
   it("resolves a session without a mode field to build on load", () => {
     const session = makeSession({ id: "sess_old" })
     const sessionsDir = getSessionsDir(tempDir)

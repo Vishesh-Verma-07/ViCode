@@ -8,6 +8,7 @@ import { ensureCatalog, loadCatalogOffline, listCatalogModels } from "../core/ca
 import { listProviders } from "../core/providers"
 import { formatModelId, LEGACY_PROVIDER, parseModelId } from "../core/model-id"
 import { runAgentLoop } from "../core/agent-loop"
+import { addCost } from "../core/cost-calculator"
 import { assembleSystemPrompt } from "../core/system-prompt"
 import { DEFAULT_MODE, MODES, cycleMode as cycleModeId, findMode, selectModeTools, type ModeDefinition, type ModeId } from "../core/modes"
 import { compactHistory } from "../core/compaction"
@@ -62,9 +63,15 @@ async function listOfferings(
  * The Model a Provider lands on when the current one is not offered there:
  * its cheapest paid model. Free models are skipped because a free tier is
  * rate-limited and, on some gateways, refuses third-party clients outright.
+ * Unpriced models come last: they are last on the list anyway, and starting a
+ * Provider on "we have no idea what this costs" is nobody's idea of a default.
  */
 function defaultModelFor(offering: ProviderOffering): ModelListing | undefined {
-  return offering.models.find((m) => m.pricing.kind === "paid") ?? offering.models[0]
+  return (
+    offering.models.find((m) => m.pricing.kind === "paid") ??
+    offering.models.find((m) => m.pricing.kind === "free") ??
+    offering.models[0]
+  )
 }
 
 export interface UseAgentSessionArgs {
@@ -425,7 +432,7 @@ export function useAgentSession({
                       inputTokens: prev.inputTokens + result.usage!.inputTokens,
                       outputTokens: prev.outputTokens + result.usage!.outputTokens,
                       totalTokens: prev.totalTokens + result.usage!.totalTokens,
-                      cost: prev.cost + result.usage!.cost,
+                      cost: addCost(prev.cost, result.usage!.cost),
                     }))
                   }
 
@@ -439,7 +446,7 @@ export function useAgentSession({
                     model: providerRef.current.getModelInfo().id,
                     updatedAt: new Date().toISOString(),
                     totalTokens: base.totalTokens + (result.usage?.totalTokens ?? 0),
-                    totalCost: base.totalCost + (result.usage?.cost ?? 0),
+                    totalCost: addCost(base.totalCost, result.usage!.cost),
                     mode: activeMode,
                     lastCompaction: {
                       before: result.folded,
@@ -549,7 +556,7 @@ export function useAgentSession({
                   inputTokens: prev.inputTokens + stepUsage.inputTokens,
                   outputTokens: prev.outputTokens + stepUsage.outputTokens,
                   totalTokens: prev.totalTokens + stepUsage.totalTokens,
-                  cost: prev.cost + stepUsage.cost,
+                  cost: addCost(prev.cost, stepUsage.cost),
                 }))
               },
               onCompactionStart: () => {
@@ -627,7 +634,7 @@ export function useAgentSession({
               model: providerRef.current.getModelInfo().id,
               updatedAt: new Date().toISOString(),
               totalTokens: activeSession.totalTokens + result.totalUsage.totalTokens,
-              totalCost: activeSession.totalCost + result.totalUsage.cost,
+              totalCost: addCost(activeSession.totalCost, result.totalUsage.cost),
               mode: turnMode.id,
             }
             saveSession(savedSession, sessionsDir)

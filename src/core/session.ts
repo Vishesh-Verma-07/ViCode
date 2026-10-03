@@ -8,8 +8,9 @@ export type { Session }
 
 /**
  * Normalises a stored session to the current format: a canonical model id and
- * the version marker that makes it canonical. Rewritten on every save so the
- * migration is durable rather than re-derived on each load.
+ * the version marker that makes it canonical, and a `totalCost` that is a
+ * number or explicitly null. Rewritten on every save so the migration is
+ * durable rather than re-derived on each load.
  */
 function upgradeSession<T extends Session>(session: T): T {
   const legacy = isLegacyModelValue(session)
@@ -17,6 +18,7 @@ function upgradeSession<T extends Session>(session: T): T {
     ...session,
     model: qualifyStoredModel(session.model, legacy),
     version: QUALIFIED_MODEL_FORMAT_VERSION,
+    totalCost: typeof session.totalCost === "number" ? session.totalCost : null,
   }
 }
 
@@ -77,7 +79,7 @@ export interface SessionSummary {
   createdAt: string
   updatedAt: string
   totalTokens: number
-  totalCost: number
+  totalCost: number | null
 }
 
 export function listSessions(sessionsDir: string): SessionSummary[] {

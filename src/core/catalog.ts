@@ -26,8 +26,10 @@ export interface CatalogModel {
   id: string
   name: string
   protocol: WireProtocol
-  contextLength?: number
-  pricing: ModelPricing
+  /** The window in tokens, or null when the catalog publishes none. */
+  contextLength: number | null
+  /** Billed rates, or null when the catalog publishes no usable price. */
+  pricing: ModelPricing | null
   /** The model's maker, independent of the Provider serving it. */
   vendorId?: string
 }
@@ -70,12 +72,22 @@ function perMillion(value: unknown): number | undefined {
   return num / 1_000_000
 }
 
-function parsePricing(cost: unknown): ModelPricing {
-  const c = (typeof cost === "object" && cost !== null ? cost : {}) as Record<string, unknown>
-  const pricing: ModelPricing = {
-    inputPricePerToken: perMillion(c.input) ?? 0,
-    outputPricePerToken: perMillion(c.output) ?? 0,
-  }
+/**
+ * Billed rates for one model, or null when the catalog does not publish a
+ * usable price.
+ *
+ * Both directions must parse. Guessing a missing rate as zero is how an
+ * unpriced model ends up looking free, which is the one thing the picker and
+ * the cost meter must never claim.
+ */
+function parsePricing(cost: unknown): ModelPricing | null {
+  if (typeof cost !== "object" || cost === null) return null
+  const c = cost as Record<string, unknown>
+  const input = perMillion(c.input)
+  const output = perMillion(c.output)
+  if (input === undefined || output === undefined) return null
+
+  const pricing: ModelPricing = { inputPricePerToken: input, outputPricePerToken: output }
   const cacheRead = perMillion(c.cache_read)
   const cacheWrite = perMillion(c.cache_write)
   if (cacheRead !== undefined) pricing.cacheReadPricePerToken = cacheRead
@@ -83,10 +95,10 @@ function parsePricing(cost: unknown): ModelPricing {
   return pricing
 }
 
-function parseContextLength(limit: unknown): number | undefined {
-  if (typeof limit !== "object" || limit === null) return undefined
+function parseContextLength(limit: unknown): number | null {
+  if (typeof limit !== "object" || limit === null) return null
   const context = (limit as { context?: unknown }).context
-  if (typeof context !== "number" || !Number.isFinite(context) || context <= 0) return undefined
+  if (typeof context !== "number" || !Number.isFinite(context) || context <= 0) return null
   return context
 }
 
@@ -114,10 +126,9 @@ function parseProviderEntry(payload: unknown): Record<string, CatalogModel> | nu
       id,
       name: typeof model.name === "string" && model.name !== "" ? model.name : id,
       protocol: protocolFromNpm(perModel?.npm ?? providerNpm),
+      contextLength: parseContextLength(model.limit),
       pricing: parsePricing(model.cost),
     }
-    const contextLength = parseContextLength(model.limit)
-    if (contextLength !== undefined) catalogModel.contextLength = contextLength
     if (typeof model.canonical_model_id === "string") catalogModel.vendorId = model.canonical_model_id
 
     out[id] = catalogModel
@@ -303,27 +314,34 @@ export function listCatalogModels(provider: ProviderId, catalog = active): Model
   for (const entry of Object.values(entries)) {
     if (!isModelReachable(provider, entry)) continue
 
-    const { inputPricePerToken, outputPricePerToken } = entry.pricing
+    const rates = entry.pricing
     const pricing: ModelListingPricing =
-      inputPricePerToken <= 0 && outputPricePerToken <= 0
-        ? { kind: "free" }
-        : { kind: "paid", inputPricePerToken, outputPricePerToken }
+      !rates
+        ? { kind: "unknown" }
+        : rates.inputPricePerToken <= 0 && rates.outputPricePerToken <= 0
+          ? { kind: "free" }
+          : {
+              kind: "paid",
+              inputPricePerToken: rates.inputPricePerToken,
+              outputPricePerToken: rates.outputPricePerToken,
+            }
 
-    const listing: ModelListing = { id: entry.id, name: entry.name, pricing }
-    if (entry.contextLength !== undefined) listing.contextLength = entry.contextLength
-    listings.push(listing)
+    listings.push({ id: entry.id, name: entry.name, pricing, contextLength: entry.contextLength ?? null })
   }
 
   listings.sort((a, b) => {
     const delta = priceRank(a.pricing) - priceRank(b.pricing)
-    if (delta !== 0) return delta
-    return a.name.localeCompare(b.name)
+    // Infinity minus Infinity is NaN, which no sort can read as an ordering.
+    if (Number.isNaN(delta)) return a.name.localeCompare(b.name)
+    return delta
   })
   return listings
 }
 
+/** Free first, then paid by combined rate, then unknown — where "we have no idea" cannot outrank a price. */
 function priceRank(pricing: ModelListingPricing): number {
   if (pricing.kind === "free") return -1
+  if (pricing.kind === "unknown") return Number.POSITIVE_INFINITY
   return pricing.inputPricePerToken + pricing.outputPricePerToken
 }
 
@@ -340,14 +358,14 @@ export function resolvePricing(
   return lookupModel(resolved.provider, resolved.model, catalog)?.pricing ?? null
 }
 
-/** Context window for a canonical id, or undefined when the catalog is silent. */
+/** Context window for a canonical id, or null when the catalog is silent. */
 export function resolveContextLength(
   canonicalId: string,
   catalog = active,
-): number | undefined {
+): number | null {
   const resolved = resolveProviderAndModel(canonicalId)
-  if (!resolved) return undefined
-  return lookupModel(resolved.provider, resolved.model, catalog)?.contextLength
+  if (!resolved) return null
+  return lookupModel(resolved.provider, resolved.model, catalog)?.contextLength ?? null
 }
 
 /** The wire protocol a model speaks, per the catalog. */

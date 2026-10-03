@@ -14,7 +14,8 @@
 | **Provider kind** | Whether a Provider is a **vendor** (`openai`, `anthropic` — first-party, billed by its maker) or a **gateway** (`openrouter`, `opencode`, `opencode-go` — resells other Vendors' Models and adds its own margin). This is why the same Model can cost different amounts through different Providers. _Avoid_: tier, plan type. |
 | **Model Vendor** | The company that trains a Model, independent of any Provider: Anthropic is the Model Vendor for `claude-opus-5-5` whether reached through `anthropic` or through `opencode`. _Avoid_: provider. |
 | **Model** | A specific language model as offered by a Provider, identified by a `provider/model` id split on the first `/` only. A Model has a context window and a price, both read from the Model Catalog. _Avoid_: checkpoint. |
-| **Model Catalog** | The catalogue of Models, prices, and context windows fetched from models.dev and cached locally — the only source of pricing and context length. A Model absent from it reads as zero cost rather than failing. _Avoid_: model list. |
+| **Model Catalog** | The catalogue of Models, prices, and context windows fetched from models.dev and cached locally — the only source of pricing and context length. A Model absent from it reads as Unknown rather than free or assumed. _Avoid_: model list. |
+| **Unknown** | A price or context window the Model Catalog does not know, rendered as `—` and never as `0` or a default window. An Unknown cost poisons a running total (the total stays Unknown for the Session), and an Unknown context window suppresses compaction until the window is known. _Avoid_: zero, default, n/a. |
 | **Model Switch** | The change of the live Model, and with it of Provider, that `/model` and `/provider` ask for. It either happens — reported with the Model now live — or is refused, and the refusal names its cause: a Provider holding no API Key, or a request ViCode cannot act on. The confirmation is built from the outcome, never from the request. _Avoid_: model change, route switch. |
 | **API Key** | The credential authenticating the user to one Provider. Each Provider holds its own, so the Global Config holds a map of them; keys never appear in project config. OpenCode Zen and OpenCode Go share a single key. _Avoid_: token, secret key. |
 | **Seam** | A boundary between modules where behavior can be swapped or mocked for testing. The four seams are: Provider, Tool, Config, and Session. |
@@ -26,7 +27,7 @@
 | **Tool Call** | An invocation of a tool by the LLM, consisting of the tool name and its arguments. |
 | **Streaming** | Token-by-token delivery of the LLM response, rendered in real-time in the UI. |
 | **TUI** | Terminal User Interface. A text-based UI rendered in the terminal using Ink (React for CLIs). |
-| **Status Bar** | Bottom bar showing model name, token count, and estimated cost. |
+| **Status Bar** | Bottom bar showing model name, token count, and cost — `—` when the Model's price is Unknown. |
 | **Command** | A user-invoked application action typed as a slash command (e.g., `/new`, `/model`) in the chat input. Distinct from a Tool, which is invoked by the LLM. An input is treated as a Command attempt only if its first word starts with `/`. |
 | **Skill** | A markdown instruction file whose full content is injected as a System Prompt layer when activated via `/skill`, shaping agent behavior until the session ends. Discovered from project `.vicode/skills/` and global `~/.vicode/skills/`; project wins on name collision. Multiple active Skills stack. |
 | **Command Suggestion** | The dropdown rendered above the chat input listing matching Commands as the user types after `/`. Shows a "no commands match" state when nothing matches. |

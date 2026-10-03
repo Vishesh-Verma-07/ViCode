@@ -39,7 +39,7 @@ export function ExitSummary({ usage, model }: ExitSummaryProps) {
         <Text color={COLORS.text} bold>
           Cost:{" "}
         </Text>
-        <Text color={COLORS.success}>{formatCost(usage.cost)}</Text>
+        <Text color={usage.cost === null ? COLORS.muted : COLORS.success}>{formatCost(usage.cost)}</Text>
       </Box>
       <Box marginTop={1}>
         <Text color={COLORS.muted} italic>

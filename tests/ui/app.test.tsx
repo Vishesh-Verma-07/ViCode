@@ -53,7 +53,7 @@ function lastRenderedFrame(): string {
 
 function createStubProvider(capturedMessages: Message[][], events?: StreamEvent[]): Provider {
   return {
-    getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+    getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
     async listModels() {
       return []
     },
@@ -891,12 +891,14 @@ describe("App model switcher", () => {
           name: "Alpha",
           protocol: "openai" as const,
           pricing: { inputPricePerToken: 0, outputPricePerToken: 0 },
+          contextLength: null,
         },
         "paid-beta": {
           id: "paid-beta",
           name: "Beta",
           protocol: "openai" as const,
           pricing: { inputPricePerToken: 2 / 1_000_000, outputPricePerToken: 8 / 1_000_000 },
+          contextLength: null,
         },
       },
       openai: {},
@@ -934,6 +936,7 @@ describe("App model switcher", () => {
           id: canonicalModelId,
           name: `MODEL:${canonicalModelId}:ACTIVE`,
           provider: "openrouter" as const,
+          contextLength: null,
         }),
         async listModels() {
           return []
@@ -1079,6 +1082,7 @@ describe("App /model across Providers", () => {
           name: "Alpha",
           protocol: "openai" as const,
           pricing: { inputPricePerToken: 0, outputPricePerToken: 0 },
+          contextLength: null,
         },
       },
       openai: {},
@@ -1088,6 +1092,7 @@ describe("App /model across Providers", () => {
           name: "Claude Test",
           protocol: "anthropic" as const,
           pricing: { inputPricePerToken: 3 / 1_000_000, outputPricePerToken: 15 / 1_000_000 },
+          contextLength: null,
         },
       },
       opencode: {},
@@ -1118,6 +1123,7 @@ describe("App /model across Providers", () => {
           id: canonicalModelId,
           name: `MODEL:${canonicalModelId}:ACTIVE`,
           provider: parseModelId(canonicalModelId).provider ?? "openrouter",
+          contextLength: null,
         }),
         async listModels() {
           return []
@@ -1337,7 +1343,7 @@ describe("App /new command", () => {
     const capturedMessages: Message[][] = []
     let streamCall = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1518,7 +1524,7 @@ describe("App /exit command", () => {
   it("exits normally via /exit when no stream is in progress", async () => {
     const seed = makeSeedSession("sess_exit_idle")
     const stubProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1543,7 +1549,7 @@ describe("App /exit command", () => {
     const capturedMessages: Message[][] = []
     let abortObserved = false
     const hangingProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1588,7 +1594,7 @@ describe("App streaming guard for commands", () => {
   function setupGuarded() {
     const capturedMessages: Message[][] = []
     const hangingProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1693,7 +1699,7 @@ describe("App status bar indicator", () => {
 
   it("shows Thinking while streaming, then Done with duration, then reverts to Ready after three seconds", async () => {
     const delayedProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1722,7 +1728,7 @@ describe("App status bar indicator", () => {
   it("shows a persistent Error when the stream fails, cleared by the next send", async () => {
     let calls = 0
     const failingThenWorkingProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1761,7 +1767,7 @@ describe("App status bar indicator", () => {
 
   it("reverts straight to Ready when Esc aborts a turn mid-stream", async () => {
     const hangingProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1806,7 +1812,7 @@ describe("App status bar indicator", () => {
     }
     let step = 0
     const toolCallingProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1863,7 +1869,7 @@ describe("App status bar indicator", () => {
     }
     let step = 0
     const twoToolProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1910,7 +1916,7 @@ describe("App status bar indicator", () => {
     }
     let step = 0
     const approvalProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -1957,7 +1963,7 @@ describe("App status bar indicator", () => {
     }
     let step = 0
     const approvalProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -2001,7 +2007,7 @@ describe("App status bar indicator", () => {
     }
     let step = 0
     const approvalThenErrorProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -2042,7 +2048,7 @@ describe("App status bar indicator", () => {
   ): Provider {
     let callsMade = 0
     return {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -2066,7 +2072,7 @@ describe("App status bar indicator", () => {
   ): Provider {
     let callsMade = 0
     return {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -2221,7 +2227,7 @@ describe("App chat scrolling", () => {
 
   function bigStreamProvider(lines: number, chunkDelayMs = 0): Provider {
     return {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -2495,7 +2501,7 @@ describe("Inline tool bubbles in chat", () => {
   it("shows a dim running line while a tool executes, then the completed bubble with summary", async () => {
     let step = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      getModelInfo: () => ({ id: "stub", name: "stub", contextLength: null }),
       async listModels() { return [] },
       async *streamChat() {
         step++
@@ -2526,7 +2532,7 @@ describe("Inline tool bubbles in chat", () => {
   it("renders past tool activity from persisted history after the turn", async () => {
     let step = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      getModelInfo: () => ({ id: "stub", name: "stub", contextLength: null }),
       async listModels() { return [] },
       async *streamChat() {
         step++
@@ -2564,7 +2570,7 @@ describe("Inline tool bubbles in chat", () => {
     }
     let step = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      getModelInfo: () => ({ id: "stub", name: "stub", contextLength: null }),
       async listModels() { return [] },
       async *streamChat() {
         step++
@@ -2604,7 +2610,7 @@ describe("Inline tool bubbles in chat", () => {
     }
     let step = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      getModelInfo: () => ({ id: "stub", name: "stub", contextLength: null }),
       async listModels() { return [] },
       async *streamChat() {
         step++
@@ -2642,7 +2648,7 @@ describe("Inline tool bubbles in chat", () => {
     }
     let step = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      getModelInfo: () => ({ id: "stub", name: "stub", contextLength: null }),
       async listModels() { return [] },
       async *streamChat() {
         step++
@@ -2683,7 +2689,7 @@ describe("Inline tool bubbles in chat", () => {
     }
     let step = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub", name: "stub" }),
+      getModelInfo: () => ({ id: "stub", name: "stub", contextLength: null }),
       async listModels() { return [] },
       async *streamChat() {
         step++
@@ -2750,7 +2756,7 @@ describe("Usage panel", () => {
   it("shows model, token breakdown, cost and turn count, with no Tools/Diffs tabs", async () => {
     let step = 0
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() { return [] },
       async *streamChat() {
         step++
@@ -2782,6 +2788,52 @@ describe("Usage panel", () => {
     }
   }, 30000)
 
+  /** A Model the Model Catalog knows nothing about: no price, no window. */
+  function unpricedProvider(cost: number | null): Provider {
+    return {
+      getModelInfo: () => ({ id: "mystery-model", name: "mystery-model", contextLength: null }),
+      async listModels() { return [] },
+      async *streamChat() {
+        yield { type: "text-delta", text: "reply" }
+        yield { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost } }
+      },
+    }
+  }
+
+  it("shows a dash for both cost and context window when the Model has neither", async () => {
+    const { frameText, typeAndSubmit, anyFrameContaining, unmount } = setupUsage(unpricedProvider(null))
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+      await typeAndSubmit("first")
+      await until(() => frameText().includes("reply"), 10000)
+
+      const usageSection = frameText().split("Usage")[1] ?? ""
+      expect(usageSection).toContain("Cost: —")
+      expect(usageSection).toContain("Context: —")
+      expect(usageSection).not.toContain("$0.00")
+      // The Status Bar reads the same total, and must not claim it was free.
+      expect(frameText()).toContain("Tokens: 15 | Cost: —")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("shows a dash for an unpriced total in the exit summary", async () => {
+    const { frameText, typeAndSubmit, stdin, anyFrameContaining, unmount } = setupUsage(unpricedProvider(null))
+    try {
+      await until(() => anyFrameContaining("Type your message"))
+      await typeAndSubmit("first")
+      await until(() => frameText().includes("reply"), 10000)
+
+      stdin.write("")
+      await until(() => frameText().includes("Session Summary"), 10000)
+      expect(frameText()).toContain("Cost: —")
+      expect(frameText()).not.toContain("$0.00")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
   it("does not surface the diffs picker on Tab", async () => {
     const { frameText, stdin, anyFrameContaining, unmount } = setupUsage(createStubProvider([]))
     try {
@@ -2798,7 +2850,7 @@ describe("Usage panel", () => {
 describe("Error surfacing", () => {
   it("shows the API error message as chat feedback alongside the error status", async () => {
     const failingProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -3462,7 +3514,7 @@ describe("App Input History lifecycle", () => {
   it("while the input is disabled (agent busy), Up/Down leave the draft alone and recall nothing", async () => {
     const capturedMessages: Message[][] = []
     const hangingProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -4219,7 +4271,14 @@ describe("API key entry flow", () => {
       )
 
       instance.stdin.write("\u001B")
-      await until(() => !frameText().includes("OpenRouter API key"))
+      // Wait on the key screen's own furniture, not on the absence of the phrase
+      // "OpenRouter API key": cancelling legitimately reports "OpenRouter API key
+      // unchanged.", and that line outlives the keystroke that produced it.
+      await until(
+        () =>
+          !frameText().includes("Stored in ~/.vicode/config.json") &&
+          frameText().includes("Type your message"),
+      )
 
       expect(savedKeys).toHaveLength(0)
       expect(captured).toHaveLength(0)
@@ -4333,7 +4392,7 @@ describe("Mode switching via Tab", () => {
     )
     const seen: Array<{ tools: string[]; prompt: string }> = []
     const defaultProvider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -4503,7 +4562,7 @@ describe("Mode switching via Tab", () => {
   it("cycles the Mode Tag on a Tab mid-turn without interrupting the running turn, and applies from the next input", async () => {
     const seen: Array<{ tools: string[] }> = []
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },
@@ -4585,7 +4644,7 @@ describe("Mode persistence across sessions", () => {
     const sessionsDir = join(projectDir, ".vicode", "sessions")
     const seen: Array<{ tools: string[]; prompt: string }> = []
     const provider: Provider = {
-      getModelInfo: () => ({ id: "stub-model", name: "stub-model" }),
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
       async listModels() {
         return []
       },

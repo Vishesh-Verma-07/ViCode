@@ -135,7 +135,13 @@ export function buildUsage(raw: NormalizedUsage | undefined, canonicalModelId: s
   return usage
 }
 
-export const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
+/**
+ * Stands in for a completion whose usage never arrived.
+ *
+ * The token counts are the only honest zero available, but the price of a call
+ * nobody reported is unknown rather than free.
+ */
+export const ZERO_USAGE: TokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: null }
 
 /**
  * Translates an AI SDK text stream into ViCode's StreamEvents.

@@ -47,11 +47,11 @@ The company that trains a Model. Independent of any Provider: Anthropic is the M
 _Avoid_: provider (the two are not interchangeable), lab
 
 **Model**:
-A specific language model as offered by a Provider, identified by a `provider/model` id. A Model has a context window and a price, both read from the Model Catalog rather than assumed.
+A specific language model as offered by a Provider, identified by a `provider/model` id. A Model has a context window and a price, both read from the Model Catalog. Either may be Unknown, and Unknown is a value in its own right — never a zero, never an assumed default.
 _Avoid_: checkpoint, model name
 
 **Model Catalog**:
-The catalogue of Models, prices, and context windows fetched from models.dev and cached locally. It is the only source of pricing and context length; when it has no entry for a Model, cost reads as zero and the context window falls back to a default rather than the app failing.
+The catalogue of Models, prices, and context windows fetched from models.dev and cached locally. It is the only source of pricing and context length; when it has no entry for a Model, or when an entry carries a rate that does not parse, both read as Unknown and the app renders that rather than inventing a number.
 _Avoid_: model list (collides with the per-Provider listing the picker shows)
 
 **Model Switch**:
@@ -100,7 +100,7 @@ The single ever-growing message at the front of the history that accumulates eve
 _Avoid_: summary message, accumulated summary
 
 **Compact Threshold**:
-The Context Load percentage at which auto-compaction fires within the Agent Loop — 60% of the context window by default. The `/compact` Command is unconditional and ignores the threshold.
+The Context Load percentage at which auto-compaction fires within the Agent Loop — 60% of the context window by default. The `/compact` Command is unconditional and ignores the threshold. A Model whose context window is Unknown has no threshold to fire at, so threshold-driven compaction stays off until the Model Catalog knows the window.
 _Avoid_: compact limit, context alarm
 
 **Context Load**:
@@ -194,14 +194,14 @@ A short code snippet inside prose (single-backtick `` `cmd` ``) rendered with a 
 The first line inside a Tool-Result Code Block — `$ npm run dev` — painted in the primary color to show which command was executed.
 
 **Status Bar**:
-Bottom bar showing model name, token count, and estimated cost.
+Bottom bar showing model name, token count, and cost — `—` when the Model's price is Unknown.
 
 **Turn Status**:
 The Status Bar's live indication of agent activity: idle, thinking, running a Tool, waiting for approval, done (with elapsed time), or errored.
 _Avoid_: status, activity state
 
 **Usage Panel**:
-The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count. Its reading of the Project Root Path is pinned to the panel's bottom edge rather than trailing the rows above it, so the panel keeps a fixed look as the terminal grows; the exit hint sits beneath it.
+The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count. The Context row is always present: an Unknown window reads `—` rather than being hidden or defaulted. Its reading of the Project Root Path is pinned to the panel's bottom edge rather than trailing the rows above it, so the panel keeps a fixed look as the terminal grows; the exit hint sits beneath it.
 
 **Welcome Screen**:
 The "home" view shown at startup (and returned to via `/home`): banner, model info, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections. Banner, menu, and input sit centred; the keyboard hint and the Project Root Path share a single footer pinned to the bottom left, so the view has one bottom edge rather than a hint adrift mid-screen.
