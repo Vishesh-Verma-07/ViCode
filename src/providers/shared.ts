@@ -14,6 +14,8 @@ import type { Message, ToolDefinition, ContextSummaryContent } from "../core/typ
 import { composeSummaryMessageText } from "../core/compaction"
 import { calculateCost } from "../core/cost-calculator"
 import { resolvePricing } from "../core/catalog"
+import { parseModelId } from "../core/model-id"
+import { isPerTokenProvider } from "../core/providers"
 
 export function convertMessages(messages: Message[]): ModelMessage[] {
   const result: ModelMessage[] = []
@@ -122,11 +124,24 @@ export function buildUsage(raw: NormalizedUsage | undefined, canonicalModelId: s
   const cacheWriteTokens = raw?.inputTokenDetails?.cacheWriteTokens
   const reasoningTokens = raw?.outputTokenDetails?.reasoningTokens
 
-  const pricing = resolvePricing(canonicalModelId)
-  const cost = calculateCost(
-    { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
-    pricing,
-  )
+  let cost: number | null = null
+  const parsed = parseModelId(canonicalModelId)
+  if (parsed.provider && isPerTokenProvider(parsed.provider)) {
+    const pricing = resolvePricing(canonicalModelId)
+    cost = calculateCost(
+      { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
+      pricing,
+    )
+  } else if (parsed.provider && !isPerTokenProvider(parsed.provider)) {
+    // Subscription providers: cost is included in the plan, not per-token.
+    cost = null
+  } else {
+    const pricing = resolvePricing(canonicalModelId)
+    cost = calculateCost(
+      { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens },
+      pricing,
+    )
+  }
 
   const usage: TokenUsage = { inputTokens, outputTokens, totalTokens, cost }
   if (cacheReadTokens !== undefined) usage.cacheReadTokens = cacheReadTokens

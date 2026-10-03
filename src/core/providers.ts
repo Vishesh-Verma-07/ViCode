@@ -148,3 +148,17 @@ export function resolveTransport(
       return null
   }
 }
+
+/**
+ * Whether the provider bills per token. Subscription plans (e.g. opencode-go)
+ * bill by subscription, not per token, so token-derived costs should not be
+ * attributed to them.
+ */
+export function isPerTokenProvider(provider: ProviderId): boolean {
+  const descriptor = DESCRIPTORS[provider]
+  if (!descriptor.billingNote) return true
+  const note = descriptor.billingNote.toLowerCase()
+  if (note.includes("subscription")) return false
+  if (note.includes("not per token")) return false
+  return true
+}
