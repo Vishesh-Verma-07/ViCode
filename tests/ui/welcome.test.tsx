@@ -92,6 +92,33 @@ describe("WelcomeScreen mode indicator", () => {
   })
 })
 
+describe("WelcomeScreen route label", () => {
+  const routed: Provider = {
+    getModelInfo: () => ({
+      id: "openrouter/anthropic/claude-opus-5-5",
+      name: "anthropic/claude-opus-5-5",
+      provider: "openrouter",
+      contextLength: 200_000,
+    }),
+    async listModels() {
+      return []
+    },
+    async *streamChat() {},
+  }
+
+  function modelLine(frame: string): string {
+    return frame.split("\n").map((l) => l.replace(/\u001B\[[0-9;]*m/g, "")).find((l) => l.includes("Model:")) ?? ""
+  }
+
+  it("shows the Provider with the Model, not the Model alone", () => {
+    const frame = renderToString(
+      <WelcomeScreen provider={routed} onNewChat={() => {}} onSendFirstMessage={() => {}} />,
+      { columns: 100 },
+    )
+    expect(modelLine(frame)).toContain("openrouter/anthropic/claude-opus-5-5")
+  })
+})
+
 const HINT_TEXT = "↑↓ Navigate  •  Enter Select  •  Type to start chatting  •  Ctrl+C Exit"
 
 function cleanFrame(frame: string): string {

@@ -9,6 +9,7 @@ import type { ProviderId } from "../core/providers"
 import { CommandRegistry } from "../core/command-registry"
 import { filterCommands, findUsageHint, moveHighlight } from "./command-suggestion"
 import { Picker } from "./picker"
+import { routeLabel } from "./route-label"
 import { WelcomeScreen } from "./welcome"
 import { ChatPanel, CHAT_CHROME_LINES } from "./chat-panel"
 import { UsagePanel } from "./usage-panel"
@@ -270,6 +271,10 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
 
   const usagePanelWidth = Math.max(30, Math.floor(columns * 0.3))
   const chatWidth = columns - usagePanelWidth - 1
+  // One read of the live Model, named once: every surface below names the same
+  // route, so they cannot drift apart on a switch.
+  const liveModel = session.providerState.getModelInfo()
+  const route = routeLabel(liveModel)
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
@@ -289,21 +294,21 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           inputDisabled={drafting.pickerRequest !== null || keyEntry !== null}
           onInputChange={drafting.handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight, hint: suggestionHint } : undefined}
-          modelName={session.providerState.getModelInfo().name}
+          route={route}
           mode={session.activeModeDefinition}
           onTab={session.cycleMode}
         />
         <UsagePanel
           width={usagePanelWidth}
-          model={session.providerState.getModelInfo().name}
-          contextLength={session.providerState.getModelInfo().contextLength}
+          route={route}
+          contextLength={liveModel.contextLength}
           usage={session.usage}
           turns={session.turnCount}
           status={session.turnStatus}
           projectRoot={context.projectPath}
         />
       </Box>
-      <StatusBar usage={session.usage} model={session.providerState.getModelInfo().name} status={session.turnStatus} />
+      <StatusBar usage={session.usage} route={route} status={session.turnStatus} />
       {drafting.pickerRequest && (
         <Picker
           {...drafting.pickerRequest}
@@ -320,7 +325,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
         />
       )}
       {session.showExitSummary && (
-        <ExitSummary usage={session.usage} model={session.providerState.getModelInfo().name} />
+        <ExitSummary usage={session.usage} route={route} />
       )}
     </Box>
   )

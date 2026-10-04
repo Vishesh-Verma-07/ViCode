@@ -3,6 +3,7 @@ import { Spinner, ThemeProvider, defaultTheme, extendTheme } from "@inkjs/ui"
 import { COLORS, ICONS } from "./theme"
 import type { TokenUsage } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
+import type { RouteLabel } from "./route-label"
 
 export type TurnStatus =
   | { kind: "idle" }
@@ -25,11 +26,11 @@ const cyanSpinnerTheme = makeSpinnerTheme(COLORS.primary)
 
 interface StatusBarProps {
   usage: TokenUsage
-  model: string
+  route: RouteLabel
   status: TurnStatus
 }
 
-export function StatusBar({ usage, model, status }: StatusBarProps) {
+export function StatusBar({ usage, route, status }: StatusBarProps) {
   return (
     <Box
       justifyContent="space-between"
@@ -39,8 +40,8 @@ export function StatusBar({ usage, model, status }: StatusBarProps) {
     >
       <Box gap={2}>
         <Text color={COLORS.primary} bold>{ICONS.logo}</Text>
-        <Text color={COLORS.muted}>
-          {model}
+        <Text color={COLORS.muted} wrap="truncate-end">
+          {route}
         </Text>
         <StatusIndicator status={status} />
       </Box>

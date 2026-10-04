@@ -98,6 +98,11 @@ function frameLines(lastFrame: () => string | undefined): string[] {
   return (lastFrame() ?? "").split("\n").map((l) => l.replace(/\u001B\[[0-9;]*m/g, ""))
 }
 
+/** The Status Bar row, which names the live route beside the running totals. */
+function statusRoute(lastFrame: () => string | undefined): string {
+  return frameLines(lastFrame).find((l) => l.includes("Tokens:") && l.includes("Cost:")) ?? ""
+}
+
 describe("extractDiff", () => {
   it("returns result as-is when no diff markers present", () => {
     const result = "File edited successfully: app.ts"
@@ -1018,7 +1023,10 @@ describe("App model switcher", () => {
 
       await until(() => (lastFrame() ?? "").includes("Switched to openrouter/paid-beta"))
 
-      expect(lastFrame()).toContain("MODEL:openrouter/paid-beta:ACTIVE")
+      // The bar names the route, not the display name: one Model served by two
+      // Providers has to be tellable apart on screen.
+      expect(statusRoute(lastFrame)).toContain("openrouter/paid-beta")
+      expect(statusRoute(lastFrame)).not.toContain("MODEL:")
       expect(lastFrame()).toContain("Tokens: 2")
 
       await typeAndSubmit("second question")
@@ -1045,7 +1053,7 @@ describe("App model switcher", () => {
       await pressKey("\u001B")
       await until(() => !(lastFrame() ?? "").includes("Switch model"))
 
-      expect(lastFrame()).toContain("MODEL:openrouter/paid-beta:ACTIVE")
+      expect(statusRoute(lastFrame)).toContain("openrouter/paid-beta")
       expect(handledBy.length).toBe(handledCountBefore)
     } finally {
       unmount()
@@ -1191,6 +1199,7 @@ describe("App /model across Providers", () => {
   it("offers the missing key rather than reporting a switch that did not happen", async () => {
     const {
       frameText,
+      lastFrame,
       handledBy,
       savedKeys,
       sessionsDir,
@@ -1201,7 +1210,7 @@ describe("App /model across Providers", () => {
     } = setupKeylessTarget()
     try {
       await until(() => frameText().includes("Type your message"))
-      expect(frameText()).toContain("MODEL:openrouter/free-alpha:ACTIVE")
+      expect(statusRoute(lastFrame)).toContain("openrouter/free-alpha")
 
       await typeAndSubmit("/model")
       await selectInPicker("Claude Test")
@@ -1219,7 +1228,7 @@ describe("App /model across Providers", () => {
       await until(() => frameText().includes("Switched to anthropic/claude-test"))
 
       expect(savedKeys).toEqual(["anthropic:sk-ant-test-key"])
-      expect(frameText()).toContain("MODEL:anthropic/claude-test:ACTIVE")
+      expect(statusRoute(lastFrame)).toContain("anthropic/claude-test")
 
       // The next Turn is billed to the Provider that was just switched to.
       await typeAndSubmit("who is on the hook")
@@ -1242,7 +1251,7 @@ describe("App /model across Providers", () => {
   }, 30000)
 
   it("says which key is missing when the prompt is declined, and stays put", async () => {
-    const { frameText, handledBy, savedKeys, sessionsDir, typeAndSubmit, pressKey, selectInPicker, unmount } =
+    const { frameText, lastFrame, handledBy, savedKeys, sessionsDir, typeAndSubmit, pressKey, selectInPicker, unmount } =
       setupKeylessTarget()
     try {
       await until(() => frameText().includes("Type your message"))
@@ -1257,7 +1266,7 @@ describe("App /model across Providers", () => {
       await until(() => frameText().includes("No API key for Anthropic"))
       expect(frameText()).toContain("/key anthropic")
       expect(frameText()).not.toContain("Switched to")
-      expect(frameText()).toContain("MODEL:openrouter/free-alpha:ACTIVE")
+      expect(statusRoute(lastFrame)).toContain("openrouter/free-alpha")
       expect(savedKeys).toHaveLength(0)
 
       await typeAndSubmit("still on OpenRouter")
@@ -2841,6 +2850,84 @@ describe("Usage panel", () => {
       stdin.write("\t")
       await new Promise((resolve) => setTimeout(resolve, 200))
       expect(frameText()).not.toContain("Diffs")
+    } finally {
+      unmount()
+    }
+  }, 15000)
+})
+
+describe("Route on screen", () => {
+  const ROUTE = "opencode-go/claude-opus-5-5"
+
+  /** A Provider on a gateway route, so the Model name alone names no bill. */
+  function routedProvider(): Provider {
+    return {
+      getModelInfo: () => ({
+        id: ROUTE,
+        name: "claude-opus-5-5",
+        provider: "opencode-go",
+        contextLength: null,
+      }),
+      async listModels() { return [] },
+      async *streamChat() {
+        yield { type: "text-delta", text: "reply" }
+        yield { type: "finish", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost: 0.01 } }
+      },
+    }
+  }
+
+  function setupRoute() {
+    const instance = render(
+      <App
+        provider={routedProvider()}
+        tools={[]}
+        context={{ projectPath: "/tmp/route-test" }}
+        keyFor={() => "test-key"}
+        initialView="chat"
+        commands={createTestCommands()}
+      />,
+    )
+    const frameText = () =>
+      (instance.lastFrame() ?? "")
+        .replace(/\u001B\[[0-9;]*m/g, "")
+        .replace(/\s+/g, " ")
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) instance.stdin.write(char)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      instance.stdin.write("\r")
+    }
+    return { ...instance, frameText, typeAndSubmit }
+  }
+
+  it("names the Provider with the Model in the Status Bar, the Usage Panel and the exit summary", async () => {
+    const { frameText, typeAndSubmit, lastFrame, stdin, unmount } = setupRoute()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      expect(statusRoute(lastFrame)).toContain(ROUTE)
+
+      await typeAndSubmit("first")
+      await until(() => frameText().includes("reply"), 10000)
+
+      const usageSection = frameText().split("Usage")[1] ?? ""
+      expect(usageSection).toContain(ROUTE)
+
+      stdin.write("\u0003")
+      await until(() => frameText().includes("Session Summary"), 10000)
+      expect(frameText().split("Session Summary")[1] ?? "").toContain(ROUTE)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("names the Provider with the Model in the Chat Panel's empty state", async () => {
+    const { frameText, lastFrame, unmount } = setupRoute()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      const lines = frameLines(lastFrame)
+      const emptyStateStart = lines.findIndex((l) => l.includes("AI-Powered Coding Assistant"))
+      const modelLine = lines.slice(emptyStateStart, emptyStateStart + 3).find((l) => l.includes("Model:")) ?? ""
+      expect(modelLine).toContain(ROUTE)
     } finally {
       unmount()
     }

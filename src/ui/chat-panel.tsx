@@ -13,6 +13,7 @@ import { ChatInput } from "./chat-input"
 import { ModeInputBox } from "./mode-input-box"
 import type { ModeDefinition } from "../core/modes"
 import { extractDiff } from "./format"
+import { UNKNOWN_ROUTE, type RouteLabel } from "./route-label"
 
 interface ChatPanelProps {
   width: number
@@ -29,7 +30,7 @@ interface ChatPanelProps {
   inputDisabled?: boolean
   onInputChange?: (value: string) => void
   suggestion?: CommandSuggestionProps
-  modelName?: string
+  route?: RouteLabel
   mode?: ModeDefinition
   onTab?: () => void
 }
@@ -70,7 +71,7 @@ function commandFromArgs(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, modelName, mode, onTab }: ChatPanelProps) {
+export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, route, mode, onTab }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
   useInput((_input, key) => {
@@ -342,7 +343,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
             </Box>
             <Box marginTop={1}>
               <Text color={COLORS.dimText}>
-                Model: <Text color={COLORS.text}>{modelName ?? "unknown"}</Text>
+                Model: <Text color={COLORS.text}>{route ?? UNKNOWN_ROUTE}</Text>
               </Text>
             </Box>
             <Box marginTop={1}>

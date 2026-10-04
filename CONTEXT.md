@@ -184,6 +184,10 @@ _Avoid_: positional editing, in-place editing
 **Design Token**:
 A named value in the central palette (`COLORS`, `ICONS`) that all UI styling references, so visual language stays consistent instead of using scattered hardcoded colours.
 
+**Route Label**:
+The on-screen name of the live route — the canonical `provider/model` id, verbatim — shown wherever the TUI says which Model is live: the Status Bar, the Usage Panel's Model row, the exit summary, the Welcome Screen and the Chat Panel's empty state. One Model is reachable through more than one Provider, so a Model name alone names no bill; the Provider half is what makes a Turn's cost attributable. A Model whose id records no Provider is qualified by the Provider that served it; one with neither shows its id alone rather than a guessed one, and one carrying no id at all reads by its name — a surface with no route to name reads `unknown`. On the Status Bar — a single row of chrome that must not grow to fit a long route — it is cut at the end rather than wrapped, so the Provider stays readable.
+_Avoid_: model name, model label (both read as the Model alone), route name
+
 **Code Block**:
 A framed region — border plus a dark background shade lighter than the App Background — used to render fenced model output and executed command output.
 
@@ -194,14 +198,14 @@ A short code snippet inside prose (single-backtick `` `cmd` ``) rendered with a 
 The first line inside a Tool-Result Code Block — `$ npm run dev` — painted in the primary color to show which command was executed.
 
 **Status Bar**:
-Bottom bar showing model name, token count, and cost — `—` when the Model's price is Unknown.
+Bottom bar showing the Route Label, token count, and cost — `—` when the Model's price is Unknown.
 
 **Turn Status**:
 The Status Bar's live indication of agent activity: idle, thinking, running a Tool, waiting for approval, done (with elapsed time), or errored.
 _Avoid_: status, activity state
 
 **Usage Panel**:
-The right-hand TUI panel showing the active model, context-window usage, running token totals, cost, and turn count. The Context row is always present: an Unknown window reads `—` rather than being hidden or defaulted. Its reading of the Project Root Path is pinned to the panel's bottom edge rather than trailing the rows above it, so the panel keeps a fixed look as the terminal grows; the exit hint sits beneath it.
+The right-hand TUI panel showing the live route, context-window usage, running token totals, cost, and turn count. The Context row is always present: an Unknown window reads `—` rather than being hidden or defaulted. Its reading of the Project Root Path is pinned to the panel's bottom edge rather than trailing the rows above it, so the panel keeps a fixed look as the terminal grows; the exit hint sits beneath it.
 
 **Welcome Screen**:
-The "home" view shown at startup (and returned to via `/home`): banner, model info, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections. Banner, menu, and input sit centred; the keyboard hint and the Project Root Path share a single footer pinned to the bottom left, so the view has one bottom edge rather than a hint adrift mid-screen.
+The "home" view shown at startup (and returned to via `/home`): banner, the live route, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections. Banner, menu, and input sit centred; the keyboard hint and the Project Root Path share a single footer pinned to the bottom left, so the view has one bottom edge rather than a hint adrift mid-screen.

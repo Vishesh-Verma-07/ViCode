@@ -35,7 +35,7 @@ vicode
 
 **Interface**
 
-- **Two-panel terminal UI** — a scrolling Chat Panel plus a Usage Panel showing model, token totals (in/out), context-window usage, cost, and turn count
+- **Two-panel terminal UI** — a scrolling Chat Panel plus a Usage Panel showing the live route, token totals (in/out), context-window usage, cost, and turn count
 - **Seven-state Turn Status** — idle, thinking, running a tool, waiting for approval, compacting, done (with elapsed time), or errored
 - **Cursor-aware input** — left/right arrows move by grapheme cluster, so ZWJ emoji and combining marks behave as one character; word-delete works mid-word and at boundaries
 - **Input History** — every input you submit is recalled into the draft with Up/Down; recalled inputs are drafts, not replays
@@ -122,6 +122,8 @@ ViCode talks to five routes. Each has its own credential, base URL, and billing,
 | `anthropic` | Anthropic directly | `ANTHROPIC_API_KEY` |
 | `opencode` | OpenCode Zen | `OPENCODE_API_KEY` |
 | `opencode-go` | OpenCode Zen, Go plan | `OPENCODE_API_KEY` |
+
+Every surface that names the live Model names the route with it — `provider/model`, not the bare model — so you can see which bill a Turn went to: the Status Bar, the Usage Panel, the exit summary, the Welcome Screen and the Chat Panel's empty state all read the same way.
 
 `/model` lists everything the Model Catalog knows, grouped by provider and annotated with price and whether you hold a key for that route. `/provider` skips the list and moves to a provider's recommended model. Switching never prompts mid-turn. Picking a model on a route you hold no key for opens that route's API Key prompt; `Esc` leaves the conversation on the model it already had and tells you which key is missing.
 

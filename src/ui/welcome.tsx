@@ -7,6 +7,7 @@ import type { ModeDefinition } from "../core/modes"
 import { ModeInputBox } from "./mode-input-box"
 import { ProjectRootPath } from "./project-root-path"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
+import { routeLabel } from "./route-label"
 import { CursorText } from "./cursor-text"
 import {
   backspaceAt,
@@ -135,7 +136,7 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
 
         <Box flexDirection="column" alignItems="center" marginTop={1} marginBottom={1}>
           <Text color={COLORS.muted}>
-            Model: <Text color={COLORS.text} bold>{modelInfo.name}</Text>
+            Model: <Text color={COLORS.text} bold>{routeLabel(modelInfo)}</Text>
           </Text>
         </Box>
 

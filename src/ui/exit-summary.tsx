@@ -2,13 +2,14 @@ import { Box, Text } from "ink"
 import { COLORS, ICONS } from "./theme"
 import type { TokenUsage } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
+import type { RouteLabel } from "./route-label"
 
 interface ExitSummaryProps {
   usage: TokenUsage
-  model: string
+  route: RouteLabel
 }
 
-export function ExitSummary({ usage, model }: ExitSummaryProps) {
+export function ExitSummary({ usage, route }: ExitSummaryProps) {
   return (
     <Box
       flexDirection="column"
@@ -25,7 +26,7 @@ export function ExitSummary({ usage, model }: ExitSummaryProps) {
         <Text color={COLORS.text} bold>
           Model:{" "}
         </Text>
-        <Text color={COLORS.muted}>{model}</Text>
+        <Text color={COLORS.muted}>{route}</Text>
       </Box>
       <Box marginTop={1}>
         <Text color={COLORS.text} bold>

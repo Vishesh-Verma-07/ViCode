@@ -9,7 +9,7 @@ import { COLORS } from "@/ui/theme"
 import { ansiCode } from "@/ui/ansi-test"
 
 const BASE = {
-  model: "stub-model",
+  route: "openrouter/stub-model",
   contextLength: null,
   usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, cost: 0 },
   turns: 1,

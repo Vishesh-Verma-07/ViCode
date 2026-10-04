@@ -4,10 +4,11 @@ import { ProjectRootPath } from "./project-root-path"
 import type { TokenUsage } from "../core/provider"
 import { formatCost, formatTokens, UNKNOWN_DISPLAY } from "../core/cost-calculator"
 import type { TurnStatus } from "./status-bar"
+import type { RouteLabel } from "./route-label"
 
 interface UsagePanelProps {
   width: number
-  model: string
+  route: RouteLabel
   contextLength: number | null
   usage: TokenUsage
   turns: number
@@ -15,7 +16,7 @@ interface UsagePanelProps {
   projectRoot?: string
 }
 
-export function UsagePanel({ width, model, contextLength, usage, turns, status, projectRoot }: UsagePanelProps) {
+export function UsagePanel({ width, route, contextLength, usage, turns, status, projectRoot }: UsagePanelProps) {
   const contextPct =
     contextLength === null ? null : Math.min(100, (usage.totalTokens / contextLength) * 100)
   const contextValue =
@@ -40,7 +41,7 @@ export function UsagePanel({ width, model, contextLength, usage, turns, status, 
       <Box flexDirection="column" gap={0}>
         <Box justifyContent="space-between">
           <Text color={COLORS.muted}>Model:</Text>
-          <Text color={COLORS.text}>{model}</Text>
+          <Text color={COLORS.text}>{route}</Text>
         </Box>
         <Box justifyContent="space-between">
           <Text color={COLORS.muted}>Tokens:</Text>
