@@ -6,20 +6,31 @@ import {
   removeApiKeyFromGlobalConfig,
 } from "@/config/config"
 import { QUALIFIED_MODEL_FORMAT_VERSION } from "@/core/model-id"
+import { PROVIDER_IDS, providerEnvVars } from "@/core/providers"
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "fs"
 import { join } from "path"
 
 const tmpDir = join(import.meta.dir, "__tmp_config_test")
 
-let savedApiKey: string | undefined
+/**
+ * Every variable `keyForProvider` reads, derived from the registry so a
+ * developer's own exported key cannot leak into these tests — the namespaced
+ * names included, since setting one is now a supported thing to do.
+ */
+const PROVIDER_ENV_VARS = [...new Set(PROVIDER_IDS.flatMap(providerEnvVars))]
+
+let savedEnv: Record<string, string | undefined> = {}
 let savedHome: string | undefined
 let savedUserProfile: string | undefined
 
 beforeEach(() => {
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true })
   mkdirSync(tmpDir, { recursive: true })
-  savedApiKey = process.env.OPENROUTER_API_KEY
-  delete process.env.OPENROUTER_API_KEY
+  savedEnv = {}
+  for (const name of PROVIDER_ENV_VARS) {
+    savedEnv[name] = process.env[name]
+    delete process.env[name]
+  }
   // Point home at the temp dir so tests that omit `globalConfigPath` cannot
   // read the developer's real ~/.vicode/config.json.
   savedHome = process.env.HOME
@@ -29,8 +40,11 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  if (savedApiKey === undefined) delete process.env.OPENROUTER_API_KEY
-  else process.env.OPENROUTER_API_KEY = savedApiKey
+  for (const name of PROVIDER_ENV_VARS) {
+    const saved = savedEnv[name]
+    if (saved === undefined) delete process.env[name]
+    else process.env[name] = saved
+  }
   if (savedHome === undefined) delete process.env.HOME
   else process.env.HOME = savedHome
   if (savedUserProfile === undefined) delete process.env.USERPROFILE
@@ -376,23 +390,6 @@ describe("per-Provider API keys", () => {
 })
 
 describe("OPENCODE_API_KEY fallback", () => {
-  const SAVED_ENVS = ["OPENCODE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const
-  let saved: Record<string, string | undefined> = {}
-
-  beforeEach(() => {
-    for (const name of SAVED_ENVS) {
-      saved[name] = process.env[name]
-      delete process.env[name]
-    }
-  })
-
-  afterEach(() => {
-    for (const name of SAVED_ENVS) {
-      if (saved[name] === undefined) delete process.env[name]
-      else process.env[name] = saved[name]!
-    }
-  })
-
   it("authenticates both Zen and Go", () => {
     process.env.OPENCODE_API_KEY = "sk-opencode"
     const config = loadConfig({ projectPath: tmpDir })
@@ -417,6 +414,59 @@ describe("OPENCODE_API_KEY fallback", () => {
 
   it("prefers a configured key over the env var", () => {
     process.env.OPENAI_API_KEY = "sk-env-openai"
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ apiKeys: { openai: "sk-config-openai" } }),
+    )
+    const config = loadConfig({ projectPath: tmpDir })
+    expect(keyForProvider(config, "openai")).toBe("sk-config-openai")
+  })
+})
+
+describe("namespaced API key variable", () => {
+  it("overrides a Provider's own variable exported for other tooling", () => {
+    process.env.OPENAI_API_KEY = "sk-other-tooling"
+    process.env.VICODE_OPENAI_API_KEY = "sk-vicode-ci"
+    const config = loadConfig({ projectPath: tmpDir })
+    expect(keyForProvider(config, "openai")).toBe("sk-vicode-ci")
+  })
+
+  it("reads the Provider's own variable when no namespaced one is set", () => {
+    process.env.OPENAI_API_KEY = "sk-shared"
+    const config = loadConfig({ projectPath: tmpDir })
+    expect(keyForProvider(config, "openai")).toBe("sk-shared")
+  })
+
+  it("leaves the Provider's own variable in place, only reading around it", () => {
+    process.env.OPENAI_API_KEY = "sk-shared"
+    process.env.VICODE_OPENAI_API_KEY = "sk-vicode-ci"
+    const config = loadConfig({ projectPath: tmpDir })
+    expect(keyForProvider(config, "openai")).toBe("sk-vicode-ci")
+    expect(process.env.OPENAI_API_KEY).toBe("sk-shared")
+  })
+
+  it("keeps the legacy OPENROUTER_API_KEY working on the OpenRouter route", () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-legacy"
+    const config = loadConfig({ projectPath: tmpDir })
+    expect(keyForProvider(config, "openrouter")).toBe("sk-or-legacy")
+  })
+
+  it("overrides the legacy name too, for a pipeline that sets both", () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-legacy"
+    process.env.VICODE_OPENROUTER_API_KEY = "sk-or-namespaced"
+    const config = loadConfig({ projectPath: tmpDir })
+    expect(keyForProvider(config, "openrouter")).toBe("sk-or-namespaced")
+  })
+
+  it("does not stand an OpenRouter key in for another Provider", () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-legacy"
+    const config = loadConfig({ projectPath: tmpDir })
+    expect(keyForProvider(config, "openai")).toBeUndefined()
+  })
+
+  it("prefers a configured key over every variable", () => {
+    process.env.OPENAI_API_KEY = "sk-shared"
+    process.env.VICODE_OPENAI_API_KEY = "sk-vicode-ci"
     writeFileSync(
       join(tmpDir, ".vicode.json"),
       JSON.stringify({ apiKeys: { openai: "sk-config-openai" } }),

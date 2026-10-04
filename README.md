@@ -66,7 +66,7 @@ vicode
 - **Automatic compaction** — once the history grows past a threshold, older messages are folded into a running summary; `/compact` forces it on demand
 - **Session persistence** — conversations auto-save as JSON inside the project and resume automatically on the next start
 - **Skills** — activate Markdown files that are injected as extra System Prompt layers
-- **Layered configuration** — project config overrides global config; API keys from config, `/key`, or the provider's environment variable
+- **Layered configuration** — project config overrides global config; API keys from config, `/key`, or environment variables — the provider's own name, or a `VICODE_`-namespaced name that overrides it for ViCode alone
 
 ## Requirements
 
@@ -115,13 +115,15 @@ If no API key is configured for the active provider, ViCode prompts for one the 
 
 ViCode talks to five routes. Each has its own credential, base URL, and billing, so a model is always identified by `provider/model`:
 
-| Provider | Route | Environment fallback |
+| Provider | Route | Environment variables, highest precedence first |
 |---|---|---|
-| `openrouter` | OpenRouter's catalog of many vendors | `OPENROUTER_API_KEY` |
-| `openai` | OpenAI directly | `OPENAI_API_KEY` |
-| `anthropic` | Anthropic directly | `ANTHROPIC_API_KEY` |
-| `opencode` | OpenCode Zen | `OPENCODE_API_KEY` |
-| `opencode-go` | OpenCode Zen, Go plan | `OPENCODE_API_KEY` |
+| `openrouter` | OpenRouter's catalog of many vendors | `VICODE_OPENROUTER_API_KEY`, then `OPENROUTER_API_KEY` |
+| `openai` | OpenAI directly | `VICODE_OPENAI_API_KEY`, then `OPENAI_API_KEY` |
+| `anthropic` | Anthropic directly | `VICODE_ANTHROPIC_API_KEY`, then `ANTHROPIC_API_KEY` |
+| `opencode` | OpenCode Zen | `VICODE_OPENCODE_API_KEY`, then `OPENCODE_API_KEY` |
+| `opencode-go` | OpenCode Zen, Go plan | `VICODE_OPENCODE_API_KEY`, then `OPENCODE_API_KEY` |
+
+Each route accepts the variable its own tooling reads, so exporting `ANTHROPIC_API_KEY` for Claude Code is enough — no second copy of the secret. Prefix the name with `VICODE_` when you want to override it for ViCode alone: a `VICODE_OPENAI_API_KEY` in your shell outranks an `OPENAI_API_KEY` exported for everything else, so CI can put ViCode on a different account without unsetting the shared variable. The namespaced name only shadows the vendor one for ViCode; every other tool in the shell still sees the original. One namespaced name covers both OpenCode routes, since they share one key.
 
 Every surface that names the live Model names the route with it — `provider/model`, not the bare model — so you can see which bill a Turn went to: the Status Bar, the Usage Panel, the exit summary, the Welcome Screen and the Chat Panel's empty state all read the same way.
 
@@ -135,7 +137,7 @@ ViCode reads a layered configuration. Project config wins over global config for
 
 1. **Project:** `.vicode.json` in your project root
 2. **Global:** `~/.vicode/config.json`
-3. **Fallback:** each provider's environment variable (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`) — a `.env` file in the project root is loaded too, without overwriting existing environment variables
+3. **Fallback:** each provider's environment variables, highest precedence first — its own namespaced `VICODE_<PROVIDER>_API_KEY`, then the provider's own name (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_API_KEY`). A `.env` file in the project root is loaded too, without overwriting existing environment variables
 
 The schema is **strict** — an unknown key is a hard error, so typos fail loudly instead of being silently ignored.
 

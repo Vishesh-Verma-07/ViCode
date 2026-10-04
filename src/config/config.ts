@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import { join, dirname } from "path"
-import { listProviders, isProviderId, type ProviderId } from "../core/providers"
+import { isProviderId, providerEnvVars, type ProviderId } from "../core/providers"
 import { LEGACY_PROVIDER, qualifyStoredModel, isLegacyModelValue } from "../core/model-id"
 
 export const configSchema = z
@@ -74,8 +74,9 @@ function collectKeys(...layers: (z.infer<typeof configSchema> | undefined)[]): P
 
 /**
  * The key for a Provider: the configured one, else the first environment
- * variable that Provider accepts. OpenCode Zen and Go deliberately share
- * `OPENCODE_API_KEY`, so setting it authenticates both.
+ * variable that Provider accepts, in the order the registry declares
+ * (ADR-0010). OpenCode Zen and Go deliberately share `OPENCODE_API_KEY` and its
+ * namespaced override, so setting either authenticates both.
  */
 export function keyForProvider(
   config: AppConfig,
@@ -83,8 +84,7 @@ export function keyForProvider(
 ): string | undefined {
   const configured = config.apiKeys[provider]
   if (configured) return configured
-  const descriptor = listProviders().find((p) => p.id === provider)
-  for (const envVar of descriptor?.env ?? []) {
+  for (const envVar of providerEnvVars(provider)) {
     const value = process.env[envVar]
     if (value) return value
   }

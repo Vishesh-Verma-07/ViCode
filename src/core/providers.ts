@@ -37,8 +37,14 @@ export interface ProviderDescriptor {
    * catalog is a third party's namespace.
    */
   catalogId: string
-  /** Environment variables consulted, in order, when no key is configured. */
-  env: string[]
+  /**
+   * The variable names native to this Provider's own tooling — the Model
+   * Vendor's for a vendor route (`OPENAI_API_KEY`), the console's for a
+   * gateway (`OPENROUTER_API_KEY`). Consulted when no key is configured, after
+   * the namespaced override, which is derived from these rather than declared so
+   * the two cannot drift apart. `providerEnvVars` holds the order (ADR-0010).
+   */
+  nativeEnv: string[]
   /** Where a user obtains a key. Shown by the API Key Entry Screen. */
   keyUrl: string
   /**
@@ -58,7 +64,7 @@ const DESCRIPTORS: Record<ProviderId, ProviderDescriptor> = {
     label: "OpenRouter",
     kind: "gateway",
     catalogId: "openrouter",
-    env: ["OPENROUTER_API_KEY"],
+    nativeEnv: ["OPENROUTER_API_KEY"],
     keyUrl: "https://openrouter.ai/keys",
     transport: "openai-chat",
     billingNote: "pay per token",
@@ -68,7 +74,7 @@ const DESCRIPTORS: Record<ProviderId, ProviderDescriptor> = {
     label: "OpenAI",
     kind: "vendor",
     catalogId: "openai",
-    env: ["OPENAI_API_KEY"],
+    nativeEnv: ["OPENAI_API_KEY"],
     keyUrl: "https://platform.openai.com/api-keys",
     transport: "openai-responses",
     billingNote: "pay per token",
@@ -78,7 +84,7 @@ const DESCRIPTORS: Record<ProviderId, ProviderDescriptor> = {
     label: "Anthropic",
     kind: "vendor",
     catalogId: "anthropic",
-    env: ["ANTHROPIC_API_KEY"],
+    nativeEnv: ["ANTHROPIC_API_KEY"],
     keyUrl: "https://console.anthropic.com/settings/keys",
     transport: "anthropic-messages",
     billingNote: "pay per token",
@@ -88,8 +94,9 @@ const DESCRIPTORS: Record<ProviderId, ProviderDescriptor> = {
     label: "OpenCode Zen",
     kind: "gateway",
     catalogId: "opencode",
-    // Zen and Go are one console with one key; both accept OPENCODE_API_KEY.
-    env: ["OPENCODE_API_KEY"],
+    // Zen and Go are one console with one key; both accept OPENCODE_API_KEY,
+    // and so both accept the namespaced name derived from it.
+    nativeEnv: ["OPENCODE_API_KEY"],
     keyUrl: "https://opencode.ai/console",
     // Per-model: Claude goes over Anthropic Messages, GPT over Responses.
     transport: null,
@@ -101,7 +108,7 @@ const DESCRIPTORS: Record<ProviderId, ProviderDescriptor> = {
     label: "OpenCode Go",
     kind: "gateway",
     catalogId: "opencode-go",
-    env: ["OPENCODE_API_KEY"],
+    nativeEnv: ["OPENCODE_API_KEY"],
     keyUrl: "https://opencode.ai/console",
     transport: null,
     baseUrl: "https://opencode.ai/zen/go/v1",
@@ -124,6 +131,33 @@ export function listProviders(): ProviderDescriptor[] {
 
 export function providerLabel(id: ProviderId): string {
   return DESCRIPTORS[id].label
+}
+
+/**
+ * Marks a variable as ViCode's own rather than native to a Provider's tooling,
+ * so a credential can be set for this tool alone.
+ */
+export const ENV_NAMESPACE = "VICODE_"
+
+/**
+ * The environment variables consulted for a Provider, in precedence order,
+ * when no API Key is configured (ADR-0010).
+ *
+ * The namespaced name comes first so it can shadow a native variable shared
+ * with other tooling — a user who exports `OPENAI_API_KEY` for something else
+ * points ViCode at a different account with `VICODE_OPENAI_API_KEY` instead of
+ * unsetting the shared one. The native names follow, so exporting one is still
+ * enough and never needs a second copy of the secret.
+ *
+ * On the OpenRouter route the native name *is* the legacy `OPENROUTER_API_KEY`,
+ * left exactly as declared so pipelines written before the other Providers
+ * existed keep working. It is deliberately not offered to the other routes: an
+ * OpenRouter key sent to a Model Vendor's endpoint is not a working fallback,
+ * it is a wrong credential.
+ */
+export function providerEnvVars(id: ProviderId): string[] {
+  const { nativeEnv } = getProvider(id)
+  return nativeEnv.map((name) => ENV_NAMESPACE + name).concat(nativeEnv)
 }
 
 /**

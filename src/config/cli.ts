@@ -1,3 +1,5 @@
+import { listProviders, providerEnvVars } from "../core/providers"
+
 export interface CliArgs {
   directory?: string
   help: boolean
@@ -25,6 +27,23 @@ export function parseArgs(args: string[]): CliArgs {
   }
 
   return result
+}
+
+/**
+ * The environment-variable block, rendered from the Provider registry in the
+ * order `keyForProvider` actually consults, so the documented precedence cannot
+ * drift from the real one (ADR-0010).
+ */
+function formatEnvBlock(): string {
+  const rows = listProviders()
+    .map((provider) => providerEnvVars(provider.id))
+    // Zen and Go sit on one console with one key, so their variables are the
+    // same pair; printed once rather than twice in a row.
+    .filter((names, index, all) => index === 0 || names.join() !== all[index - 1]?.join())
+  const width = Math.max(...rows.map(([namespaced]) => namespaced?.length ?? 0))
+  return rows
+    .map(([namespaced, ...native]) => `       ${namespaced?.padEnd(width)}  then  ${native.join(", ")}`)
+    .join("\n")
 }
 
 export function formatHelp(): string {
@@ -61,9 +80,9 @@ Configuration:
   Set your API keys in one of:
   1. ~/.vicode/config.json  → { "apiKeys": { "openrouter": "your-key" } }
   2. .vicode.json in your project  → { "apiKeys": { "openrouter": "your-key" } }
-  3. Environment variables:
-       OPENROUTER_API_KEY   OPENAI_API_KEY
-       ANTHROPIC_API_KEY    OPENCODE_API_KEY
+  3. Environment variables, highest precedence first:
+${formatEnvBlock()}
+     A VICODE_ name overrides the provider's own name for ViCode alone.
      OPENCODE_API_KEY authenticates both OpenCode Zen and OpenCode Go.
   4. Or type /key (or just start chatting) and you'll be prompted to enter your key
 

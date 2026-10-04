@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test"
 import { parseArgs, formatHelp } from "@/config/cli"
+import { listProviders, providerEnvVars } from "@/core/providers"
 
 describe("parseArgs", () => {
   it("returns defaults for empty args", () => {
@@ -50,5 +51,22 @@ describe("formatHelp", () => {
   it("includes API key documentation", () => {
     const help = formatHelp()
     expect(help).toContain("API key")
+  })
+
+  it("documents every variable the registry accepts", () => {
+    const help = formatHelp()
+    for (const provider of listProviders()) {
+      for (const name of providerEnvVars(provider.id)) {
+        expect(help).toContain(name)
+      }
+    }
+  })
+
+  it("puts the namespaced variable ahead of the provider's own on the same line", () => {
+    const line = formatHelp()
+      .split("\n")
+      .find((candidate) => candidate.includes("VICODE_OPENAI_API_KEY"))
+    const tokens = (line ?? "").split(/\s+/)
+    expect(tokens.indexOf("VICODE_OPENAI_API_KEY")).toBeLessThan(tokens.indexOf("OPENAI_API_KEY"))
   })
 })
