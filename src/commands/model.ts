@@ -1,4 +1,4 @@
-import { UNKNOWN_DISPLAY } from "../core/cost-calculator"
+import { formatTokens, UNKNOWN_DISPLAY } from "../core/cost-calculator"
 import type { ModelListingPricing } from "../core/provider"
 import type { Command, ModelSwitchResult, PickerItem, ProviderOffering } from "../core/types"
 import { providerLabel } from "../core/providers"
@@ -17,6 +17,18 @@ export function formatModelPricing(pricing: ModelListingPricing): string {
     return `$${amount}/M`
   }
   return `${perMillion(pricing.inputPricePerToken)} in · ${perMillion(pricing.outputPricePerToken)} out`
+}
+
+/**
+ * A Model's context window for a picker row, or the dash standing in for one
+ * the Model Catalog publishes nothing about.
+ *
+ * Price tells the user what a Model costs; the window tells them how much of
+ * their conversation it can still take. Without the second number a 32k Model
+ * is indistinguishable from a 200k one until the history is already gone.
+ */
+export function formatContextWindow(contextLength: number | null): string {
+  return contextLength === null ? `${UNKNOWN_DISPLAY} ctx` : `${formatTokens(contextLength)} ctx`
 }
 
 /** How this Provider bills, which is what distinguishes one route from another. */
@@ -60,7 +72,7 @@ function buildModelRows(
       const canonicalId = formatModelId(offering.provider, model.id)
       rows.push({
         label: canonicalId === currentModelId ? `${model.name} (current)` : model.name,
-        metadata: `${canonicalId} · ${formatModelPricing(model.pricing)}${
+        metadata: `${canonicalId} · ${formatModelPricing(model.pricing)} · ${formatContextWindow(model.contextLength)}${
           offering.hasKey ? "" : " · no key"
         }`,
       })

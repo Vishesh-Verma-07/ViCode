@@ -17,7 +17,8 @@ import { createExitCommand } from "@/commands/exit"
 import { createModelCommand } from "@/commands/model"
 import { createHomeCommand } from "@/commands/home"
 import { createKeyCommand } from "@/commands/key"
-import { saveSession, loadSession, type Session } from "@/core/session"
+import { createCompactCommand } from "@/commands/compact"
+import { saveSession, loadSession, createSession, type Session } from "@/core/session"
 import type { Command, Message, ToolDefinition } from "@/core/types"
 import type { Provider, StreamEvent } from "@/core/provider"
 import { setActiveCatalog } from "@/core/catalog"
@@ -1272,6 +1273,250 @@ describe("App /model across Providers", () => {
       await typeAndSubmit("still on OpenRouter")
       await until(() => handledBy.length >= 1)
       expect(handledBy).toEqual(["free-alpha"])
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+})
+
+describe("App switch to a smaller context window", () => {
+  const WIDE_WINDOW = 200_000
+  const NARROW_WINDOW = 32_000
+
+  const WINDOW_CATALOG = {
+    providers: {
+      openrouter: {
+        "wide-alpha": {
+          id: "wide-alpha",
+          name: "Wide Alpha",
+          protocol: "openai" as const,
+          pricing: { inputPricePerToken: 2 / 1_000_000, outputPricePerToken: 8 / 1_000_000 },
+          contextLength: WIDE_WINDOW,
+        },
+        "narrow-beta": {
+          id: "narrow-beta",
+          name: "Narrow Beta",
+          protocol: "openai" as const,
+          pricing: { inputPricePerToken: 0, outputPricePerToken: 0 },
+          contextLength: NARROW_WINDOW,
+        },
+      },
+      openai: {},
+      anthropic: {},
+      opencode: {},
+      "opencode-go": {},
+    },
+  }
+
+  beforeEach(() => {
+    setActiveCatalog(WINDOW_CATALOG)
+  })
+
+  afterEach(() => {
+    setActiveCatalog(null)
+  })
+
+  /** A conversation far larger than the narrow Model's budget, in whole turns. */
+  function longConversation(turns = 20, chars = 12_000): Message[] {
+    return Array.from({ length: turns }, (_, i) => ({
+      id: `user_${i}`,
+      role: "user" as const,
+      content: [{ type: "text" as const, text: "x".repeat(chars) }],
+      timestamp: 0,
+    }))
+  }
+
+  function setupWindowSwitcher(opts: { turns?: number; chars?: number } = {}) {
+    const handledBy: string[] = []
+    const summarizedBy: string[] = []
+    const capturedMessages: Message[][] = []
+    const createProvider = (canonicalModelId: string): Provider => {
+      const model = parseModelId(canonicalModelId).model
+      const window = model === "narrow-beta" ? NARROW_WINDOW : WIDE_WINDOW
+      return {
+        getModelInfo: () => ({
+          id: canonicalModelId,
+          name: `MODEL:${canonicalModelId}:ACTIVE`,
+          provider: "openrouter" as const,
+          contextLength: window,
+        }),
+        async listModels() {
+          return []
+        },
+        async *streamChat(messages) {
+          capturedMessages.push([...messages])
+          handledBy.push(model)
+          yield {
+            type: "text-delta" as const,
+            text: "ok",
+          }
+          yield {
+            type: "finish" as const,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+          }
+        },
+        async summarize() {
+          summarizedBy.push(model)
+          return {
+            text: "SUMMARY OF EARLIER WORK",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+          }
+        },
+      }
+    }
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-window-test-"))
+    const initialSession: Session = {
+      ...createSession({ model: "openrouter/wide-alpha", messages: longConversation(opts.turns, opts.chars) }),
+    }
+
+    const instance = render(
+      <App
+        provider={createProvider("openrouter/wide-alpha")}
+        createProvider={createProvider}
+        tools={[]}
+        context={{ projectPath: join(sessionsDir, "project") }}
+        keyFor={() => "test-key"}
+        sessionsDir={sessionsDir}
+        initialSession={initialSession}
+        initialView="chat"
+        commands={[createModelCommand(), createCompactCommand()]}
+      />,
+    )
+    const frameText = normalizeFrame(instance.lastFrame)
+
+    async function typeAndSubmit(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+      instance.stdin.write("\r")
+    }
+
+    async function pressKey(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+
+    async function selectInPicker(label: string): Promise<void> {
+      await until(() => frameText().includes(label))
+      // Down then up lands back on the same row, and does it after at least one
+      // keypress: a row that starts highlighted would otherwise send Enter to a
+      // Picker whose input handler has not attached yet.
+      await pressKey("\u001B[B")
+      await pressKey("\u001B[A")
+      for (let i = 0; i < 10 && !frameText().includes(`> ${label}`); i++) {
+        await pressKey("\u001B[B")
+      }
+      expect(frameText()).toContain(`> ${label}`)
+    }
+
+    return {
+      ...instance,
+      frameText,
+      lastFrame: () => instance.lastFrame() ?? "",
+      handledBy,
+      summarizedBy,
+      capturedMessages,
+      sessionsDir,
+      typeAndSubmit,
+      pressKey,
+      selectInPicker,
+    }
+  }
+
+  it("warns with the Context Load against the target budget before switching, and declining keeps the route", async () => {
+    const { frameText, lastFrame, handledBy, sessionsDir, typeAndSubmit, pressKey, selectInPicker, unmount } =
+      setupWindowSwitcher()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("/model")
+      await selectInPicker("Narrow Beta")
+
+      // Both windows are on screen, so the choice was measurable before it was made.
+      expect(frameText()).toContain("200.0k ctx")
+      expect(frameText()).toContain("32.0k ctx")
+
+      await pressKey("\r")
+
+      await until(() => frameText().includes("Switch anyway?"))
+      // The warning names the load, the budget, the window, and the target.
+      expect(frameText()).toContain("60.1k")
+      expect(frameText()).toContain("22.4k")
+      expect(frameText()).toContain("32.0k")
+      expect(frameText()).toContain("openrouter/narrow-beta")
+      expect(frameText()).toContain("compacted or truncated")
+      expect(frameText()).toContain("188%")
+      // Nothing has happened yet: the switch is asked for, not taken.
+      expect(frameText()).not.toContain("Switched to")
+
+      await pressKey("n")
+
+      await until(() => frameText().includes("Kept openrouter/wide-alpha"))
+      expect(frameText()).not.toContain("Switched to")
+      expect(statusRoute(lastFrame)).toContain("openrouter/wide-alpha")
+
+      const handledCountBefore = handledBy.length
+      await typeAndSubmit("still on the wide model")
+      await until(() => handledBy.length > handledCountBefore)
+      expect(handledBy).toContain("wide-alpha")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("switches anyway once confirmed, keeps the conversation, and still compacts it", async () => {
+    const { frameText, lastFrame, handledBy, summarizedBy, capturedMessages, sessionsDir, typeAndSubmit, pressKey, selectInPicker, unmount } =
+      setupWindowSwitcher()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("/model")
+      await selectInPicker("Narrow Beta")
+      await pressKey("\r")
+      await until(() => frameText().includes("Switch anyway?"))
+
+      await pressKey("y")
+      await until(() => frameText().includes("Switched to openrouter/narrow-beta"))
+      expect(statusRoute(lastFrame)).toContain("openrouter/narrow-beta")
+      expect(frameText()).toContain("32.0k")
+
+      // The conversation survived the warning rather than being dropped with it.
+      await typeAndSubmit("carry on")
+      await until(() => handledBy.length >= 1)
+      expect(handledBy).toEqual(["narrow-beta"])
+      const sent = capturedMessages[0]!
+      expect(sent.length).toBeGreaterThan(1)
+      expect(sent.some((m) => m.content.some((p) => p.type === "text" && p.text.includes("carry on")))).toBe(true)
+
+      // Compaction still works on the smaller window: the threshold is read from
+      // the live Model, so a long session folds rather than overflowing.
+      await typeAndSubmit("/compact")
+      await until(() => frameText().includes("Context compacted"))
+      expect(summarizedBy).toEqual(["narrow-beta"])
+      expect(handledBy).toEqual(["narrow-beta"])
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("does not warn when the conversation already fits the target budget", async () => {
+    const { frameText, typeAndSubmit, pressKey, selectInPicker, sessionsDir, unmount } = setupWindowSwitcher({
+      turns: 1,
+      chars: 4_000,
+    })
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeAndSubmit("/model")
+      await selectInPicker("Narrow Beta")
+      await pressKey("\r")
+
+      await until(() => frameText().includes("Switched to openrouter/narrow-beta"))
+      expect(frameText()).not.toContain("Switch anyway?")
     } finally {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })

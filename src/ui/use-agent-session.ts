@@ -4,7 +4,7 @@ import type { Command, CommandContext, Message, ModelSwitchResult, PickerRequest
 import type { Session } from "../core/session"
 import type { ModelListing, Provider, TokenUsage } from "../core/provider"
 import type { ProviderId } from "../core/providers"
-import { ensureCatalog, loadCatalogOffline, listCatalogModels } from "../core/catalog"
+import { ensureCatalog, loadCatalogOffline, listCatalogModels, resolveContextLength } from "../core/catalog"
 import { listProviders } from "../core/providers"
 import { formatModelId, LEGACY_PROVIDER, parseModelId } from "../core/model-id"
 import { runAgentLoop } from "../core/agent-loop"
@@ -12,6 +12,7 @@ import { addCost } from "../core/cost-calculator"
 import { assembleSystemPrompt } from "../core/system-prompt"
 import { DEFAULT_MODE, MODES, cycleMode as cycleModeId, findMode, selectModeTools, type ModeDefinition, type ModeId } from "../core/modes"
 import { compactHistory } from "../core/compaction"
+import { contextShortfall, describeContextShortfall } from "../core/context-shortfall"
 import { CommandRegistry } from "../core/command-registry"
 import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
 import { createSession, renameSession, saveSession } from "../core/session"
@@ -98,6 +99,12 @@ export interface UseAgentSessionArgs {
   ensureKeyFor?: (provider: ProviderId) => Promise<boolean>
   openKeyEntryFor?: (provider: ProviderId) => Promise<boolean>
   removeApiKeyFor?: (provider: ProviderId) => Promise<boolean>
+  /**
+   * Asks whether a switch that would shrink the context window may go ahead,
+   * handing over the warning to show. Resolves to whether the user agreed.
+   * Absent, the switch refuses rather than truncating without saying so.
+   */
+  confirmContextSwitch?: (warning: string) => Promise<boolean>
 }
 
 export interface AgentSession {
@@ -152,6 +159,7 @@ export function useAgentSession({
   ensureKeyFor,
   openKeyEntryFor,
   removeApiKeyFor,
+  confirmContextSwitch,
 }: UseAgentSessionArgs): AgentSession {
   const [messages, setMessages] = useState<Message[]>(initialSession?.messages ?? [])
   const [session, setSession] = useState<Session | null>(initialSession ?? null)
@@ -207,6 +215,12 @@ export function useAgentSession({
    * Provider has no key, so a route is never switched onto a credential that
    * does not exist — offering the key prompt first, and reporting which of the
    * two it was rather than leaving the caller to guess.
+   *
+   * A switch onto a window too small for the conversation is asked about rather
+   * than performed: the history would then be truncated or compacted with
+   * nothing on screen saying so, which is indistinguishable from the Model
+   * simply not needing it. Confirming switches anyway — the warning informs the
+   * choice, it does not replace it.
    */
   const switchTo = useCallback(
     async (canonicalModelId: string): Promise<ModelSwitchResult> => {
@@ -218,6 +232,24 @@ export function useAgentSession({
         return {
           kind: "refused",
           reason: `"${canonicalModelId}" is not a provider-qualified model id.`,
+        }
+      }
+
+      // Warned before the key is asked for: a user who declines should not have
+      // been prompted for a secret on the way to a switch they did not want.
+      // No seam to ask through means the switch does not happen — a host that
+      // cannot warn must not truncate in silence either.
+      const shortfall = contextShortfall(messages, resolveContextLength(canonicalModelId))
+      if (shortfall) {
+        const report = describeContextShortfall(canonicalModelId, shortfall)
+        const agreed = confirmContextSwitch
+          ? await confirmContextSwitch(`${report} Switch anyway?`)
+          : false
+        if (!agreed) {
+          return {
+            kind: "refused",
+            reason: `Kept ${providerRef.current.getModelInfo().id}. ${report}`,
+          }
         }
       }
 
@@ -234,7 +266,7 @@ export function useAgentSession({
       setProviderState(next)
       return { kind: "switched", modelId: next.getModelInfo().id }
     },
-    [createProvider, resolveKey, requestKeyFor],
+    [createProvider, resolveKey, requestKeyFor, confirmContextSwitch, messages],
   )
 
   useEffect(() => {

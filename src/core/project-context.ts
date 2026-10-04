@@ -40,7 +40,14 @@ function truncationMarker(omittedTokens: number): string {
  * Provider rejects, and nothing on screen would say why.
  */
 export function contextBudget(provider: Provider): number | null {
-  const contextLength = provider.getModelInfo().contextLength
+  return contextBudgetFor(provider.getModelInfo().contextLength)
+}
+
+/**
+ * The same budget derived from a bare window, so a Model ViCode is considering
+ * but has not yet switched to can be measured before it is live.
+ */
+export function contextBudgetFor(contextLength: number | null): number | null {
   if (contextLength === null) return null
   return Math.floor(contextLength * CONTEXT_BUDGET_RATIO)
 }

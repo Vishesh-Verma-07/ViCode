@@ -55,7 +55,7 @@ The catalogue of Models, prices, and context windows fetched from models.dev and
 _Avoid_: model list (collides with the per-Provider listing the picker shows)
 
 **Model Switch**:
-The change of the live Model, and with it of Provider, that `/model` and `/provider` ask for. It either happens — reported with the Model now live, so the Status Bar, the Session record and the confirmation agree — or it is refused, and the refusal names its cause: a Provider holding no API Key, or a request ViCode cannot act on. The confirmation is built from the outcome, never from the request, so it cannot outrun the state change.
+The change of the live Model, and with it of Provider, that `/model` and `/provider` ask for. It either happens — reported with the Model now live, so the Status Bar, the Session record and the confirmation agree — or it is refused, and the refusal names its cause: a Provider holding no API Key, a request ViCode cannot act on, or a Context Shortfall the user was warned about and declined. The confirmation is built from the outcome, never from the request, so it cannot outrun the state change. A Context Shortfall is warned about before the switch rather than after: the warning informs the choice instead of replacing it, so confirming still switches and the long Session survives it, to be compacted on the smaller window.
 _Avoid_: model change, route switch (a switch is refused as often as it happens)
 
 **API Key**:
@@ -106,6 +106,10 @@ _Avoid_: compact limit, context alarm
 **Context Load**:
 The current estimated size of the message history — the estimated tokens of every message in the array — expressed as a percentage of the model's context window. The honest meter behind the Compact Threshold. Distinct from the Usage Panel's percentage, which reflects cumulative token spend since the session began, not the live in-window size.
 _Avoid_: context usage, context-window usage (overlaps the cumulative panel figure)
+
+**Context Shortfall**:
+The gap a Model Switch would open: a Context Load larger than the target Model's Context Budget. It is what the switch warns about, stated as the load, the budget, and the target's window rather than a verdict — the user decides, and confirming still switches. A Model whose window is Unknown has no Context Budget to fall short of, so no shortfall is ever computed for it.
+_Avoid_: truncation warning, context overflow (names a failure rather than a measurement), context limit
 
 ### Prompting
 

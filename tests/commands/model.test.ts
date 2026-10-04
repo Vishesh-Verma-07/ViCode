@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { createModelCommand, createProviderCommand, formatModelPricing } from "@/commands/model"
+import { createModelCommand, createProviderCommand, formatContextWindow, formatModelPricing } from "@/commands/model"
 import type {
   CommandContext,
   ModelSwitchResult,
@@ -231,6 +231,36 @@ describe("createModelCommand", () => {
     const items = pickerRequests[0]!.items
     expect(items[2]!.metadata).toContain("anthropic/mystery-model · —")
     expect(items[2]!.metadata).not.toContain("free")
+  })
+
+  it("shows each model's context window, so a 32k model is not picked as a 200k one", async () => {
+    const command = createModelCommand()
+    const { context, pickerRequests } = createContext({
+      offerings: [OPENROUTER],
+      pickerResult: null,
+    })
+
+    await command.execute([], context)
+
+    const items = pickerRequests[0]!.items
+    expect(items[1]!.metadata).toContain("128.0k ctx")
+    expect(items[2]!.metadata).toContain("200.0k ctx")
+  })
+
+  it("shows an unmeasured context window as a dash, never as a window it guessed", async () => {
+    const command = createModelCommand()
+    const { context, pickerRequests } = createContext({
+      offerings: [ANTHROPIC],
+      pickerResult: null,
+    })
+
+    await command.execute([], context)
+
+    const items = pickerRequests[0]!.items
+    expect(items[1]!.metadata).toContain("— ctx")
+    expect(items[1]!.metadata).not.toContain("0.0k")
+    // The dash must read as "nobody has published a window", not as a number.
+    expect(formatContextWindow(null)).not.toBe(formatContextWindow(0))
   })
 
   it("marks a Provider with no key rather than hiding its models", async () => {

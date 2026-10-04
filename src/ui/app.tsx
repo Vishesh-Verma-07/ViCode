@@ -15,6 +15,7 @@ import { ChatPanel, CHAT_CHROME_LINES } from "./chat-panel"
 import { UsagePanel } from "./usage-panel"
 import { StatusBar } from "./status-bar"
 import { ApprovalPrompt } from "./approval-prompt"
+import { ConfirmPrompt, type PendingConfirmation } from "./confirm-prompt"
 import { ExitSummary } from "./exit-summary"
 import { KeyEntryScreen } from "./key-entry-screen"
 import { CenteredOverlay } from "./centered-overlay"
@@ -77,6 +78,29 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
   const drafting = useChatDrafting()
 
   const [keyEntry, setKeyEntry] = useState<KeyEntryRequest | null>(null)
+  const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null)
+
+  /**
+   * Puts a yes/no on screen and resolves to the answer. Its own state rather
+   * than the session's, because the question belongs to whichever surface asked
+   * it — the same way the key prompt is not the session's to own.
+   */
+  const confirmAction = useCallback(
+    (message: string) =>
+      new Promise<boolean>((resolve) => {
+        setConfirmation({ message, resolve })
+      }),
+    [],
+  )
+
+  const answerConfirmation = useCallback(
+    (confirmed: boolean) => {
+      if (!confirmation) return
+      confirmation.resolve(confirmed)
+      setConfirmation(null)
+    },
+    [confirmation],
+  )
 
   /**
    * Opens the API Key Entry Screen for a Provider and resolves to whether a key
@@ -120,6 +144,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
       keyFor(target) ? Promise.resolve(true) : promptForKey(target, true),
     openKeyEntryFor: (target) => promptForKey(target, false),
     removeApiKeyFor: removeKey,
+    confirmContextSwitch: confirmAction,
   })
 
   const submitKey = useCallback(
@@ -158,6 +183,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
     !session.isStreaming &&
     !drafting.pickerRequest &&
     !keyEntry &&
+    !confirmation &&
     !session.pendingApproval &&
     !session.showExitSummary &&
     view === "chat" &&
@@ -172,6 +198,18 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
       if (drafting.pickerRequest) return
 
       if (keyEntry) return
+
+      // A yes/no has to be answered before anything else is read: every key
+      // that follows would otherwise be taken as a draft or a command.
+      if (confirmation) {
+        const lower = input.toLowerCase()
+        if (lower === "y") {
+          answerConfirmation(true)
+        } else if (lower === "n" || key.escape) {
+          answerConfirmation(false)
+        }
+        return
+      }
 
       if (session.pendingApproval) {
         const lower = input.toLowerCase()
@@ -265,6 +303,10 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           />
         )}
         {keyEntry && renderKeyEntry(keyEntry)}
+        {/* A command always moves to the chat view first, so a confirmation
+            raised here is not expected — but an unrendered prompt would leave
+            its promise unresolved and the switch hanging. */}
+        {confirmation && <ConfirmPrompt message={confirmation.message} confirmLabel="Switch" />}
       </Box>
     )
   }
@@ -282,7 +324,12 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
         <ChatPanel
           width={chatWidth}
           viewportHeight={Math.max(5, rows - CHAT_CHROME_LINES)}
-          scrollDisabled={drafting.pickerRequest !== null || session.pendingApproval !== null || session.showExitSummary}
+          scrollDisabled={
+            drafting.pickerRequest !== null ||
+            confirmation !== null ||
+            session.pendingApproval !== null ||
+            session.showExitSummary
+          }
           runningTools={session.toolCalls.filter((tc) => !tc.result).map((tc) => ({ id: tc.id, name: tc.name }))}
           messages={session.messages}
           currentText={session.currentText}
@@ -291,7 +338,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           feedbackEntries={session.feedbackEntries}
           inputKey={drafting.inputKey}
           inputValue={drafting.inputValue}
-          inputDisabled={drafting.pickerRequest !== null || keyEntry !== null}
+          inputDisabled={drafting.pickerRequest !== null || keyEntry !== null || confirmation !== null}
           onInputChange={drafting.handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight, hint: suggestionHint } : undefined}
           route={route}
@@ -318,6 +365,9 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
         />
       )}
       {keyEntry && renderKeyEntry(keyEntry)}
+      {confirmation && (
+        <ConfirmPrompt message={confirmation.message} confirmLabel="Switch" />
+      )}
       {session.pendingApproval && (
         <ApprovalPrompt
           toolName={session.pendingApproval.toolName}
