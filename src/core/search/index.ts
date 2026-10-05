@@ -11,6 +11,8 @@ import type { SearchBackend, SearchBackendId, SearchRequest, SearchResult } from
 import { BRAVE_BACKEND } from "./brave"
 
 export type { SearchBackend, SearchBackendId, SearchRequest, SearchResult }
+export { SearchResponseShapeError } from "./types"
+export { SEARCH_BACKEND_IDS } from "./types"
 
 /**
  * The backends that exist, keyed by id. One ships; the map is what makes the
