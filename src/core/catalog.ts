@@ -11,11 +11,25 @@ import type { ModelPricing } from "./cost-calculator"
 import type { ModelListing, ModelListingPricing } from "./provider"
 import { getProvider, listProviders, type ProviderId } from "./providers"
 import { parseModelId } from "./model-id"
+import { httpRequestJson } from "./http"
 
 export const MODELS_DEV_URL = "https://models.dev/api.json"
 
 /** How long a cached catalog is considered fresh. */
 export const CATALOG_TTL_MS = 24 * 60 * 60 * 1000
+
+/** How long the models.dev fetch may take before the boundary abandons it. */
+export const CATALOG_TIMEOUT_MS = 20_000
+
+/**
+ * How many bytes of models.dev are read.
+ *
+ * Declared here rather than left to the boundary's general default because this
+ * payload is known to be about 5.26 MB — larger than a default sized for typical
+ * API replies, which would cut the catalog short and turn a working fetch into a
+ * malformed-body failure.
+ */
+export const CATALOG_MAX_BYTES = 8 * 1024 * 1024
 
 /**
  * The wire protocol a model speaks, as named by the catalog's `provider.npm`.
@@ -217,12 +231,21 @@ function writeCatalog(catalog: Catalog, options?: CatalogOptions): void {
   }
 }
 
-/** Fetches from models.dev, writing the cache on success. */
+/**
+ * Fetches from models.dev through the shared outbound boundary, writing the
+ * cache on success.
+ *
+ * The boundary is what gives this call a timeout at all: models.dev was
+ * previously fetched with no ceiling on how long it could hang, so a stalled
+ * request held the background refresh open indefinitely (issue #91).
+ */
 export async function fetchCatalog(options?: CatalogOptions): Promise<Catalog> {
-  const fetchImpl = options?.fetchImpl ?? fetch
-  const response = await fetchImpl(MODELS_DEV_URL)
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  const catalog = parseCatalog(await response.json())
+  const { json } = await httpRequestJson(MODELS_DEV_URL, {
+    fetchImpl: options?.fetchImpl,
+    timeoutMs: CATALOG_TIMEOUT_MS,
+    maxBytes: CATALOG_MAX_BYTES,
+  })
+  const catalog = parseCatalog(json)
   if (!catalog) throw new Error("Model catalog contained no known providers")
   writeCatalog(catalog, options)
   return catalog

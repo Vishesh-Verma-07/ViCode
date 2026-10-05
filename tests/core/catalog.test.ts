@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import {
   MODELS_DEV_URL,
   CATALOG_TTL_MS,
+  CATALOG_MAX_BYTES,
+  CATALOG_TIMEOUT_MS,
   parseCatalog,
   ensureCatalog,
   loadCatalogOffline,
@@ -19,6 +21,7 @@ import {
   getActiveCatalog,
   type Catalog,
 } from "@/core/catalog"
+import { DEFAULT_HTTP_MAX_BYTES } from "@/core/http"
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
@@ -177,6 +180,53 @@ describe("parseCatalog", () => {
   it("records a missing context limit as null rather than omitting it", () => {
     const entry = parseCatalog(MODELS_DEV_PAYLOAD)!.providers.opencode!["gpt-5.3-codex"]!
     expect(entry.contextLength).toBeNull()
+  })
+})
+
+describe("fetchCatalog through the shared HTTP boundary", () => {
+  const tmpDir = mkdtempSync(join(tmpdir(), "vicode-catalog-ceiling-"))
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it("declares a ceiling above the boundary default, because this payload is bigger", () => {
+    // models.dev's api.json is about 5.26 MB. Inheriting a smaller default would
+    // cut the body short and turn a working fetch into a malformed-body failure
+    // — a failure that would look like models.dev breaking rather than a cap.
+    expect(CATALOG_MAX_BYTES).toBeGreaterThan(DEFAULT_HTTP_MAX_BYTES)
+    expect(CATALOG_MAX_BYTES).toBeGreaterThanOrEqual(6 * 1024 * 1024)
+  })
+
+  it("reads a body far larger than the boundary default", async () => {
+    // A payload padded past the general ceiling, so passing the right number to
+    // the boundary is the only way this can parse.
+    const padding = "x".repeat(DEFAULT_HTTP_MAX_BYTES + 1024)
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({ ...MODELS_DEV_PAYLOAD, padding }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )) as unknown as typeof fetch
+
+    const catalog = await fetchCatalog({ fetchImpl, cachePath: join(tmpDir, "cache.json") })
+    expect(Object.keys(catalog.providers).length).toBeGreaterThan(0)
+  })
+
+  it("sends an abort signal, so the refresh is bounded rather than open-ended", async () => {
+    // Asserting the signal rather than waiting out the 20s timeout: what matters
+    // is that the catalog call went through the boundary at all, since before
+    // that it had no ceiling on how long it could hang.
+    const sink: { init?: RequestInit } = {}
+    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
+      sink.init = init
+      return new Response(JSON.stringify(MODELS_DEV_PAYLOAD), { status: 200 })
+    }) as unknown as typeof fetch
+
+    await fetchCatalog({ fetchImpl, cachePath: join(tmpDir, "cache.json") })
+
+    expect(sink.init?.signal).toBeInstanceOf(AbortSignal)
+    expect(CATALOG_TIMEOUT_MS).toBeGreaterThan(0)
+    expect(Number.isFinite(CATALOG_TIMEOUT_MS)).toBe(true)
   })
 })
 
