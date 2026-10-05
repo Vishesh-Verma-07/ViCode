@@ -17,6 +17,7 @@ import {
   type ProviderId,
 } from "../core/providers"
 import { resolveModelProtocol } from "../core/catalog"
+import { parseModelId, type UnknownModelRef } from "../core/model-id"
 import { createOpenRouterProvider } from "./openrouter"
 import { createSdkProvider, type SdkModel } from "./sdk-provider"
 
@@ -66,15 +67,9 @@ function messagesModel(baseURL?: string): (apiKey: string, model: string) => Sdk
  */
 export function createProvider(config: CreateProviderConfig): Provider {
   const { model: canonicalId, apiKey } = config
-  const sep = canonicalId.indexOf("/")
-  if (sep <= 0) {
-    throw new Error(
-      `Model id "${canonicalId}" is not provider-qualified. Expected "<provider>/<model>".`,
-    )
-  }
-  const providerId = canonicalId.slice(0, sep)
-  if (!isProviderId(providerId)) throw new UnknownProviderError(providerId)
-  const model = canonicalId.slice(sep + 1)
+  const ref = parseModelId(canonicalId)
+  if (!ref.provider) throw unqualifiedModelIdError(canonicalId, ref)
+  const { provider: providerId, model } = ref
   const descriptor = getProvider(providerId)
 
   if (providerId === "openrouter") {
@@ -93,6 +88,29 @@ export function createProvider(config: CreateProviderConfig): Provider {
     default:
       throw new UnsupportedModelError(providerId, model)
   }
+}
+
+/**
+ * Says why an id names no Provider. Which of the three it is changes what the
+ * user does about it: an id with no prefix was never qualified, a prefix
+ * outside the registry is a Provider ViCode does not serve, and a prefix with
+ * nothing after it names no Model at all.
+ *
+ * The split itself is already settled — `parseModelId` refused the id above — so
+ * this only reads the prefix back out to name it in the message.
+ */
+function unqualifiedModelIdError(canonicalId: string, ref: UnknownModelRef): Error {
+  const sep = ref.model.indexOf("/")
+  const prefix = sep > 0 ? ref.model.slice(0, sep) : ""
+  if (prefix === "") {
+    return new Error(
+      `Model id "${canonicalId}" is not provider-qualified. Expected "<provider>/<model>".`,
+    )
+  }
+  if (!isProviderId(prefix)) return new UnknownProviderError(prefix)
+  return new Error(
+    `Model id "${canonicalId}" names no Model. Expected "<provider>/<model>".`,
+  )
 }
 
 /** Every Provider is constructible through this one function. */

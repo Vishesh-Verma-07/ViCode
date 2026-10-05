@@ -30,6 +30,19 @@ describe("createProvider", () => {
     )
   })
 
+  it("rejects a canonical id with no model after the prefix", () => {
+    // A prefix on its own names no Model, so there is nothing to build. Reading
+    // it as a Model would bill an empty model id rather than say so.
+    expect(() => createProvider({ model: "openai/", apiKey: "k" })).toThrow(/names no Model/)
+  })
+
+  it("trims whitespace around a canonical id", () => {
+    // One parser owns the rule, so an id copied with a stray space resolves
+    // rather than reading ` openai` as a Provider outside the registry.
+    const provider = createProvider({ model: " openai/gpt-5.3-codex ", apiKey: "k" })
+    expect(provider.getModelInfo().id).toBe("openai/gpt-5.3-codex")
+  })
+
   it("routes OpenRouter through its own SDK", () => {
     const provider = createProvider({ model: "openrouter/openai/gpt-4o", apiKey: "k" })
     expect(provider.getModelInfo().id).toBe("openrouter/openai/gpt-4o")

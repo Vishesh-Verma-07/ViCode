@@ -9,7 +9,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import type { ModelPricing } from "./cost-calculator"
 import type { ModelListing, ModelListingPricing } from "./provider"
-import { getProvider, isProviderId, listProviders, type ProviderId } from "./providers"
+import { getProvider, listProviders, type ProviderId } from "./providers"
+import { parseModelId } from "./model-id"
 
 export const MODELS_DEV_URL = "https://models.dev/api.json"
 
@@ -346,16 +347,14 @@ function priceRank(pricing: ModelListingPricing): number {
 }
 
 /**
- * Pricing for a canonical `provider/model` id. Falls back to the active
- * Provider's entry for a bare (pre-qualification) model id.
+ * Pricing for a canonical `provider/model` id, or null when the id names no
+ * Provider in the registry.
  */
 export function resolvePricing(
   canonicalId: string,
   catalog = active,
 ): ModelPricing | null {
-  const resolved = resolveProviderAndModel(canonicalId)
-  if (!resolved) return null
-  return lookupModel(resolved.provider, resolved.model, catalog)?.pricing ?? null
+  return lookupCanonical(canonicalId, catalog)?.pricing ?? null
 }
 
 /** Context window for a canonical id, or null when the catalog is silent. */
@@ -363,9 +362,7 @@ export function resolveContextLength(
   canonicalId: string,
   catalog = active,
 ): number | null {
-  const resolved = resolveProviderAndModel(canonicalId)
-  if (!resolved) return null
-  return lookupModel(resolved.provider, resolved.model, catalog)?.contextLength ?? null
+  return lookupCanonical(canonicalId, catalog)?.contextLength ?? null
 }
 
 /** The wire protocol a model speaks, per the catalog. */
@@ -373,17 +370,20 @@ export function resolveModelProtocol(
   canonicalId: string,
   catalog = active,
 ): WireProtocol | undefined {
-  const resolved = resolveProviderAndModel(canonicalId)
-  if (!resolved) return undefined
-  return lookupModel(resolved.provider, resolved.model, catalog)?.protocol
+  return lookupCanonical(canonicalId, catalog)?.protocol
 }
 
-function resolveProviderAndModel(canonicalId: string): { provider: ProviderId; model: string } | null {
-  const sep = canonicalId.indexOf("/")
-  if (sep <= 0) return null
-  const provider = canonicalId.slice(0, sep)
-  const model = canonicalId.slice(sep + 1)
-  if (model === "") return null
-  if (!isProviderId(provider)) return null
-  return { provider, model }
+/**
+ * The entry a canonical id names, or null when it names no Provider in the
+ * registry.
+ *
+ * `parseModelId` does the splitting and nothing else does (ADR-0006): the first
+ * separator is the Provider, which is what keeps OpenRouter's own slashes in
+ * the Model. An id with no usable prefix resolves to nothing rather than being
+ * guessed at.
+ */
+function lookupCanonical(canonicalId: string, catalog: Catalog | null): CatalogModel | null {
+  const ref = parseModelId(canonicalId)
+  if (!ref.provider) return null
+  return lookupModel(ref.provider, ref.model, catalog)
 }

@@ -296,6 +296,10 @@ describe("lookups", () => {
     expect(resolvePricing("google/gemini-3-pro", catalog)).toBeNull()
   })
 
+  it("tolerates whitespace around a canonical id, because one parser owns the rule", () => {
+    expect(resolveContextLength("  openrouter/anthropic/claude-sonnet-4  ", catalog)).toBe(200000)
+  })
+
   it("reports the wire protocol", () => {
     expect(resolveModelProtocol("opencode/claude-sonnet-4", catalog)).toBe("anthropic")
     expect(resolveModelProtocol("opencode/gpt-5.3-codex", catalog)).toBe("openai")
