@@ -19,24 +19,35 @@ describe("mode registry", () => {
     expect(cycleMode("plan")).toBe("build")
   })
 
-  it("resolves build tools to all six", () => {
+  it("resolves build tools to all seven", () => {
     const tools = resolveModeTools("build")
-    expect(tools).toHaveLength(6)
+    expect(tools).toHaveLength(7)
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ["bash", "edit_file", "list_files", "read_file", "search", "write_file"],
+      ["bash", "edit_file", "list_files", "read_file", "search", "web_search", "write_file"],
     )
   })
 
-  it("resolves plan tools to the read-only triplet", () => {
+  it("resolves plan tools to the read-only quartet", () => {
     const tools = resolveModeTools("plan")
-    expect(tools.map((t) => t.name).sort()).toEqual(["list_files", "read_file", "search"])
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      "list_files",
+      "read_file",
+      "search",
+      "web_search",
+    ])
   })
 
   it("resolves discuss tools to read-only plus write/edit with no bash", () => {
     const tools = resolveModeTools("discuss")
     const names = tools.map((t) => t.name).sort()
-    expect(names).toEqual(["edit_file", "list_files", "read_file", "search", "write_file"])
+    expect(names).toEqual(["edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
     expect(names).not.toContain("bash")
+  })
+
+  it("offers web_search in every Mode, since a search changes nothing on disk", () => {
+    for (const mode of ["build", "discuss", "plan"] as const) {
+      expect(resolveModeTools(mode).map((t) => t.name)).toContain("web_search")
+    }
   })
 
   it("resolves every mode's tool set from the existing tool groups", () => {
@@ -83,15 +94,20 @@ describe("selectModeTools", () => {
     )
   })
 
-  it("narrows the catalog to the read-only triplet in plan mode", () => {
+  it("narrows the catalog to the read-only quartet in plan mode", () => {
     const selected = selectModeTools(customCatalog, "plan")
-    expect(selected.map((t) => t.name).sort()).toEqual(["list_files", "read_file", "search"])
+    expect(selected.map((t) => t.name).sort()).toEqual([
+      "list_files",
+      "read_file",
+      "search",
+      "web_search",
+    ])
   })
 
   it("narrows the catalog to reads plus docs-safe writes in discuss mode", () => {
     const selected = selectModeTools(customCatalog, "discuss")
     expect(selected.map((t) => t.name).sort()).toEqual(
-      ["edit_file", "list_files", "read_file", "search", "write_file"],
+      ["edit_file", "list_files", "read_file", "search", "web_search", "write_file"],
     )
   })
 

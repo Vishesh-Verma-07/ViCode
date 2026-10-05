@@ -16,6 +16,7 @@ import { CONTEXT_BUDGET_RATIO } from "@/core/constants"
 import { project } from "@/core/project-context"
 import { MODES } from "@/core/modes"
 import { allTools } from "@/tools/index"
+import { setWebSearchDeps } from "@/tools/web-search"
 
 function byteLength(s: string): number {
   return new TextEncoder().encode(s).length
@@ -1303,7 +1304,7 @@ describe("agent-loop", () => {
       }
     }
 
-    it("sends plan mode only the read-only triplet and denies writes and bash", async () => {
+    it("sends plan mode only the read-only quartet and denies writes and bash", async () => {
       const seen: string[][] = []
       const provider = capturingProvider(seen, [
         toolEvents("write_file", { path: "planned.txt", content: "x" }, "c1"),
@@ -1335,13 +1336,64 @@ describe("agent-loop", () => {
 
       expect(seen.length).toBeGreaterThanOrEqual(3)
       for (const names of seen) {
-        expect(names).toEqual(["list_files", "read_file", "search"])
+        expect(names).toEqual(["list_files", "read_file", "search", "web_search"])
       }
       expect(results[0]).toContain("denied by mode")
       expect(results[1]).toContain("denied by mode")
       expect(results[2]).toContain("Unknown tool")
       expect(approvals).toEqual([])
       expect(existsSync(join(realToolsDir, "planned.txt"))).toBe(false)
+    })
+
+    it("reaches the model with web_search and runs it to a ranked result list", async () => {
+      // The proof that the Tool is really in the catalog the loop sends, not
+      // merely exported: the provider sees its name, and its result comes back
+      // as a Tool Result the next turn is built from.
+      const seen: string[][] = []
+      const provider = capturingProvider(seen, [
+        toolEvents("web_search", { query: "what changed in zod 4", numResults: 2 }, "w1"),
+        [
+          { type: "text-delta", text: "found it" },
+          { type: "finish", usage: finish() },
+        ],
+      ])
+      const results: string[] = []
+      const restore = setWebSearchDeps({
+        config: { apiKeys: {}, searchApiKey: "brave-secret" },
+        fetchImpl: (async () =>
+          new Response(
+            JSON.stringify({
+              web: {
+                results: [
+                  { title: "Zod 4 release notes", url: "https://zod.dev/v4", description: "Breaking changes." },
+                ],
+              },
+            }),
+            { status: 200 },
+          )) as unknown as typeof fetch,
+      })
+
+      try {
+        await runAgentLoop(
+          [userMessage("what changed in zod 4?")],
+          provider,
+          allTools,
+          "system",
+          { projectPath: realToolsDir },
+          createMockCallbacks({ onToolResult: (_, __, r) => results.push(r) }),
+          undefined,
+          planMode,
+        )
+      } finally {
+        restore()
+      }
+
+      for (const names of seen) {
+        expect(names).toContain("web_search")
+      }
+      expect(results[0]).toContain("Zod 4 release notes")
+      expect(results[0]).toContain("https://zod.dev/v4")
+      expect(results[0]).toContain("Breaking changes.")
     })
 
     it("denies out-of-boundary writes and bash in discuss mode but allows docs writes and reads", async () => {
@@ -1385,7 +1437,7 @@ describe("agent-loop", () => {
       expect(results[3]).toContain("denied by mode")
       expect(approvals).toEqual([])
       for (const names of seen) {
-        expect(names).toEqual(["edit_file", "list_files", "read_file", "search", "write_file"])
+        expect(names).toEqual(["edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
       }
     })
   })

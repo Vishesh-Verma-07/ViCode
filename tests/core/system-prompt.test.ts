@@ -152,6 +152,7 @@ You have access to the following tools:
 - **list_files** — List directory contents or glob for files. Use to discover project structure.
 - **search** — Search across files using regex/grep. Use to find relevant code quickly.
 - **bash** — Execute shell commands. Use to run tests, build projects, install packages.
+- **web_search** — Search the web and return ranked results with a title, URL and snippet. Use it for discovery — a question whose answer is not in the project. A snippet is an excerpt, not a page: when you need the page rather than the snippet, fetch that result's URL.
 
 ## Code Conventions
 
@@ -202,7 +203,7 @@ describe("assembleSystemPrompt (tool-array-driven)", () => {
     }
   })
 
-  it("read-only tool set lists only the read-only trio and never mentions write/edit/bash", () => {
+  it("read-only tool set lists only the read-only quartet and never mentions write/edit/bash", () => {
     const result = assembleSystemPrompt({ projectPath: tmpDir, tools: readOnlyTools })
     const toolsSection = sectionOf(result, "Available Tools")
     const toolLines = toolsSection.split("\n").filter((l) => l.startsWith("- **"))
@@ -210,6 +211,7 @@ describe("assembleSystemPrompt (tool-array-driven)", () => {
       "- **read_file** — Read the contents of a file. Use this to understand existing code.",
       "- **list_files** — List directory contents or glob for files. Use to discover project structure.",
       "- **search** — Search across files using regex/grep. Use to find relevant code quickly.",
+      "- **web_search** — Search the web and return ranked results with a title, URL and snippet. Use it for discovery — a question whose answer is not in the project. A snippet is an excerpt, not a page: when you need the page rather than the snippet, fetch that result's URL.",
     ])
     expect(result).not.toContain("bash")
     expect(result).not.toContain("write_file")

@@ -46,6 +46,14 @@ export const globalConfigSchema = z
     apiKey: z.string().optional(),
     /** One key per Provider, keyed by Provider id. */
     apiKeys: z.record(z.string(), z.string()).optional(),
+    /**
+     * The search credential `web_search` authenticates with — its own field,
+     * because the Provider key map discards any entry that is not a Provider id
+     * and would silently drop it. A network credential, not a route you chat
+     * through, so it never appears in the Provider picker, the Route Label or
+     * cost accounting, and a Project Config refuses it (issue #93).
+     */
+    searchApiKey: z.string().optional(),
   })
   .strict()
 
@@ -67,6 +75,11 @@ export type AppConfig = Omit<
   apiKeys: Partial<Record<ProviderId, string>>
   /** The canonical model id, resolved from whichever layer won. */
   model?: string
+  /**
+   * The search credential, held apart from the Provider key map so it can never
+   * be mistaken for a route. See `searchCredentialFor`.
+   */
+  searchApiKey?: string
 }
 
 interface LoadConfigOptions {
@@ -121,9 +134,22 @@ export class ConfigError extends Error {
     this.unknownFields = unknownFieldsOf(error)
   }
 
-  /** True when an API Key is what the file was refused for. */
+  /** Every credential field, in either schema's vocabulary. */
+  private static readonly CREDENTIAL_FIELDS = ["apiKey", "apiKeys", "searchApiKey"]
+
+  /**
+   * True when a credential is what the file was refused for. Covers the search
+   * credential too: it is refused from a Project Config for the same reason an
+   * API Key is, so the caller should give credential advice either way rather
+   * than quoting the wrong file.
+   */
   get refusesApiKey(): boolean {
-    return this.unknownFields.includes("apiKey") || this.unknownFields.includes("apiKeys")
+    return this.unknownFields.some((field) => ConfigError.CREDENTIAL_FIELDS.includes(field))
+  }
+
+  /** The credential fields this file was refused for, for advice that names them. */
+  get refusedCredentialFields(): string[] {
+    return this.unknownFields.filter((field) => ConfigError.CREDENTIAL_FIELDS.includes(field))
   }
 }
 
@@ -212,6 +238,12 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
         : qualifyStoredModel(rawModel, isLegacyModelValue(rawModelSource)),
     systemPrompt: projectConfig.systemPrompt ?? globalConfig.systemPrompt,
     apiKeys: collectKeys(globalConfig),
+  }
+
+  // Only the Global Config has a credential field for search, so there is no
+  // project half to layer and nothing to merge.
+  if (globalConfig.searchApiKey) {
+    merged.searchApiKey = globalConfig.searchApiKey
   }
 
   // sensitiveFiles merges across layers instead of overriding

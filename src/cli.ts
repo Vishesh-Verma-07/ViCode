@@ -13,6 +13,7 @@ import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
 import { createProvider } from "./providers"
 import { loadCatalogOffline } from "./core/catalog"
+import { setWebSearchDeps } from "./tools/web-search"
 import { formatModelId, parseModelId, resolveModelId, LEGACY_PROVIDER } from "./core/model-id"
 import { allTools } from "./tools"
 import { CommandRegistry } from "./core/command-registry"
@@ -76,8 +77,14 @@ function loadConfigOrExit(rootPath: string): AppConfig {
     console.error("\nCould not read the config:\n")
     console.error(error instanceof Error ? error.message : String(error))
     if (error instanceof ConfigError && error.refusesApiKey) {
+      // The fields are named because there are now two kinds of credential and
+      // the advice differs: a search key lives in the Global Config under its own
+      // field, or in the environment under the backend's own name — never behind
+      // VICODE_<PROVIDER>_API_KEY, which is a Provider's namespace.
       console.error(
-        "\nAn API key belongs in ~/.vicode/config.json, or in VICODE_<PROVIDER>_API_KEY in the\nenvironment — a project .vicode.json is meant to be committed, so a key there is a\nleaked one. Remove it from that file and put it in either of those.",
+        `\nThe credential field${error.refusedCredentialFields.length === 1 ? "" : "s"} ${error.refusedCredentialFields
+          .map((field) => `"${field}"`)
+          .join(", ")} belong in ~/.vicode/config.json — a project .vicode.json is meant\nto be committed, so a credential there is a leaked one. Remove ${error.refusedCredentialFields.length === 1 ? "it" : "them"} from that file\nand put ${error.refusedCredentialFields.length === 1 ? "it" : "them"} in the Global Config, or in the matching\nenvironment variable.`,
       )
     }
     console.error("")
@@ -86,6 +93,12 @@ function loadConfigOrExit(rootPath: string): AppConfig {
 }
 
 const config = loadConfigOrExit(projectPath)
+
+// The search credential rides with the loaded config so `web_search` can resolve
+// it at the moment of use. Nothing else about the Session depends on it: a
+// missing one leaves the chat working and is reported to the model that asks for
+// a search.
+setWebSearchDeps({ config })
 
 /**
  * A resumed session's model wins over config: the conversation is on it. Both

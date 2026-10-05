@@ -578,6 +578,58 @@ describe("per-Provider API keys", () => {
   })
 })
 
+describe("search credential field", () => {
+  const writeGlobalConfig = (contents: Record<string, unknown>) =>
+    writeGlobalConfigAt(defaultGlobalConfigPath(), contents)
+
+  it("is accepted in the Global Config and merged onto the loaded config", () => {
+    writeGlobalConfig({ searchApiKey: "brave-key" })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+    expect(config.searchApiKey).toBe("brave-key")
+  })
+
+  it("is refused in a Project Config, and reported as a credential", () => {
+    // A Project Config is committed, so a credential there is a leaked one —
+    // the same reason `apiKeys` is refused from it.
+    writeFileSync(join(tmpDir, ".vicode.json"), JSON.stringify({ searchApiKey: "leaked" }))
+    try {
+      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      throw new Error("expected the project config to be refused")
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError)
+      expect((error as ConfigError).refusesApiKey).toBe(true)
+      expect((error as ConfigError).refusedCredentialFields).toEqual(["searchApiKey"])
+      expect((error as ConfigError).message).toContain("searchApiKey")
+    }
+  })
+
+  it("names every refused credential field when several are present", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ searchApiKey: "leaked", apiKeys: { openai: "leaked" }, model: 42 }),
+    )
+    try {
+      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      throw new Error("expected the project config to be refused")
+    } catch (error) {
+      expect((error as ConfigError).refusedCredentialFields.sort()).toEqual(["apiKeys", "searchApiKey"])
+    }
+  })
+
+  it("leaves it undefined when nothing sets it", () => {
+    writeGlobalConfig({})
+    expect(loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() }).searchApiKey)
+      .toBeUndefined()
+  })
+
+  it("keeps it out of the Provider key map, which only ever holds Providers", () => {
+    writeGlobalConfig({ searchApiKey: "brave-key", apiKeys: { openai: "sk-openai" } })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+    expect(config.apiKeys).toEqual({ openai: "sk-openai" })
+    expect(config.searchApiKey).toBe("brave-key")
+  })
+})
+
 describe("OPENCODE_API_KEY fallback", () => {
   it("authenticates both Zen and Go", () => {
     process.env.OPENCODE_API_KEY = "sk-opencode"
