@@ -201,6 +201,25 @@ describe("saveSession and loadSession", () => {
     const loaded = loadSession(session.id, sessionsDir)
     expect(loaded!.totalTokens).toBe(200)
   })
+
+  it("writes back every field the current Session shape has, and no others", () => {
+    // `saveSession` rebuilds the record field by field so a dropped field is not
+    // carried forward. That makes a field added to `Session` and forgotten here
+    // vanish on the next save, so the shape is asserted against the Session the
+    // current code creates rather than a hand-written list of fields.
+    const sessionsDir = getSessionsDir(tempDir)
+    const session = createSession({ model: "anthropic/claude-opus-5-5", mode: "plan" })
+    session.name = "Deep work"
+    session.totalCost = null
+    session.lastCompaction = { before: [], summary: "a summary", at: "2026-09-24T05:54:14.902Z" }
+
+    saveSession(session, sessionsDir)
+
+    const onDisk = JSON.parse(
+      readFileSync(join(sessionsDir, `${session.id}.json`), "utf-8"),
+    ) as Record<string, unknown>
+    expect(Object.keys(onDisk).sort()).toEqual(Object.keys(session).sort())
+  })
 })
 
 describe("pre-qualification model migration", () => {
@@ -281,6 +300,131 @@ describe("pre-qualification model migration", () => {
     makeLegacySessionFile("openai/gpt-4o")
     const summaries = listSessions(getSessionsDir(tempDir))
     expect(summaries[0]!.model).toBe("openrouter/openai/gpt-4o")
+  })
+})
+
+describe("a session written before provider qualification", () => {
+  /**
+   * A real session file, copied from `.vicode/sessions/`, as ViCode wrote it
+   * before the Providers existed: no version marker, a bare OpenRouter model
+   * id, a folded summary, a compaction, and the `projectPath` field this
+   * project later dropped. Only the path was changed, since the point of the
+   * field is that it is a dead absolute path from another machine.
+   */
+  const LEGACY = join(import.meta.dir, "..", "fixtures", "legacy-session.json")
+
+  function installLegacySession(): string {
+    const sessionsDir = getSessionsDir(tempDir)
+    mkdirSync(sessionsDir, { recursive: true })
+    const legacy = JSON.parse(readFileSync(LEGACY, "utf-8")) as Session
+    writeFileSync(join(sessionsDir, `${legacy.id}.json`), readFileSync(LEGACY, "utf-8"), "utf-8")
+    return sessionsDir
+  }
+
+  it("loads a session whose file predates the current format", () => {
+    const sessionsDir = installLegacySession()
+
+    const loaded = loadSession("sess_1790133483114_com4bj", sessionsDir)
+
+    expect(loaded).not.toBeNull()
+    expect(loaded!.id).toBe("sess_1790133483114_com4bj")
+    expect(loaded!.name).toBe("raju")
+    expect(loaded!.messages).toHaveLength(5)
+    expect(loaded!.totalTokens).toBe(6020)
+  })
+
+  it("qualifies the stored model id under the Provider that could have served it", () => {
+    // Pre-qualification data is OpenRouter by definition: `nvidia/...` was a
+    // maker prefix on that route, never a Provider.
+    const sessionsDir = installLegacySession()
+
+    expect(loadSession("sess_1790133483114_com4bj", sessionsDir)!.model).toBe(
+      "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    )
+  })
+
+  it("keeps the folded summary and the compaction it folded", () => {
+    const sessionsDir = installLegacySession()
+
+    const loaded = loadSession("sess_1790133483114_com4bj", sessionsDir)!
+
+    expect(loaded.messages[0]!.content[0]).toMatchObject({
+      type: "context-summary",
+      foldedMessages: 2,
+      foldedTokens: 17,
+    })
+    expect(loaded.lastCompaction!.before).toHaveLength(2)
+    expect(loaded.lastCompaction!.at).toBe("2026-09-24T05:54:14.902Z")
+  })
+
+  it("keeps the Mode and the name the older version already stored", () => {
+    const sessionsDir = installLegacySession()
+
+    const loaded = loadSession("sess_1790133483114_com4bj", sessionsDir)!
+
+    expect(loaded.mode).toBe("build")
+    expect(loaded.name).toBe("raju")
+  })
+
+  it("writes the session back in the current shape", () => {
+    const sessionsDir = installLegacySession()
+    const loaded = loadSession("sess_1790133483114_com4bj", sessionsDir)!
+
+    saveSession(loaded, sessionsDir)
+
+    const onDisk = JSON.parse(
+      readFileSync(join(sessionsDir, `${loaded.id}.json`), "utf-8"),
+    ) as Record<string, unknown>
+    expect(onDisk.model).toBe("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free")
+    expect(onDisk.version).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
+  })
+
+  it("writes back no field the current shape has dropped", () => {
+    // `projectPath` went when sessions moved into the project directory
+    // (ADR-0002). The migration spreads the parsed record, so without being
+    // dropped here it would be carried forward forever — a dead absolute path
+    // from whichever machine wrote it.
+    const sessionsDir = installLegacySession()
+    const loaded = loadSession("sess_1790133483114_com4bj", sessionsDir)!
+
+    saveSession(loaded, sessionsDir)
+
+    const onDisk = JSON.parse(
+      readFileSync(join(sessionsDir, `${loaded.id}.json`), "utf-8"),
+    ) as Record<string, unknown>
+    const currentShape = new Set([
+      ...Object.keys(createSession({ model: "anthropic/claude-opus-5-5" })),
+      // Fields a Session may carry but a fresh one does not.
+      "name",
+      "lastCompaction",
+    ])
+    expect(Object.keys(onDisk).filter((key) => !currentShape.has(key))).toEqual([])
+  })
+
+  it("keeps the migrated shape stable across a second round trip", () => {
+    const sessionsDir = installLegacySession()
+
+    saveSession(loadSession("sess_1790133483114_com4bj", sessionsDir)!, sessionsDir)
+    const first = readFileSync(join(sessionsDir, "sess_1790133483114_com4bj.json"), "utf-8")
+    saveSession(loadSession("sess_1790133483114_com4bj", sessionsDir)!, sessionsDir)
+
+    expect(readFileSync(join(sessionsDir, "sess_1790133483114_com4bj.json"), "utf-8")).toBe(first)
+  })
+
+  it("lists the migrated session under its qualified model id", () => {
+    const sessionsDir = installLegacySession()
+
+    const summaries = listSessions(sessionsDir)
+
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({
+      id: "sess_1790133483114_com4bj",
+      name: "raju",
+      model: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      messageCount: 5,
+      totalTokens: 6020,
+      totalCost: 0,
+    })
   })
 })
 

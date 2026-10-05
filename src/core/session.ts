@@ -9,17 +9,31 @@ export type { Session }
 /**
  * Normalises a stored session to the current format: a canonical model id and
  * the version marker that makes it canonical, and a `totalCost` that is a
- * number or explicitly null. Rewritten on every save so the migration is
- * durable rather than re-derived on each load.
+ * number or explicitly null.
+ *
+ * The record is rebuilt field by field rather than spread, so a session written
+ * by a version that had a field this one dropped loses it here instead of
+ * carrying a dead value forward on every save — `projectPath` went when
+ * sessions moved into the project directory (ADR-0002), and a session written
+ * before then still carries that machine's absolute path. Rewritten on every
+ * save so the migration is durable rather than re-derived on each load.
  */
-function upgradeSession<T extends Session>(session: T): T {
+function upgradeSession(session: Session): Session {
   const legacy = isLegacyModelValue(session)
-  return {
-    ...session,
+  const upgraded: Session = {
+    id: session.id,
     model: qualifyStoredModel(session.model, legacy),
     version: QUALIFIED_MODEL_FORMAT_VERSION,
+    messages: session.messages,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    totalTokens: session.totalTokens,
     totalCost: typeof session.totalCost === "number" ? session.totalCost : null,
   }
+  if (session.name !== undefined) upgraded.name = session.name
+  if (session.mode !== undefined) upgraded.mode = session.mode
+  if (session.lastCompaction !== undefined) upgraded.lastCompaction = session.lastCompaction
+  return upgraded
 }
 
 export function getSessionsDir(projectPath: string): string {
