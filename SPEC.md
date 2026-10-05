@@ -120,7 +120,7 @@ The LLM provider is abstracted behind a `Provider` interface defined in `src/cor
 - `streamChat(messages, tools)` — Returns an async iterator of streaming events (text deltas, tool call deltas, finish signals).
 - `getModelInfo()` — Returns model metadata (name, context window, pricing).
 
-OpenRouter is the first (and initially only) implementation, built on `@openrouter/ai-sdk-provider` + Vercel AI SDK's `streamText()`. The provider seam means any future provider (local Ollama, Anthropic direct, etc.) can be added by implementing the `Provider` interface without touching the agent loop or UI.
+OpenRouter is the first implementation, built on `@openrouter/ai-sdk-provider` + Vercel AI SDK's `streamText()`. The provider seam means another provider (local Ollama, Anthropic direct, etc.) can be added by implementing the `Provider` interface without touching the agent loop or UI — which is how the five Providers in the registry exist alongside it.
 
 ### Tool Seam
 
@@ -278,16 +278,17 @@ Dev Dependencies:
 
 ### Testing Philosophy
 
-Tests should verify **external behavior**, not implementation details. A good test answers: "If I use this module as a black box, does it do what it promises?" Mocks should be used sparingly and only at seam boundaries (provider, file system, terminal input).
+Tests should verify **external behavior**, not implementation details. A good test answers: "If I use this module as a black box, does it do what it promises?" Mocks should be used sparingly and only at seam boundaries (provider, models.dev HTTP, file system, terminal input).
 
 ### Seam-Based Testing
 
-The four seams identified above map to four test categories:
+The seams — Provider, Tool, Config, Session, and the Model Catalog — map to five test categories:
 
-1. **Provider seam** — Mock the OpenRouter API response. Verify the agent loop correctly processes streaming events, tool calls, and text deltas. Test doom-loop detection, cancellation, and error handling.
+1. **Provider seam** — Mock the Provider's streaming API response. Verify the agent loop correctly processes streaming events, tool calls, and text deltas. Test doom-loop detection, cancellation, and error handling.
 2. **Tool seam** — Mock the file system (Bun's `Bun.file()`, `Bun.write()`, `Bun.spawn()`). Verify each tool reads/writes/executes correctly. Test permission checks (dangerous flag). Test error cases (file not found, permission denied).
 3. **Config seam** — Mock the file system. Verify config loads correctly from global, project, and CLI sources. Test merge priority (CLI > project > global). Test missing config, malformed JSON, invalid schemas.
 4. **Session seam** — Mock the file system. Verify sessions save and load correctly. Test auto-save after turns. Test session listing and resume.
+5. **Model Catalog seam** — The catalog fetches models.dev's `api.json` and caches it under `~/.vicode`, so it is both an HTTP caller and a file-system one. Mock both. Verify the payload is filtered to the registry's Providers and trimmed to the fields ViCode reads, that a canonical `provider/model` id resolves to a price, a context window, and a wire protocol, and that a cache past its TTL is refetched while a fresh one is read from disk. Each of those is injectable: `CatalogOptions` takes a `fetchImpl`, a `cachePath`, and a `ttlMs` for the loader, `parseCatalog(payload)` builds a catalog from a fixture, `setActiveCatalog` installs one for the process, and the canonical-id resolvers take an optional `catalog` — so tests assert against a recorded payload rather than the live snapshot.
 
 ### UI Testing
 

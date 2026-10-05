@@ -46,6 +46,39 @@ function formatEnvBlock(): string {
     .join("\n")
 }
 
+/**
+ * The width both Provider tables align their id column on, so the two blocks
+ * read as one list.
+ */
+const PROVIDER_ID_WIDTH =
+  Math.max(...listProviders().map((provider) => provider.id.length)) + 2
+
+/**
+ * The Provider table, rendered from the registry so the help cannot list a
+ * Provider ViCode does not serve, or miss one it does.
+ */
+function formatProviderBlock(): string {
+  const providers = listProviders()
+  const labelWidth = Math.max(...providers.map((provider) => provider.label.length)) + 2
+  return providers
+    .map(
+      (provider) =>
+        `    ${provider.id.padEnd(PROVIDER_ID_WIDTH)}${provider.label.padEnd(labelWidth)}${provider.billingNote ?? ""}`,
+    )
+    .join("\n")
+}
+
+/**
+ * Where each Provider's key comes from, from the same registry the API Key
+ * Entry Screen reads. The help used to name one Provider's URL under a table of
+ * five, which left the other four with nowhere to look (issue #89).
+ */
+function formatKeyBlock(): string {
+  return listProviders()
+    .map((provider) => `    ${provider.id.padEnd(PROVIDER_ID_WIDTH)}${provider.keyUrl}`)
+    .join("\n")
+}
+
 export function formatHelp(): string {
   return `Usage: vicode [directory]
 
@@ -69,11 +102,7 @@ Configuration:
   /key       - set or change an API key (interactive prompt)
 
   Providers:
-    openrouter    OpenRouter    pay per token
-    openai        OpenAI        pay per token
-    anthropic     Anthropic     pay per token
-    opencode      OpenCode Zen  pay per token, prepaid balance
-    opencode-go   OpenCode Go   subscription plan
+${formatProviderBlock()}
 
   Models are named <provider>/<model>, e.g. anthropic/claude-opus-5-5.
 
@@ -88,7 +117,8 @@ ${formatEnvBlock()}
   Keys belong in the global config or the environment. A .vicode.json in your
   project is meant to be committed, so a key written there is refused.
 
-  Get a key at https://openrouter.ai/keys
+  Get a key for the Provider you picked at:
+${formatKeyBlock()}
 
 Examples:
   vicode                          Start in current directory

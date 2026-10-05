@@ -95,4 +95,36 @@ describe("formatHelp", () => {
     const tokens = (line ?? "").split(/\s+/)
     expect(tokens.indexOf("VICODE_OPENAI_API_KEY")).toBeLessThan(tokens.indexOf("OPENAI_API_KEY"))
   })
+
+  it("names where to get a key for every Provider, not one of the five", () => {
+    // The help used to end with a single Provider's key URL directly under a
+    // table of five, so the other four had nowhere to look (issue #89).
+    const help = formatHelp()
+    for (const provider of listProviders()) {
+      expect(help).toContain(provider.keyUrl)
+    }
+  })
+
+  it("puts each Provider's key URL on that Provider's own row", () => {
+    // Matched per row, so a URL cannot be listed once and leave the wrong
+    // Provider looking like the one it belongs to.
+    const lines = formatHelp().split("\n")
+    for (const provider of listProviders()) {
+      const row = lines.find(
+        (line) => line.trim().startsWith(provider.id) && line.includes(provider.keyUrl),
+      )
+      expect(row).toBeDefined()
+    }
+  })
+
+  it("names every Provider the registry holds, with its label and billing note", () => {
+    // The table is rendered from the registry, so a Provider added there cannot
+    // go unlisted here, and none of its three columns can go stale.
+    const lines = formatHelp().split("\n")
+    for (const provider of listProviders()) {
+      const row = lines.find((line) => line.trim().startsWith(`${provider.id} `))
+      expect(row ?? "").toContain(provider.label)
+      expect(row ?? "").toContain(provider.billingNote ?? "")
+    }
+  })
 })

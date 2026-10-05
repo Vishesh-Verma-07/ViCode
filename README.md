@@ -370,7 +370,7 @@ bun test
 bun test tests/core/modes.test.ts   # a single file
 ```
 
-Coverage is organised around the four seams — Provider, Tool, Config, and Session — plus whole-app UI tests via `ink-testing-library`: the agent loop, every tool, config layering and the strict schema, one file per slash command, and UI components including the App, input editing, Input History, pickers, and the Welcome Screen.
+Coverage is organised around the five seams — Provider, Tool, Config, Session, and the Model Catalog — plus whole-app UI tests via `ink-testing-library`: the agent loop, every tool, config layering and the strict schema, the Model Catalog's filtering, lookups, and cache, one file per slash command, and UI components including the App, input editing, Input History, pickers, and the Welcome Screen.
 
 ## Known limitations
 
