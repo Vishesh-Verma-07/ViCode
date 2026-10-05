@@ -79,12 +79,14 @@ Configuration:
 
   Set your API keys in one of:
   1. ~/.vicode/config.json  → { "apiKeys": { "openrouter": "your-key" } }
-  2. .vicode.json in your project  → { "apiKeys": { "openrouter": "your-key" } }
-  3. Environment variables, highest precedence first:
+  2. Environment variables, highest precedence first:
 ${formatEnvBlock()}
      A VICODE_ name overrides the provider's own name for ViCode alone.
      OPENCODE_API_KEY authenticates both OpenCode Zen and OpenCode Go.
-  4. Or type /key (or just start chatting) and you'll be prompted to enter your key
+  3. Or type /key (or just start chatting) and you'll be prompted to enter your key
+
+  Keys belong in the global config or the environment. A .vicode.json in your
+  project is meant to be committed, so a key written there is refused.
 
   Get a key at https://openrouter.ai/keys
 

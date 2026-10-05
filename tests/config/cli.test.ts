@@ -62,6 +62,32 @@ describe("formatHelp", () => {
     }
   })
 
+  it("points keys at the global config and the environment, never the project one", () => {
+    // The help used to teach the opposite of the documented rule: it offered
+    // `.vicode.json` as a place to put a credential, which is a file meant to
+    // be committed (issue #87). Matched on the shape of the line rather than one
+    // exact string, so numbering or spacing changes cannot smuggle the claim
+    // back in.
+    const keyLines = formatHelp()
+      .split("\n")
+      .filter((line) => line.includes("apiKeys") && line.includes("→"))
+    expect(keyLines.length).toBeGreaterThan(0)
+    for (const line of keyLines) {
+      expect(line).toContain("~/.vicode/config.json")
+      expect(line).not.toMatch(/\.vicode\.json\s+in your project/)
+    }
+  })
+
+  it("names the global config as the only file that takes a key", () => {
+    expect(formatHelp()).toContain("~/.vicode/config.json  → { \"apiKeys\"")
+  })
+
+  it("says why a key cannot go in a project config", () => {
+    const help = formatHelp()
+    expect(help).toMatch(/Keys belong in the global config or the environment/)
+    expect(help).toMatch(/refused/)
+  })
+
   it("puts the namespaced variable ahead of the provider's own on the same line", () => {
     const line = formatHelp()
       .split("\n")

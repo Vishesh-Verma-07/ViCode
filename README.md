@@ -141,12 +141,23 @@ ViCode reads a layered configuration. Project config wins over global config for
 
 The schema is **strict** — an unknown key is a hard error, so typos fail loudly instead of being silently ignored.
 
+An API key is a credential rather than a configuration choice, so **only the global config carries one**. A key in `.vicode.json` is refused by name, not read: that file is meant to be committed, so a key there is a leaked one. See [ADR-0011](docs/adr/0011-the-global-config-is-the-only-file-that-holds-an-api-key.md).
+
+`~/.vicode/config.json`:
+
 ```json
 {
   "apiKeys": {
     "openrouter": "your-openrouter-key",
     "anthropic": "your-anthropic-key"
-  },
+  }
+}
+```
+
+`.vicode.json`:
+
+```json
+{
   "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
   "systemPrompt": "Optional extra system prompt text, or a path to a .md file",
   "sensitiveFiles": ["secrets/**.custom"],
@@ -154,14 +165,14 @@ The schema is **strict** — an unknown key is a hard error, so typos fail loudl
 }
 ```
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `apiKeys` | `object` | per-provider environment variables | API keys keyed by provider id. `/key` writes here, in the global config only. |
-| `apiKey` | `string` | — | Legacy single key. Read as the `openrouter` key and migrated on first write. |
-| `model` | `string` | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | Provider-qualified model id. Switch mid-session with `/model`. |
-| `systemPrompt` | `string` | — | Extra System Prompt text, or a path to a Markdown file. Overridden by `.vicode/system.md` if that file exists. |
-| `sensitiveFiles` | `string[]` | seven built-in patterns | Extra glob patterns treated as Sensitive Paths, merged across config layers. |
-| `silentBashCommands` | `string[]` | `[]` | Bash Allowlist: first command tokens that may run without approval. Merged across config layers. **Empty means every `bash` call asks.** |
+| Key | Type | Scope | Default | Description |
+|---|---|---|---|---|
+| `apiKeys` | `object` | global only | per-provider environment variables | API keys keyed by provider id. `/key` writes here. |
+| `apiKey` | `string` | global only | — | Legacy single key. Read as the `openrouter` key and migrated on first write. |
+| `model` | `string` | either layer | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | Provider-qualified model id. Switch mid-session with `/model`. |
+| `systemPrompt` | `string` | either layer | — | Extra System Prompt text, or a path to a Markdown file. Overridden by `.vicode/system.md` if that file exists. |
+| `sensitiveFiles` | `string[]` | either layer | seven built-in patterns | Extra glob patterns treated as Sensitive Paths, merged across config layers. |
+| `silentBashCommands` | `string[]` | either layer | `[]` | Bash Allowlist: first command tokens that may run without approval. Merged across config layers. **Empty means every `bash` call asks.** |
 
 A `model` written before multi-provider support was a bare id, and those files are migrated to `openrouter/<id>` on read. Config written by a current version is read literally. See [ADR-0006](docs/adr/0006-provider-qualified-model-ids.md).
 

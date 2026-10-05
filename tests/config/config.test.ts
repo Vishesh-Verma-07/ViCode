@@ -4,13 +4,28 @@ import {
   keyForProvider,
   saveApiKeyToGlobalConfig,
   removeApiKeyFromGlobalConfig,
+  ConfigError,
 } from "@/config/config"
 import { QUALIFIED_MODEL_FORMAT_VERSION } from "@/core/model-id"
 import { PROVIDER_IDS, providerEnvVars } from "@/core/providers"
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "fs"
-import { join } from "path"
+import { join, dirname } from "path"
 
 const tmpDir = join(import.meta.dir, "__tmp_config_test")
+
+/**
+ * Writes a Global Config. Keys go here and nowhere else, so a test about key
+ * precedence writes through this rather than into a `.vicode.json`.
+ */
+function writeGlobalConfigAt(path: string, contents: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, JSON.stringify(contents), "utf-8")
+}
+
+/** A global config path for a test with no home of its own to use. */
+function defaultGlobalConfigPath(): string {
+  return join(tmpDir, "global-only", "config.json")
+}
 
 /**
  * Every variable `keyForProvider` reads, derived from the registry so a
@@ -59,20 +74,36 @@ describe("config schema", () => {
     expect(result.model).toBeUndefined()
   })
 
-  it("accepts valid config with all fields", () => {
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({
-        apiKeys: { openai: "sk-test", anthropic: "sk-ant-test" },
-        model: "anthropic/claude-sonnet-4",
-        modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
-        systemPrompt: "Be helpful",
-      })
-    )
-    const result = loadConfig({ projectPath: tmpDir })
+  it("accepts a global config carrying keys", () => {
+    const globalConfigPath = defaultGlobalConfigPath()
+    writeGlobalConfigAt(globalConfigPath, {
+      apiKeys: { openai: "sk-test", anthropic: "sk-ant-test" },
+      model: "anthropic/claude-sonnet-4",
+      modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
+      systemPrompt: "Be helpful",
+    })
+    const result = loadConfig({ projectPath: tmpDir, globalConfigPath })
     expect(result.apiKeys).toEqual({ openai: "sk-test", anthropic: "sk-ant-test" })
     expect(result.model).toBe("anthropic/claude-sonnet-4")
     expect(result.systemPrompt).toBe("Be helpful")
+  })
+
+  it("accepts a project config with every field it is allowed to carry", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({
+        model: "anthropic/claude-sonnet-4",
+        modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
+        systemPrompt: "Be helpful",
+        sensitiveFiles: ["secrets/**"],
+        silentBashCommands: ["ls"],
+      })
+    )
+    const result = loadConfig({ projectPath: tmpDir })
+    expect(result.model).toBe("anthropic/claude-sonnet-4")
+    expect(result.systemPrompt).toBe("Be helpful")
+    expect(result.sensitiveFiles).toEqual(["secrets/**"])
+    expect(result.silentBashCommands).toEqual(["ls"])
   })
 
   it("rejects invalid config with unknown fields", () => {
@@ -142,11 +173,9 @@ describe("API key fallback", () => {
     const original = process.env.OPENROUTER_API_KEY
     process.env.OPENROUTER_API_KEY = "env-key"
     try {
-      writeFileSync(
-        join(tmpDir, ".vicode.json"),
-        JSON.stringify({ apiKeys: { openrouter: "config-key" } })
-      )
-      const config = loadConfig({ projectPath: tmpDir })
+      const globalConfigPath = defaultGlobalConfigPath()
+      writeGlobalConfigAt(globalConfigPath, { apiKeys: { openrouter: "config-key" } })
+      const config = loadConfig({ projectPath: tmpDir, globalConfigPath })
       expect(keyForProvider(config, "openrouter")).toBe("config-key")
     } finally {
       if (original === undefined) delete process.env.OPENROUTER_API_KEY
@@ -430,59 +459,121 @@ describe("format marker migration on save", () => {
 
 describe("per-Provider API keys", () => {
   it("reads the legacy top-level apiKey as the OpenRouter key", () => {
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({ apiKey: "sk-or-v1-legacy" }),
-    )
-    const config = loadConfig({ projectPath: tmpDir })
+    const globalConfigPath = defaultGlobalConfigPath()
+    writeGlobalConfigAt(globalConfigPath, { apiKey: "sk-or-v1-legacy" })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath })
     expect(keyForProvider(config, "openrouter")).toBe("sk-or-v1-legacy")
   })
 
   it("lets apiKeys[openrouter] win over the legacy apiKey", () => {
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({ apiKey: "sk-or-v1-legacy", apiKeys: { openrouter: "sk-or-v1-new" } }),
-    )
-    const config = loadConfig({ projectPath: tmpDir })
+    const globalConfigPath = defaultGlobalConfigPath()
+    writeGlobalConfigAt(globalConfigPath, {
+      apiKey: "sk-or-v1-legacy",
+      apiKeys: { openrouter: "sk-or-v1-new" },
+    })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath })
     expect(keyForProvider(config, "openrouter")).toBe("sk-or-v1-new")
   })
 
   it("keeps each Provider's key independent", () => {
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({ apiKeys: { openai: "sk-openai", anthropic: "sk-ant" } }),
-    )
-    const config = loadConfig({ projectPath: tmpDir })
+    const globalConfigPath = defaultGlobalConfigPath()
+    writeGlobalConfigAt(globalConfigPath, {
+      apiKeys: { openai: "sk-openai", anthropic: "sk-ant" },
+    })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath })
     expect(keyForProvider(config, "openai")).toBe("sk-openai")
     expect(keyForProvider(config, "anthropic")).toBe("sk-ant")
     expect(keyForProvider(config, "openrouter")).toBeUndefined()
   })
 
-  it("lets a project key override the global key for the same Provider", () => {
-    const homeDir = join(tmpDir, "home2")
-    mkdirSync(homeDir, { recursive: true })
-    writeFileSync(join(homeDir, "config.json"), JSON.stringify({ apiKeys: { openai: "global-openai" } }))
-    writeFileSync(join(tmpDir, ".vicode.json"), JSON.stringify({ apiKeys: { openai: "project-openai" } }))
-    const config = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
-    expect(keyForProvider(config, "openai")).toBe("project-openai")
+  it("refuses a project key rather than letting it override the global one", () => {
+    // A credential in a file meant to be committed is a leaked one, so it is
+    // named and refused rather than read. Ignoring it quietly would leave the
+    // user with a Provider holding no API Key and nothing saying why. The
+    // global config is loaded first, so the refusal cannot depend on whether
+    // that layer already holds the same Provider — hence no second test for it
+    // (issue #87).
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ apiKeys: { openai: "project-openai" } }),
+    )
+    expect(() => loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })).toThrow(/apiKeys/)
   })
 
-  it("adds a project key for a Provider the global config never mentioned", () => {
-    const homeDir = join(tmpDir, "home3")
-    mkdirSync(homeDir, { recursive: true })
-    writeFileSync(join(homeDir, "config.json"), JSON.stringify({ apiKeys: { openai: "global-openai" } }))
-    writeFileSync(join(tmpDir, ".vicode.json"), JSON.stringify({ apiKeys: { anthropic: "project-ant" } }))
-    const config = loadConfig({ projectPath: tmpDir, globalConfigPath: join(homeDir, "config.json") })
-    expect(keyForProvider(config, "openai")).toBe("global-openai")
-    expect(keyForProvider(config, "anthropic")).toBe("project-ant")
+  it("refuses the legacy single key in a project config", () => {
+    writeFileSync(join(tmpDir, ".vicode.json"), JSON.stringify({ apiKey: "sk-or-v1-legacy" }))
+    expect(() => loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })).toThrow(/apiKey/)
+  })
+
+  it("names the file and the field it refused", () => {
+    // Two layers are read by different rules and a bare schema error says
+    // neither which file nor whether the key advice applies (issue #87).
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ apiKeys: { openai: "project-openai" } }),
+    )
+    try {
+      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      throw new Error("expected the project config to be refused")
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError)
+      expect((error as ConfigError).path).toBe(join(tmpDir, ".vicode.json"))
+      expect((error as ConfigError).refusesApiKey).toBe(true)
+      expect((error as ConfigError).message).toContain("apiKeys")
+    }
+  })
+
+  it("names the field a type error is about, not just what it wanted", () => {
+    // "expected string, received number" says what was wanted and leaves the
+    // user to work out which field, across a file that can hold several.
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ model: 42 }),
+    )
+    try {
+      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      throw new Error("expected the project config to be refused")
+    } catch (error) {
+      expect((error as ConfigError).message).toContain("model")
+    }
+  })
+
+  it("reports every problem in the file at once, not one per run", () => {
+    // An unknown key and a mistyped one together: reporting only the first
+    // sends the user back to fix a second error they were never shown.
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ apiKeys: { openai: "sk-x" }, model: 42 }),
+    )
+    try {
+      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      throw new Error("expected the project config to be refused")
+    } catch (error) {
+      expect((error as ConfigError).message).toContain("apiKeys")
+      expect((error as ConfigError).message).toContain("model")
+    }
+  })
+
+  it("does not claim an API Key was the problem for any other unknown field", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ modelFrmatVersion: 2, model: "openai/gpt-4o" }),
+    )
+    try {
+      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      throw new Error("expected the project config to be refused")
+    } catch (error) {
+      expect((error as ConfigError).refusesApiKey).toBe(false)
+      expect((error as ConfigError).message).toContain("modelFrmatVersion")
+    }
   })
 
   it("drops keys for Providers that are not in the registry", () => {
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({ apiKeys: { "not-a-provider": "nope", openai: "sk-openai" } }),
-    )
-    const config = loadConfig({ projectPath: tmpDir })
+    const globalConfigPath = defaultGlobalConfigPath()
+    writeGlobalConfigAt(globalConfigPath, {
+      apiKeys: { "not-a-provider": "nope", openai: "sk-openai" },
+    })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath })
     expect(config.apiKeys).toEqual({ openai: "sk-openai" })
   })
 })
@@ -512,11 +603,9 @@ describe("OPENCODE_API_KEY fallback", () => {
 
   it("prefers a configured key over the env var", () => {
     process.env.OPENAI_API_KEY = "sk-env-openai"
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({ apiKeys: { openai: "sk-config-openai" } }),
-    )
-    const config = loadConfig({ projectPath: tmpDir })
+    const globalConfigPath = defaultGlobalConfigPath()
+    writeGlobalConfigAt(globalConfigPath, { apiKeys: { openai: "sk-config-openai" } })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath })
     expect(keyForProvider(config, "openai")).toBe("sk-config-openai")
   })
 })
@@ -565,11 +654,9 @@ describe("namespaced API key variable", () => {
   it("prefers a configured key over every variable", () => {
     process.env.OPENAI_API_KEY = "sk-shared"
     process.env.VICODE_OPENAI_API_KEY = "sk-vicode-ci"
-    writeFileSync(
-      join(tmpDir, ".vicode.json"),
-      JSON.stringify({ apiKeys: { openai: "sk-config-openai" } }),
-    )
-    const config = loadConfig({ projectPath: tmpDir })
+    const globalConfigPath = defaultGlobalConfigPath()
+    writeGlobalConfigAt(globalConfigPath, { apiKeys: { openai: "sk-config-openai" } })
+    const config = loadConfig({ projectPath: tmpDir, globalConfigPath })
     expect(keyForProvider(config, "openai")).toBe("sk-config-openai")
   })
 })

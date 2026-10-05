@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z, type ZodError } from "zod"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import { join, dirname } from "path"
 import { isProviderId, providerEnvVars, type ProviderId } from "../core/providers"
@@ -9,21 +9,36 @@ import {
   renameModelFormatMarker,
 } from "../core/model-id"
 
-export const configSchema = z
+/** The fields both config layers accept. An API Key is not among them. */
+const configLayerFields = {
+  /**
+   * On-disk format version. A config without it predates provider
+   * qualification, so its `model` can only have meant OpenRouter — the same
+   * collision `openai/gpt-4o` would otherwise hit. See model-id.ts.
+   */
+  modelFormatVersion: z.number().optional(),
+  /**
+   * The marker's original field name, kept readable because the schema is
+   * strict: dropping it would fail to parse every config the current release
+   * wrote. Reads as the marker; the global config is rewritten under
+   * `modelFormatVersion` the next time it is saved (issue #86).
+   */
+  version: z.number().optional(),
+  /** Canonical `provider/model` id. Unqualified ids are read as OpenRouter. */
+  model: z.string().optional(),
+  systemPrompt: z.string().optional(),
+  sensitiveFiles: z.array(z.string()).optional(),
+  silentBashCommands: z.array(z.string()).optional(),
+}
+
+/**
+ * The Global Config: the only layer that holds an API Key, because a key is a
+ * credential rather than a configuration choice and `~/.vicode/config.json` is
+ * the file kept out of version control.
+ */
+export const globalConfigSchema = z
   .object({
-    /**
-     * On-disk format version. A config without it predates provider
-     * qualification, so its `model` can only have meant OpenRouter — the same
-     * collision `openai/gpt-4o` would otherwise hit. See model-id.ts.
-     */
-    modelFormatVersion: z.number().optional(),
-    /**
-     * The marker's original field name, kept readable because the schema is
-     * strict: dropping it would fail to parse every config the current release
-     * wrote. Reads as the marker; the global config is rewritten under
-     * `modelFormatVersion` the next time it is saved (issue #86).
-     */
-    version: z.number().optional(),
+    ...configLayerFields,
     /**
      * Legacy single key. Kept readable so an existing global config keeps
      * working; it is normalised into `apiKeys[openrouter]` on load.
@@ -31,16 +46,21 @@ export const configSchema = z
     apiKey: z.string().optional(),
     /** One key per Provider, keyed by Provider id. */
     apiKeys: z.record(z.string(), z.string()).optional(),
-    /** Canonical `provider/model` id. Unqualified ids are read as OpenRouter. */
-    model: z.string().optional(),
-    systemPrompt: z.string().optional(),
-    sensitiveFiles: z.array(z.string()).optional(),
-    silentBashCommands: z.array(z.string()).optional(),
   })
   .strict()
 
+/**
+ * The Project Config, which carries no key at all — deliberately, and refused
+ * rather than quietly ignored. `.vicode.json` is a file meant to be committed,
+ * so a credential written there is a leaked one however the loader treats it;
+ * and ignoring it silently would leave the user with a Provider that has no key
+ * and no explanation. Naming the field is the useful answer: they learn which
+ * one to move, and `/key` writes it where it belongs (issue #87).
+ */
+export const projectConfigSchema = z.object(configLayerFields).strict()
+
 export type AppConfig = Omit<
-  z.infer<typeof configSchema>,
+  z.infer<typeof globalConfigSchema>,
   "apiKey" | "apiKeys" | "version" | "modelFormatVersion"
 > & {
   /** Every configured key, keyed by Provider id. Always present, maybe empty. */
@@ -54,6 +74,67 @@ interface LoadConfigOptions {
   globalConfigPath?: string
 }
 
+/** Fields the strict schema refused, which is the whole of an unknown-key error. */
+function unknownFieldsOf(error: ZodError): string[] {
+  return error.issues.flatMap((issue) =>
+    "keys" in issue && Array.isArray(issue.keys) ? (issue.keys as string[]) : [],
+  )
+}
+
+/**
+ * Every issue in one line each, naming the field it is about.
+ *
+ * All of them, not the first: a file with an unknown key *and* a mistyped one
+ * would otherwise be reported once per run, sending the user back to fix a
+ * second error they were never shown. A type issue carries its field in `path`,
+ * so the field is named rather than left to "expected string, received number"
+ * — which says what was wanted but not what to change.
+ */
+function describeIssues(issues: ZodError["issues"]): string {
+  return issues
+    .map((issue) => {
+      if ("keys" in issue && Array.isArray(issue.keys)) {
+        return `unrecognised field${issue.keys.length > 1 ? "s" : ""} ${issue.keys.join(", ")}`
+      }
+      const field = issue.path.length > 0 ? issue.path.join(".") : "the file"
+      return `${field} ${issue.message}`
+    })
+    .join("; ")
+}
+
+/**
+ * A config file the loader refused, naming which file it was. The schema's own
+ * error says what is wrong with the contents but not which file, and the two
+ * layers are read by different rules — only a project config refuses an API Key
+ * — so the caller cannot give advice without knowing the path (issue #87).
+ */
+export class ConfigError extends Error {
+  readonly path: string
+  readonly issues: ZodError["issues"]
+  readonly unknownFields: string[]
+
+  constructor(path: string, error: ZodError) {
+    super(`${path}: ${describeIssues(error.issues)}`)
+    this.name = "ConfigError"
+    this.path = path
+    this.issues = error.issues
+    this.unknownFields = unknownFieldsOf(error)
+  }
+
+  /** True when an API Key is what the file was refused for. */
+  get refusesApiKey(): boolean {
+    return this.unknownFields.includes("apiKey") || this.unknownFields.includes("apiKeys")
+  }
+}
+
+function parseConfigFile<T extends z.ZodType>(path: string, schema: T): z.infer<T> {
+  const raw = readJsonFile(path)
+  if (!raw) return {} as z.infer<T>
+  const parsed = schema.safeParse(raw)
+  if (!parsed.success) throw new ConfigError(path, parsed.error)
+  return parsed.data
+}
+
 function readJsonFile(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return null
   try {
@@ -65,20 +146,21 @@ function readJsonFile(path: string): Record<string, unknown> | null {
 }
 
 /**
- * Collects configured keys into one map, dropping any entry that is not a
- * Provider in the registry so a stale key cannot masquerade as a valid route.
+ * Collects the Global Config's keys into one map, dropping any entry that is not
+ * a Provider in the registry so a stale key cannot masquerade as a valid route.
+ *
+ * Only the global layer is consulted. The Project Config has no key fields to
+ * read, so this is not a merge that happens to prefer one layer — there is
+ * nothing for a project key to win with (issue #87).
  */
-function collectKeys(...layers: (z.infer<typeof configSchema> | undefined)[]): Partial<Record<ProviderId, string>> {
+function collectKeys(globalConfig: z.infer<typeof globalConfigSchema>): Partial<Record<ProviderId, string>> {
   const keys: Partial<Record<ProviderId, string>> = {}
-  for (const layer of layers) {
-    if (!layer) continue
-    // The legacy single key belongs to OpenRouter, the only Provider that
-    // existed when it could have been written.
-    if (layer.apiKey) keys[LEGACY_PROVIDER] = layer.apiKey
-    if (layer.apiKeys) {
-      for (const [id, value] of Object.entries(layer.apiKeys)) {
-        if (isProviderId(id) && typeof value === "string" && value !== "") keys[id] = value
-      }
+  // The legacy single key belongs to OpenRouter, the only Provider that
+  // existed when it could have been written.
+  if (globalConfig.apiKey) keys[LEGACY_PROVIDER] = globalConfig.apiKey
+  if (globalConfig.apiKeys) {
+    for (const [id, value] of Object.entries(globalConfig.apiKeys)) {
+      if (isProviderId(id) && typeof value === "string" && value !== "") keys[id] = value
     }
   }
   return keys
@@ -109,26 +191,27 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
     globalConfigPath = joinHomePath(".vicode/config.json"),
   } = options
 
-  const globalRaw = readJsonFile(globalConfigPath)
-  const globalConfig = globalRaw ? configSchema.parse(globalRaw) : {}
+  const globalConfig = parseConfigFile(globalConfigPath, globalConfigSchema)
 
+  // Parsed by the Project Config schema, which has no key fields: a credential
+  // in a file meant to be committed is refused by name rather than read.
   const projectFile = join(projectPath, ".vicode.json")
-  const projectRaw = readJsonFile(projectFile)
-  const projectConfig = projectRaw ? configSchema.parse(projectRaw) : {}
+  const projectConfig = parseConfigFile(projectFile, projectConfigSchema)
 
   // The winning layer carries its own format marker, because a model id is only
   // unambiguous relative to the format it was written in.
   const rawModel = projectConfig.model ?? globalConfig.model
   const rawModelSource = projectConfig.model !== undefined ? projectConfig : globalConfig
 
-  // Config layering: project overrides global; no CLI layer
+  // Config layering: project overrides global; no CLI layer. Keys are the one
+  // setting with no project half to layer, since it carries none.
   const merged: AppConfig = {
     model:
       rawModel === undefined
         ? undefined
         : qualifyStoredModel(rawModel, isLegacyModelValue(rawModelSource)),
     systemPrompt: projectConfig.systemPrompt ?? globalConfig.systemPrompt,
-    apiKeys: collectKeys(globalConfig, projectConfig),
+    apiKeys: collectKeys(globalConfig),
   }
 
   // sensitiveFiles merges across layers instead of overriding

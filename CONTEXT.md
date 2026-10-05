@@ -59,7 +59,7 @@ The change of the live Model, and with it of Provider, that `/model` and `/provi
 _Avoid_: model change, route switch (a switch is refused as often as it happens)
 
 **API Key**:
-The credential that authenticates the user to one Provider. Each Provider holds its own, so the Global Config holds a map of them. It is a credential, not a configuration choice, so keys live in the global config file rather than the project config. With no key configured, one is read from the environment: a Namespaced API Key first, then the name native to that Provider's own tooling. OpenCode Zen and OpenCode Go share a single key — one console, one key, two routes.
+The credential that authenticates the user to one Provider. Each Provider holds its own, so the Global Config holds a map of them. It is a credential, not a configuration choice, so the Global Config is the only place one is written: a Project Config has no key setting to layer, and one written there is refused by name rather than read, because that file is meant to be committed. With no key configured, one is read from the environment: a Namespaced API Key first, then the name native to that Provider's own tooling. OpenCode Zen and OpenCode Go share a single key — one console, one key, two routes.
 _Avoid_: token (ambiguity with LLM token budget), secret key
 
 **Namespaced API Key**:
@@ -75,7 +75,7 @@ The `~/.vicode/config.json` file. Config Layering gives it priority below Projec
 _Avoid_: settings file, config file (unqualified)
 
 **Config Layering**:
-Configuration priority: project config (.vicode.json) > global config (~/.vicode/config.json). Runtime changes (Provider, Model, skills) happen via Commands, not CLI flags. A Project Config may pin the Model but never carries a key.
+Configuration priority: Project Config (.vicode.json) > Global Config (~/.vicode/config.json). Runtime changes (Provider, Model, skills) happen via Commands, not CLI flags. A Project Config may pin the Model but never carries an API Key: the Global Config has no counterpart setting to layer, and a key in a Project Config is refused by name rather than read, because that file is meant to be committed.
 
 ### Conversation persistence
 

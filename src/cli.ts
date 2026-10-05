@@ -6,6 +6,8 @@ import {
   keyForProvider,
   saveApiKeyToGlobalConfig,
   removeApiKeyFromGlobalConfig,
+  ConfigError,
+  type AppConfig,
 } from "./config/config"
 import { resolve } from "path"
 import { readFileSync, existsSync } from "fs"
@@ -58,9 +60,32 @@ const sessionsDir = getSessionsDir(projectPath)
 
 const initialSession = loadLatestSession(projectPath)
 
-const config = loadConfig({
-  projectPath,
-})
+/**
+ * Reports a config the loader refused and stops.
+ *
+ * Naming the field is the useful answer: the user learns which one to move, and
+ * a strict schema that refused it has told them nothing yet. The advice is
+ * specific to the file and the field, because a typo in a global config is a
+ * different problem from a key in a project one, and naming keys for the first
+ * would send them looking in the wrong file (issue #87).
+ */
+function loadConfigOrExit(rootPath: string): AppConfig {
+  try {
+    return loadConfig({ projectPath: rootPath })
+  } catch (error) {
+    console.error("\nCould not read the config:\n")
+    console.error(error instanceof Error ? error.message : String(error))
+    if (error instanceof ConfigError && error.refusesApiKey) {
+      console.error(
+        "\nAn API key belongs in ~/.vicode/config.json, or in VICODE_<PROVIDER>_API_KEY in the\nenvironment — a project .vicode.json is meant to be committed, so a key there is a\nleaked one. Remove it from that file and put it in either of those.",
+      )
+    }
+    console.error("")
+    process.exit(1)
+  }
+}
+
+const config = loadConfigOrExit(projectPath)
 
 /**
  * A resumed session's model wins over config: the conversation is on it. Both
