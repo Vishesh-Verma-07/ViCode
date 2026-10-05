@@ -2,7 +2,12 @@ import { z } from "zod"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import { join, dirname } from "path"
 import { isProviderId, providerEnvVars, type ProviderId } from "../core/providers"
-import { LEGACY_PROVIDER, qualifyStoredModel, isLegacyModelValue } from "../core/model-id"
+import {
+  LEGACY_PROVIDER,
+  qualifyStoredModel,
+  isLegacyModelValue,
+  renameModelFormatMarker,
+} from "../core/model-id"
 
 export const configSchema = z
   .object({
@@ -10,6 +15,13 @@ export const configSchema = z
      * On-disk format version. A config without it predates provider
      * qualification, so its `model` can only have meant OpenRouter — the same
      * collision `openai/gpt-4o` would otherwise hit. See model-id.ts.
+     */
+    modelFormatVersion: z.number().optional(),
+    /**
+     * The marker's original field name, kept readable because the schema is
+     * strict: dropping it would fail to parse every config the current release
+     * wrote. Reads as the marker; the global config is rewritten under
+     * `modelFormatVersion` the next time it is saved (issue #86).
      */
     version: z.number().optional(),
     /**
@@ -29,7 +41,7 @@ export const configSchema = z
 
 export type AppConfig = Omit<
   z.infer<typeof configSchema>,
-  "apiKey" | "apiKeys" | "version"
+  "apiKey" | "apiKeys" | "version" | "modelFormatVersion"
 > & {
   /** Every configured key, keyed by Provider id. Always present, maybe empty. */
   apiKeys: Partial<Record<ProviderId, string>>
@@ -104,7 +116,7 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
   const projectRaw = readJsonFile(projectFile)
   const projectConfig = projectRaw ? configSchema.parse(projectRaw) : {}
 
-  // The winning layer carries its own version, because a model id is only
+  // The winning layer carries its own format marker, because a model id is only
   // unambiguous relative to the format it was written in.
   const rawModel = projectConfig.model ?? globalConfig.model
   const rawModelSource = projectConfig.model !== undefined ? projectConfig : globalConfig
@@ -149,7 +161,11 @@ function writeGlobalConfig(
 ): boolean {
   try {
     const existing = readJsonFile(globalConfigPath) ?? {}
-    const merged = mutate(existing)
+    // Renamed rather than stamped, so a config predating qualification keeps
+    // reading as such. Only the global config has a writer, so a project
+    // `.vicode.json` keeps the old field name for as long as it lives and is
+    // read through `isLegacyModelValue` throughout (issue #86).
+    const merged = mutate(renameModelFormatMarker(existing))
     mkdirSync(dirname(globalConfigPath), { recursive: true })
     writeFileSync(globalConfigPath, JSON.stringify(merged, null, 2) + "\n", "utf-8")
     return true

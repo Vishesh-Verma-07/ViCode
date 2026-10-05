@@ -183,9 +183,11 @@ export interface Session {
   /**
    * On-disk format version. A session without it predates provider
    * qualification, which is the only thing that makes its stored model id
-   * unambiguous. See `QUALIFIED_MODEL_FORMAT_VERSION`.
+   * unambiguous. Named for what it versions rather than `version`, which said
+   * nothing inside a record that will one day carry another kind. See
+   * `QUALIFIED_MODEL_FORMAT_VERSION`.
    */
-  version?: number
+  modelFormatVersion?: number
   messages: Message[]
   createdAt: string
   updatedAt: string

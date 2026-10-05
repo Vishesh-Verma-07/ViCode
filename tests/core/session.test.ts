@@ -32,7 +32,7 @@ function makeSession(overrides?: Partial<Session>): Session {
   return {
     id: "sess_abc123",
     model: "anthropic/claude-sonnet-4",
-    version: QUALIFIED_MODEL_FORMAT_VERSION,
+    modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
     messages: [makeMessage()],
     createdAt: "2025-01-15T10:30:00.000Z",
     updatedAt: "2025-01-15T10:35:00.000Z",
@@ -42,7 +42,7 @@ function makeSession(overrides?: Partial<Session>): Session {
   }
 }
 
-/** A session as written before provider qualification: no version marker. */
+/** A session as written before provider qualification: no format marker. */
 function makeLegacySessionFile(model: string, id = "sess_legacy"): void {
   const sessionsDir = getSessionsDir(tempDir)
   mkdirSync(sessionsDir, { recursive: true })
@@ -222,6 +222,35 @@ describe("saveSession and loadSession", () => {
   })
 })
 
+/**
+ * A session exactly as the current release stamped it: marked under the old
+ * field name, with an id that is already canonical. Reading it as unmarked would
+ * move an Anthropic conversation onto OpenRouter — the misreading that names the
+ * field (issue #86).
+ */
+function makeOldFieldNameSessionFile(
+  id = "sess_oldfield",
+  sessionsDir = getSessionsDir(tempDir),
+): string {
+  mkdirSync(sessionsDir, { recursive: true })
+  const file = join(sessionsDir, `${id}.json`)
+  writeFileSync(
+    file,
+    JSON.stringify({
+      id,
+      version: QUALIFIED_MODEL_FORMAT_VERSION,
+      model: "anthropic/claude-opus-5-5",
+      messages: [],
+      createdAt: "2026-09-24T05:54:14.902Z",
+      updatedAt: "2026-09-24T05:54:14.902Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }),
+    "utf-8",
+  )
+  return file
+}
+
 describe("pre-qualification model migration", () => {
   it("prefixes a legacy bare id with openrouter", () => {
     makeLegacySessionFile("nvidia/nemotron-3-ultra-550b-a55b:free")
@@ -243,11 +272,11 @@ describe("pre-qualification model migration", () => {
     expect(loaded!.model).toBe("openrouter/anthropic/claude-sonnet-4")
   })
 
-  it("stamps the current version on load so the migration is not repeated", () => {
+  it("stamps the current format on load so the migration is not repeated", () => {
     makeLegacySessionFile("openai/gpt-4o")
-    expect(loadSession("sess_legacy", getSessionsDir(tempDir))!.version).toBe(
-      QUALIFIED_MODEL_FORMAT_VERSION,
-    )
+    expect(
+      loadSession("sess_legacy", getSessionsDir(tempDir))!.modelFormatVersion,
+    ).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
   })
 
   it("makes the migration durable on save", () => {
@@ -260,7 +289,7 @@ describe("pre-qualification model migration", () => {
       readFileSync(join(sessionsDir, "sess_legacy.json"), "utf-8"),
     )
     expect(onDisk.model).toBe("openrouter/openai/gpt-4o")
-    expect(onDisk.version).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
+    expect(onDisk.modelFormatVersion).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
   })
 
   it("does not re-prefix a migrated session on a second load", () => {
@@ -277,7 +306,7 @@ describe("pre-qualification model migration", () => {
       join(sessionsDir, "sess_current.json"),
       JSON.stringify({
         id: "sess_current",
-        version: QUALIFIED_MODEL_FORMAT_VERSION,
+        modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
         model: "openai/gpt-5.3-codex",
         messages: [],
         createdAt: "2025-01-15T10:30:00.000Z",
@@ -290,10 +319,42 @@ describe("pre-qualification model migration", () => {
     expect(loadSession("sess_current", sessionsDir)!.model).toBe("openai/gpt-5.3-codex")
   })
 
-  it("stamps the version when creating a session", () => {
+  it("stamps the format when creating a session", () => {
     const session = createSession({ model: "anthropic/claude-opus-5-5" })
-    expect(session.version).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
+    expect(session.modelFormatVersion).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
     expect(session.model).toBe("anthropic/claude-opus-5-5")
+  })
+
+  it("reads a session written under the marker's original field name as current", () => {
+    makeOldFieldNameSessionFile()
+
+    expect(loadSession("sess_oldfield", getSessionsDir(tempDir))!.model).toBe(
+      "anthropic/claude-opus-5-5",
+    )
+  })
+
+  it("renames the marker on save when the session used the original field name", () => {
+    const sessionsDir = getSessionsDir(tempDir)
+    const file = makeOldFieldNameSessionFile("sess_oldfield", sessionsDir)
+
+    saveSession(loadSession("sess_oldfield", sessionsDir)!, sessionsDir)
+
+    const onDisk = JSON.parse(readFileSync(file, "utf-8")) as Record<string, unknown>
+    expect(onDisk.modelFormatVersion).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
+    expect(onDisk.version).toBeUndefined()
+  })
+
+  it("reads a renamed session as current rather than legacy on the next load", () => {
+    const sessionsDir = getSessionsDir(tempDir)
+    makeOldFieldNameSessionFile("sess_roundtrip", sessionsDir)
+
+    saveSession(loadSession("sess_roundtrip", sessionsDir)!, sessionsDir)
+
+    expect(loadSession("sess_roundtrip", sessionsDir)!.model).toBe("anthropic/claude-opus-5-5")
+    expect(
+      (JSON.parse(readFileSync(join(sessionsDir, "sess_roundtrip.json"), "utf-8")) as Record<string, unknown>)
+        .version,
+    ).toBeUndefined()
   })
 
   it("migrates model ids in the session list", () => {
@@ -376,14 +437,14 @@ describe("a session written before provider qualification", () => {
       readFileSync(join(sessionsDir, `${loaded.id}.json`), "utf-8"),
     ) as Record<string, unknown>
     expect(onDisk.model).toBe("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free")
-    expect(onDisk.version).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
+    expect(onDisk.modelFormatVersion).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
   })
 
   it("writes back no field the current shape has dropped", () => {
     // `projectPath` went when sessions moved into the project directory
-    // (ADR-0002). The migration spreads the parsed record, so without being
-    // dropped here it would be carried forward forever — a dead absolute path
-    // from whichever machine wrote it.
+    // (ADR-0002). The migration rebuilds the record field by field, so a field
+    // dropped from `Session` is not carried forward forever — a dead absolute
+    // path from whichever machine wrote it.
     const sessionsDir = installLegacySession()
     const loaded = loadSession("sess_1790133483114_com4bj", sessionsDir)!
 

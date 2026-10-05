@@ -65,7 +65,7 @@ describe("config schema", () => {
       JSON.stringify({
         apiKeys: { openai: "sk-test", anthropic: "sk-ant-test" },
         model: "anthropic/claude-sonnet-4",
-        version: QUALIFIED_MODEL_FORMAT_VERSION,
+        modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
         systemPrompt: "Be helpful",
       })
     )
@@ -242,7 +242,7 @@ describe("removeApiKeyFromGlobalConfig", () => {
 
 describe("model id qualification", () => {
   it("keeps a pre-qualification config model on OpenRouter", () => {
-    // No version marker, so this predates multi-provider support: the id can
+    // No format marker, so this predates multi-provider support: the id can
     // only have meant OpenRouter, even though it reads as the OpenAI Provider.
     writeFileSync(
       join(tmpDir, ".vicode.json"),
@@ -261,22 +261,25 @@ describe("model id qualification", () => {
     )
   })
 
-  it("reads a versioned config model as the Provider it names", () => {
+  it("reads a marked config model as the Provider it names", () => {
     writeFileSync(
       join(tmpDir, ".vicode.json"),
-      JSON.stringify({ version: QUALIFIED_MODEL_FORMAT_VERSION, model: "anthropic/claude-opus-5-5" }),
+      JSON.stringify({
+        modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
+        model: "anthropic/claude-opus-5-5",
+      }),
     )
     expect(loadConfig({ projectPath: tmpDir }).model).toBe("anthropic/claude-opus-5-5")
   })
 
-  it("applies the version of the layer the model came from", () => {
+  it("applies the format of the layer the model came from", () => {
     const homeDir = join(tmpDir, "home4")
     mkdirSync(homeDir, { recursive: true })
     // The global layer is current-format, so its OpenAI id means OpenAI...
     writeFileSync(
       join(homeDir, "config.json"),
       JSON.stringify({
-        version: QUALIFIED_MODEL_FORMAT_VERSION,
+        modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
         model: "openai/gpt-4o",
         apiKeys: { openai: "sk-global" },
       }),
@@ -289,7 +292,7 @@ describe("model id qualification", () => {
     expect(config.model).toBe("openai/gpt-4o")
   })
 
-  it("falls back to the global model, qualified by the global layer's version", () => {
+  it("falls back to the global model, qualified by the global layer's format", () => {
     const homeDir = join(tmpDir, "home5")
     mkdirSync(homeDir, { recursive: true })
     writeFileSync(
@@ -303,7 +306,7 @@ describe("model id qualification", () => {
     expect(config.model).toBe("openrouter/openai/gpt-4o")
   })
 
-  it("leaves an unversioned project's unresolvable model alone", () => {
+  it("leaves an unmarked project's unresolvable model alone", () => {
     writeFileSync(
       join(tmpDir, ".vicode.json"),
       JSON.stringify({ model: "google/gemini-3-pro" }),
@@ -314,11 +317,11 @@ describe("model id qualification", () => {
     )
   })
 
-  it("leaves a versioned config's unresolvable model alone", () => {
+  it("leaves a marked config's unresolvable model alone", () => {
     writeFileSync(
       join(tmpDir, ".vicode.json"),
       JSON.stringify({
-        version: QUALIFIED_MODEL_FORMAT_VERSION,
+        modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
         model: "google/gemini-3-pro",
       }),
     )
@@ -327,6 +330,101 @@ describe("model id qualification", () => {
 
   it("leaves model absent when no config declares one", () => {
     expect(loadConfig({ projectPath: tmpDir }).model).toBeUndefined()
+  })
+
+  it("reads a config carrying the marker's original field name as marked", () => {
+    // The schema is strict, so a config the current release wrote has to keep
+    // parsing — and keep its Provider reading, or a user's Anthropic Model
+    // would be read as an OpenRouter one (issue #86).
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ version: QUALIFIED_MODEL_FORMAT_VERSION, model: "anthropic/claude-opus-5-5" }),
+    )
+    expect(loadConfig({ projectPath: tmpDir }).model).toBe("anthropic/claude-opus-5-5")
+  })
+
+  it("still reads a stale marker under the original field name as unmarked", () => {
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ version: 1, model: "anthropic/claude-opus-5-5" }),
+    )
+    expect(loadConfig({ projectPath: tmpDir }).model).toBe(
+      "openrouter/anthropic/claude-opus-5-5",
+    )
+  })
+})
+
+describe("format marker migration on save", () => {
+  const home = join(tmpDir, "home-marker")
+  const globalPath = join(home, "config.json")
+
+  function writeGlobalConfigFile(contents: Record<string, unknown>): void {
+    mkdirSync(home, { recursive: true })
+    writeFileSync(globalPath, JSON.stringify(contents), "utf-8")
+  }
+
+  it("renames the marker when a key is written to a config with the old field name", () => {
+    writeGlobalConfigFile({
+      version: QUALIFIED_MODEL_FORMAT_VERSION,
+      model: "anthropic/claude-opus-5-5",
+    })
+
+    saveApiKeyToGlobalConfig("anthropic", "sk-ant-test", globalPath)
+
+    const saved = JSON.parse(readFileSync(globalPath, "utf-8")) as Record<string, unknown>
+    expect(saved.modelFormatVersion).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
+    expect(saved.version).toBeUndefined()
+  })
+
+  it("keeps the marked model on its Provider across the migration", () => {
+    writeGlobalConfigFile({
+      version: QUALIFIED_MODEL_FORMAT_VERSION,
+      model: "anthropic/claude-opus-5-5",
+    })
+
+    saveApiKeyToGlobalConfig("anthropic", "sk-ant-test", globalPath)
+
+    expect(loadConfig({ projectPath: tmpDir, globalConfigPath: globalPath }).model).toBe(
+      "anthropic/claude-opus-5-5",
+    )
+  })
+
+  it("leaves an already-migrated config alone", () => {
+    writeGlobalConfigFile({ modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION })
+
+    saveApiKeyToGlobalConfig("anthropic", "sk-ant-test", globalPath)
+
+    const saved = JSON.parse(readFileSync(globalPath, "utf-8")) as Record<string, unknown>
+    expect(saved.modelFormatVersion).toBe(QUALIFIED_MODEL_FORMAT_VERSION)
+  })
+
+  it("carries a stale marker across the rename without promoting it to current", () => {
+    // The rename says nothing about the value, so a pre-qualification config
+    // stays pre-qualification — a config stamped current here would keep its
+    // bare OpenRouter id from being qualified as one.
+    writeGlobalConfigFile({ version: 1, model: "openai/gpt-4o" })
+
+    saveApiKeyToGlobalConfig("openrouter", "sk-or-test", globalPath)
+
+    const saved = JSON.parse(readFileSync(globalPath, "utf-8")) as Record<string, unknown>
+    expect(saved.modelFormatVersion).toBe(1)
+    expect(loadConfig({ projectPath: tmpDir, globalConfigPath: globalPath }).model).toBe(
+      "openrouter/openai/gpt-4o",
+    )
+  })
+
+  it("writes no marker where a pre-qualification config had none", () => {
+    // Stamping one would claim its bare id is canonical, and the id would then
+    // stop being read as the OpenRouter one it can only have been.
+    writeGlobalConfigFile({ model: "openai/gpt-4o" })
+
+    saveApiKeyToGlobalConfig("openrouter", "sk-or-test", globalPath)
+
+    const saved = JSON.parse(readFileSync(globalPath, "utf-8")) as Record<string, unknown>
+    expect(saved.modelFormatVersion).toBeUndefined()
+    expect(loadConfig({ projectPath: tmpDir, globalConfigPath: globalPath }).model).toBe(
+      "openrouter/openai/gpt-4o",
+    )
   })
 })
 

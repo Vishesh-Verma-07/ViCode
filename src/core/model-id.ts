@@ -58,22 +58,55 @@ export function resolveModelId(id: string): ModelRef {
 }
 
 /**
- * On-disk format version at which model ids became provider-qualified. Shared
- * by sessions and config, which is why the marker is one number for both.
+ * On-disk format at which model ids became provider-qualified. Shared by
+ * sessions and config, which is why the marker is one number for both.
  *
  * This marker exists because the two id shapes collide: `openai/gpt-4o` is both
  * an OpenRouter model id (prefix = maker) and a canonical id (prefix =
  * Provider). Reading it as the Provider would silently re-route every existing
- * session to a vendor the user never chose. Anything stored before this version
+ * session to a vendor the user never chose. Anything stored before this format
  * predates multi-provider support, so its model id can only have meant
  * OpenRouter and is rewritten unconditionally.
  */
 export const QUALIFIED_MODEL_FORMAT_VERSION = 2
 
+/**
+ * The on-disk field the marker is written under. ADR-0006 names this
+ * `modelFormatVersion`; the code shipped it as `version`, and a container
+ * already on disk carrying that name has to keep reading as the format it was
+ * written in. `modelFormatVersion` is what gets written from here on.
+ */
+const MODEL_FORMAT_FIELD = "modelFormatVersion"
+
+/**
+ * Reads the marker under either name it has been written as, the current one
+ * first. Both name the same thing, so the older container is renamed rather than
+ * converted — reading it as absent would call it pre-qualification and re-point
+ * its Model at OpenRouter (issue #86).
+ */
+function readModelFormatMarker(value: Record<string, unknown>): unknown {
+  return value[MODEL_FORMAT_FIELD] ?? value.version
+}
+
 /** True when a stored value was written before provider qualification. */
 export function isLegacyModelValue(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return true
-  return (value as { version?: unknown }).version !== QUALIFIED_MODEL_FORMAT_VERSION
+  return readModelFormatMarker(value as Record<string, unknown>) !== QUALIFIED_MODEL_FORMAT_VERSION
+}
+
+/**
+ * Moves the marker onto the field name it is written under now, so a container
+ * written under the old one is renamed rather than left looking stale.
+ *
+ * Deliberately a rename and not a stamp: a container carrying no marker at all
+ * predates qualification, and stamping it would claim its legacy id is current —
+ * the drift ADR-0006 warns about. Callers own their own field set, so the value
+ * is carried over rather than written here; the caller decides where.
+ */
+export function renameModelFormatMarker(record: Record<string, unknown>): Record<string, unknown> {
+  if (record.version === undefined) return record
+  const { version, ...rest } = record
+  return { modelFormatVersion: version, ...rest }
 }
 
 /**

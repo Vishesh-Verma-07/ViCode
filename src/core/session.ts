@@ -8,8 +8,10 @@ export type { Session }
 
 /**
  * Normalises a stored session to the current format: a canonical model id and
- * the version marker that makes it canonical, and a `totalCost` that is a
- * number or explicitly null.
+ * the marker that makes it canonical, and a `totalCost` that is a number or
+ * explicitly null. A session written under the marker's old field name
+ * (`version`) is rewritten here under `modelFormatVersion`, since the record is
+ * rebuilt rather than spread.
  *
  * The record is rebuilt field by field rather than spread, so a session written
  * by a version that had a field this one dropped loses it here instead of
@@ -23,7 +25,7 @@ function upgradeSession(session: Session): Session {
   const upgraded: Session = {
     id: session.id,
     model: qualifyStoredModel(session.model, legacy),
-    version: QUALIFIED_MODEL_FORMAT_VERSION,
+    modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
     messages: session.messages,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
@@ -49,7 +51,7 @@ export function createSession(opts: {
   return {
     id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     model: qualifyStoredModel(opts.model, false),
-    version: QUALIFIED_MODEL_FORMAT_VERSION,
+    modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION,
     messages: opts.messages ?? [],
     createdAt: now,
     updatedAt: now,

@@ -129,12 +129,32 @@ describe("isLegacyModelValue", () => {
     expect(isLegacyModelValue({ model: "openai/gpt-4o" })).toBe(true)
   })
 
-  it("is true when the marker is a different version", () => {
+  it("is true when the marker names a different format", () => {
+    expect(isLegacyModelValue({ modelFormatVersion: 1 })).toBe(true)
+  })
+
+  it("is false at the current format", () => {
+    expect(isLegacyModelValue({ modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION })).toBe(false)
+  })
+
+  it("reads the marker's original field name, so a session is not called legacy", () => {
+    // The current release wrote the marker as `version`. Renaming the field
+    // without reading it would make every such session look pre-qualification,
+    // and its Anthropic Model would be re-pointed at OpenRouter (issue #86).
+    expect(isLegacyModelValue({ version: QUALIFIED_MODEL_FORMAT_VERSION })).toBe(false)
+  })
+
+  it("still calls a stale marker under the original name legacy", () => {
     expect(isLegacyModelValue({ version: 1 })).toBe(true)
   })
 
-  it("is false at the current version", () => {
-    expect(isLegacyModelValue({ version: QUALIFIED_MODEL_FORMAT_VERSION })).toBe(false)
+  it("prefers the current field name when a container carries both", () => {
+    expect(isLegacyModelValue({ modelFormatVersion: QUALIFIED_MODEL_FORMAT_VERSION, version: 1 })).toBe(
+      false,
+    )
+    expect(isLegacyModelValue({ modelFormatVersion: 1, version: QUALIFIED_MODEL_FORMAT_VERSION })).toBe(
+      true,
+    )
   })
 
   it("is true for a non-object", () => {
