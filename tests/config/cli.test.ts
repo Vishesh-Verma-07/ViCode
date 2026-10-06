@@ -1,6 +1,9 @@
 import { describe, it, expect } from "bun:test"
 import { parseArgs, formatHelp } from "@/config/cli"
 import { listProviders, providerEnvVars } from "@/core/providers"
+import { listSearchBackends } from "@/core/search"
+import { searchEnvVars } from "@/core/search/credential"
+import { SEARCH_CREDENTIAL_FIELD } from "@/config/config"
 
 describe("parseArgs", () => {
   it("returns defaults for empty args", () => {
@@ -126,5 +129,57 @@ describe("formatHelp", () => {
       expect(row ?? "").toContain(provider.label)
       expect(row ?? "").toContain(provider.billingNote ?? "")
     }
+  })
+
+  it("documents web search as an optional credential block", () => {
+    const help = formatHelp()
+    expect(help).toContain("Web search")
+    expect(help).toContain("optional")
+    expect(help).toContain("search backend")
+  })
+
+  it("renders every search backend with its label and key URL", () => {
+    const help = formatHelp()
+    for (const backend of listSearchBackends()) {
+      expect(help).toContain(backend.label)
+      expect(help).toContain(backend.keyUrl)
+    }
+  })
+
+  it("documents every variable the search registry accepts", () => {
+    const help = formatHelp()
+    for (const backend of listSearchBackends()) {
+      for (const name of searchEnvVars(backend)) {
+        expect(help).toContain(name)
+      }
+    }
+  })
+
+  it("puts the namespaced search variable ahead of the backend's native one", () => {
+    const help = formatHelp()
+    for (const backend of listSearchBackends()) {
+      const [namespaced, native] = searchEnvVars(backend)
+      const line = help
+        .split("\n")
+        .find((candidate) => candidate.includes(namespaced) && candidate.includes(native))
+      expect(line ?? "").toContain(namespaced)
+      const tokens = (line ?? "").split(/\s+/)
+      expect(tokens.indexOf(namespaced)).toBeLessThan(tokens.indexOf(native))
+    }
+  })
+
+  it("names the Global Config field for the search credential, not a project config", () => {
+    const help = formatHelp()
+    expect(help).toContain(SEARCH_CREDENTIAL_FIELD)
+    expect(help).toContain("~/.vicode/config.json")
+  })
+
+  it("says a missing search credential does not block the chat", () => {
+    // Normalised so the assertion is about what the help means, not about where
+    // it happens to wrap.
+    const help = formatHelp().replace(/\s+/g, " ")
+    expect(help).toMatch(/Web search \(optional\)/)
+    expect(help).toMatch(/ViCode works without one/)
+    expect(help).toMatch(/not at startup/)
   })
 })

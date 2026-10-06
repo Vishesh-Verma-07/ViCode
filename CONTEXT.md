@@ -19,7 +19,7 @@ An invocation of a Tool by the LLM, consisting of the Tool name and its argument
 _Avoid_: tool use, function call
 
 **Tool**:
-A function the LLM can invoke to interact with the filesystem or shell. Each Tool has a name, description, Zod parameter schema, and execute function.
+A function the LLM can invoke: to interact with the filesystem or the shell, or to ask a network service a question. Each Tool has a name, description, Zod parameter schema, and execute function. Read-only means nothing changes on disk — `web_search` leaves the machine and is read-only all the same, which is why every Mode offers it.
 
 **Approval Rule**:
 The rule deciding whether a Tool Call pauses for user approval: a call pauses iff it is a `bash` call that is not a Silent Bash Call, or a file operation whose target is a Sensitive Path or lies outside the Project Root. Approval attaches to individual Tool Calls, not whole Tools. Approving a resolved path also auto-approves later calls to that same path for the rest of the Turn, so each distinct path surfaces at most one explicit approval per Turn.
@@ -76,6 +76,19 @@ _Avoid_: settings file, config file (unqualified)
 
 **Config Layering**:
 Configuration priority: Project Config (.vicode.json) > Global Config (~/.vicode/config.json). Runtime changes (Provider, Model, skills) happen via Commands, not CLI flags. A Project Config may pin the Model but never carries an API Key: the Global Config has no counterpart setting to layer, and a key in a Project Config is refused by name rather than read, because that file is meant to be committed.
+
+### Web search
+
+**Search Backend**:
+A keyed web search service the agent can ask a real question — a query and a result count in, ranked Search Results out. One ships, `brave`. It is deliberately not a Provider: a Provider is a route ViCode chats through and bills per token, and a Search Backend is neither, so it is never selectable as a route and never enters cost accounting. The Tool is written against this shape rather than against one vendor's, so a second backend is an entry in a registry instead of a rewiring.
+_Avoid_: vendor (Model Vendor's word), provider, engine
+
+**Search Credential**:
+The credential authenticating `web_search` to its Search Backend. It is a network credential, not an API Key, so it never reaches a Provider surface — not the picker, not the API Key Entry Screen, not the Route Label, not the Usage Panel, not cost — and it has no `/key` screen because there is no Provider to pick. It gets its own Global Config field, `searchApiKey`, rather than an entry in the Provider key map, which holds Provider ids only and would discard it. A Project Config refuses it by name, for the same reason it refuses an API Key: that file is meant to be committed. Read by the same Namespaced API Key rule — the field first, then a `VICODE_`-prefixed variable, then the backend's own native name — so the override stays an option rather than a second copy of the secret to maintain.
+_Avoid_: search API key (conflates it with a Provider credential), token, secret key
+
+**Search Result**:
+One ranked entry a Search Backend returns: a title to show, a URL to cite, and a snippet of what the page says. Those three are what every search API agrees on, rather than what any one of them happens to call them. A snippet is an excerpt, not a page — the distinction is what tells the model to fetch the URL when it needs the whole thing.
 
 ### Conversation persistence
 

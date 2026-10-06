@@ -32,6 +32,16 @@ const configLayerFields = {
 }
 
 /**
+ * The Global Config field the search credential is written to.
+ *
+ * Declared here, beside the schema that reads it, so the wire name has one home:
+ * the search module names this constant rather than restating the string, and
+ * the two cannot drift. It is deliberately not an entry in the Provider key map,
+ * which discards any entry that is not a Provider id (issue #93).
+ */
+export const SEARCH_CREDENTIAL_FIELD = "searchApiKey"
+
+/**
  * The Global Config: the only layer that holds an API Key, because a key is a
  * credential rather than a configuration choice and `~/.vicode/config.json` is
  * the file kept out of version control.
@@ -53,7 +63,7 @@ export const globalConfigSchema = z
      * through, so it never appears in the Provider picker, the Route Label or
      * cost accounting, and a Project Config refuses it (issue #93).
      */
-    searchApiKey: z.string().optional(),
+    [SEARCH_CREDENTIAL_FIELD]: z.string().optional(),
   })
   .strict()
 
@@ -75,11 +85,6 @@ export type AppConfig = Omit<
   apiKeys: Partial<Record<ProviderId, string>>
   /** The canonical model id, resolved from whichever layer won. */
   model?: string
-  /**
-   * The search credential, held apart from the Provider key map so it can never
-   * be mistaken for a route. See `searchCredentialFor`.
-   */
-  searchApiKey?: string
 }
 
 interface LoadConfigOptions {

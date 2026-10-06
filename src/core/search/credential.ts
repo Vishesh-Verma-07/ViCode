@@ -13,27 +13,21 @@
  * own native variable. The native name still authenticates alone, so the
  * override stays an option rather than a second copy of the secret to maintain.
  */
-import { ENV_NAMESPACE } from "../providers"
+import { namespacedEnvVar } from "../providers"
 import { DEFAULT_SEARCH_BACKEND, getSearchBackend, type SearchBackend } from "./index"
-import type { AppConfig } from "../../config/config"
-
-/**
- * The Global Config field the search credential is written to. Its own field,
- * never an entry in the Provider key map — see the module comment.
- */
-export const SEARCH_CREDENTIAL_FIELD = "searchApiKey"
+import { SEARCH_CREDENTIAL_FIELD, type AppConfig } from "../../config/config"
 
 /**
  * The variables a search credential is read from, highest precedence first: the
  * namespaced override, then the backend's own native name.
  *
- * The namespaced name is derived from the backend's native one rather than
- * declared separately, so the override cannot drift from the name it shadows
- * (ADR-0010). A two-entry tuple rather than an array, so a caller that destructures
- * the pair gets two strings rather than two maybe-strings.
+ * The namespaced name comes from the same derivation every Provider's does, so
+ * the override cannot drift from the name it shadows (ADR-0010). A two-entry
+ * tuple rather than an array, so a caller that destructures the pair gets two
+ * strings rather than two maybe-strings.
  */
 export function searchEnvVars(backend: SearchBackend): [string, string] {
-  return [ENV_NAMESPACE + backend.nativeEnv, backend.nativeEnv]
+  return [namespacedEnvVar(backend.nativeEnv), backend.nativeEnv]
 }
 
 /**

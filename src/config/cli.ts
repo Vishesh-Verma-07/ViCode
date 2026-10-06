@@ -1,4 +1,7 @@
 import { listProviders, providerEnvVars } from "../core/providers"
+import { listSearchBackends } from "../core/search"
+import { searchEnvVars } from "../core/search/credential"
+import { SEARCH_CREDENTIAL_FIELD } from "./config"
 
 export interface CliArgs {
   directory?: string
@@ -79,6 +82,42 @@ function formatKeyBlock(): string {
     .join("\n")
 }
 
+/**
+ * The web search block, rendered from the search registry and from the same
+ * `searchEnvVars` the Tool resolves with, so the documented order is the real one
+ * (ADR-0010).
+ *
+ * A search credential is taught apart from an API Key on purpose. It is not a
+ * Provider key, so it appears in none of the Provider blocks above: there is no
+ * `/key` screen for it, no picker row, no Route Label and no cost. ViCode also
+ * works without one, which is why the block calls it optional rather than
+ * listing it as a step in getting started.
+ */
+function formatSearchBlock(): string {
+  const backends = listSearchBackends()
+  const vars = backends.map((backend) => {
+    const [namespaced, native] = searchEnvVars(backend)
+    return `       ${namespaced}  then  ${native}`
+  })
+  const sources = backends.map(
+    (backend) => `       ${backend.label} — get a key at ${backend.keyUrl}`,
+  )
+
+  return [
+    "",
+    "  Web search (optional):",
+    "  The web_search tool asks a search backend a question. It needs its own",
+    "  credential, which is not a Provider key: it is never a route, so it does",
+    "  not appear in the picker, the Route Label or cost. ViCode works without",
+    "  one — a missing search credential is reported to the model that asked for",
+    "  a search, not at startup.",
+    `  1. ~/.vicode/config.json  → { "${SEARCH_CREDENTIAL_FIELD}": "your-key" }`,
+    "  2. Environment variables, highest precedence first:",
+    ...vars,
+    ...sources,
+  ].join("\n")
+}
+
 export function formatHelp(): string {
   return `Usage: vicode [directory]
 
@@ -119,6 +158,7 @@ ${formatEnvBlock()}
 
   Get a key for the Provider you picked at:
 ${formatKeyBlock()}
+${formatSearchBlock()}
 
 Examples:
   vicode                          Start in current directory

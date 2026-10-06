@@ -140,6 +140,17 @@ export function providerLabel(id: ProviderId): string {
 export const ENV_NAMESPACE = "VICODE_"
 
 /**
+ * The namespaced name for a native variable, derived rather than declared.
+ *
+ * The one place `VICODE_` is joined to a native name, so every credential in
+ * the app — a Provider's API Key and a search credential alike — gets a
+ * namespaced override that cannot drift from the name it shadows (ADR-0010).
+ */
+export function namespacedEnvVar(nativeEnv: string): string {
+  return ENV_NAMESPACE + nativeEnv
+}
+
+/**
  * The environment variables consulted for a Provider, in precedence order,
  * when no API Key is configured (ADR-0010).
  *
@@ -157,7 +168,7 @@ export const ENV_NAMESPACE = "VICODE_"
  */
 export function providerEnvVars(id: ProviderId): string[] {
   const { nativeEnv } = getProvider(id)
-  return nativeEnv.map((name) => ENV_NAMESPACE + name).concat(nativeEnv)
+  return nativeEnv.map(namespacedEnvVar).concat(nativeEnv)
 }
 
 /**

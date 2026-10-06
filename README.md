@@ -47,7 +47,8 @@ vicode
 
 - **Manual ReAct loop** — the agent reasons, calls tools, observes results, and repeats until it's done; you see every step as it happens
 - **Modes** — `build`, `discuss`, and `plan` scope which tools the model can even see, and layer their own instructions on top of the System Prompt; all three are listed in the Mode Switcher inside the Input Box, with the active one tagged in its own color
-- **Six core tools** — `read_file`, `list_files`, `search`, `write_file`, `edit_file`, `bash`
+- **Seven core tools** — `read_file`, `list_files`, `search`, `web_search`, `write_file`, `edit_file`, `bash`
+- **Web search** — `web_search` asks a search backend a real question and returns ranked results with a title, a URL, and a snippet, so the agent can discover anything not in the project. Read-only, offered in every Mode, and optional: it has its own credential rather than a provider key
 - **Streaming responses** — token-by-token output; `Esc` cancels an in-progress response
 - **Doom-loop detection** — three identical tool calls in a row (compared on key-sorted arguments) are detected and the turn is stopped
 - **Codebase-inline diffs** — file changes render as colored unified diffs with old/new line numbers, right in the chat flow
@@ -77,6 +78,7 @@ vicode
   - `anthropic` — <https://console.anthropic.com/settings/keys>
   - `opencode` (Zen) and `opencode-go` — <https://opencode.ai/auth>
 - **A `bash` binary on `PATH`** — the `bash` tool shells out to `bash -c`. On Windows that means Git Bash or WSL; on stock `cmd`/PowerShell, `bash` calls will fail until you install one.
+- **Optional: a search credential** — only if you want `web_search`. See [Web search](#web-search).
 
 ## Installation
 
@@ -129,6 +131,18 @@ Every surface that names the live Model names the route with it — `provider/mo
 
 `/model` lists everything the Model Catalog knows, grouped by provider and annotated with its context window, its price, and whether you hold a key for that route. `/provider` skips the list and moves to a provider's recommended model. Switching never prompts mid-turn. Picking a model on a route you hold no key for opens that route's API Key prompt; `Esc` leaves the conversation on the model it already had and tells you which key is missing. Picking a model whose window cannot hold the conversation warns first, naming the Context Load as a percentage of that model's window, the budget it leaves to send, and that history will be compacted or truncated; `y` switches anyway and `/compact` still folds the history afterwards, `n` or `Esc` leaves the conversation where it was.
 
+## Web search
+
+`web_search` asks a search backend a real question and returns ranked results, each with a title, a URL, and a snippet. The model uses it for discovery — anything whose answer is not in the project — and you can name how many results you want, up to the backend's own ceiling. It is read-only, so all three Modes offer it, and a search changes nothing on disk.
+
+| Backend | Route | Environment variables, highest precedence first |
+|---|---|---|
+| `brave` | Brave Search | `VICODE_BRAVE_SEARCH_API_KEY`, then `BRAVE_SEARCH_API_KEY` |
+
+The search credential is **not** a provider key. It is not a route you chat through and consumes no model tokens, so it is never selectable as a route and never appears in cost accounting — it reaches none of the Provider picker, the API Key Entry Screen, the Route Label, the Usage Panel, or a total. It has no `/key` screen either, because there is nothing to pick: set it in `~/.vicode/config.json` as `searchApiKey`, or export one of the two variables above. The same `VICODE_` precedence applies as for a provider key, and the backend's own name still authenticates on its own. A search credential in `.vicode.json` is refused by name, exactly as a provider key is.
+
+Web search is **optional**. With no credential set, everything else keeps working and the chat is never gated — the absence is reported to the model at the moment it calls `web_search`, naming the credential and how to set it. Get a Brave key at [brave.com/search/api](https://brave.com/search/api/). See [ADR-0012](docs/adr/0012-a-search-credential-is-not-a-provider-credential.md).
+
 The catalog comes from [models.dev](https://models.dev), cached in `~/.vicode/models-dev-cache.json` for a day. A cold first run populates it; until then, prices and context windows read as unknown rather than blocking the picker.
 
 ## Configuration
@@ -169,6 +183,7 @@ An API key is a credential rather than a configuration choice, so **only the glo
 |---|---|---|---|---|
 | `apiKeys` | `object` | global only | per-provider environment variables | API keys keyed by provider id. `/key` writes here. |
 | `apiKey` | `string` | global only | — | Legacy single key. Read as the `openrouter` key and migrated on first write. |
+| `searchApiKey` | `string` | global only | `VICODE_BRAVE_SEARCH_API_KEY`, then `BRAVE_SEARCH_API_KEY` | The credential `web_search` authenticates with. Not a provider key: it is never a route, so it has no `/key` screen, no picker row, and no cost. Optional — see [Web search](#web-search). |
 | `model` | `string` | either layer | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | Provider-qualified model id. Switch mid-session with `/model`. |
 | `systemPrompt` | `string` | either layer | — | Extra System Prompt text, or a path to a Markdown file. Overridden by `.vicode/system.md` if that file exists. |
 | `sensitiveFiles` | `string[]` | either layer | seven built-in patterns | Extra glob patterns treated as Sensitive Paths, merged across config layers. |
@@ -184,9 +199,9 @@ The Mode governs each Turn. Press `Tab` to cycle `build → discuss → plan`; *
 
 | Mode | Tools the model can see | Behaviour |
 |---|---|---|
-| **Build** | all six | Get the work done. Work from the spec or tickets, prefer test-first at agreed seams, run targeted tests and typechecking regularly, review your own diff, commit when green. |
+| **Build** | all seven | Get the work done. Work from the spec or tickets, prefer test-first at agreed seams, run targeted tests and typechecking regularly, review your own diff, commit when green. |
 | **Discuss** | all but `bash` | A relentless one-question-at-a-time design interview. Writes are confined to a **docs boundary** — `CONTEXT.md`, `GLOSSARY.md`, and `docs/adr/**`; any other write or edit is denied by mode. Decisions get captured as you go. |
-| **Plan** | `read_file`, `list_files`, `search` | Analysis only. Reads, lists, and searches are allowed; the model must never modify files or run shell commands, and ends each analysis with a concrete written plan. |
+| **Plan** | `read_file`, `list_files`, `search`, `web_search` | Analysis only. Reads, lists, searches, and web searches are allowed; the model must never modify files or run shell commands, and ends each analysis with a concrete written plan. |
 
 Mode scoping is enforced twice: the model is only *shown* the in-scope tools, and any out-of-scope call it attempts anyway comes back as `denied by mode: <tool> is not available in <Mode> mode` rather than running.
 
@@ -306,7 +321,7 @@ flowchart LR
     CLI --> PROVIDER["providers · five routes via Vercel AI SDK"]
     CLI --> CORE["core · agent loop, tool registry, modes, sessions"]
     CORE --> PROVIDER
-    CORE --> TOOLS["tools · read_file, write_file, edit_file, list_files, search, bash"]
+    CORE --> TOOLS["tools · read_file, write_file, edit_file, list_files, search, web_search, bash"]
     UI["ui · Ink/React panels"] --> CORE
     PROVIDERS["OpenRouter · OpenAI · Anthropic · Zen"] --> PROVIDER
 ```
@@ -326,7 +341,7 @@ vicode/
 │   ├── core/                 # Agent loop, tool registry, modes, sessions, skills, pricing, prompts
 │   ├── config/               # Layered config loading + CLI arg parsing
 │   ├── providers/            # Provider adapters + the registry-driven factory
-│   ├── tools/                # read_file, list_files, search, write_file, edit_file, bash
+│   ├── tools/                # read_file, list_files, search, web_search, write_file, edit_file, bash
 │   ├── commands/             # /help, /session, /rename, /new, /exit, /model, /skill, /home, /key, /compact
 │   └── ui/                   # Ink React components (app, panels, input, picker, theme, mouse)
 ├── tests/                    # Mirrors src/ (core, config, commands, tools, ui, providers; uses @/ alias)

@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { join } from "path"
-import { loadConfig, ConfigError } from "@/config/config"
+import { loadConfig, ConfigError, SEARCH_CREDENTIAL_FIELD } from "@/config/config"
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "fs"
 import {
   searchCredentialFor,
   searchEnvVars,
   missingSearchCredentialMessage,
-  SEARCH_CREDENTIAL_FIELD,
 } from "@/core/search/credential"
 import { DEFAULT_SEARCH_BACKEND, getSearchBackend, listSearchBackends } from "@/core/search"
 import { PROVIDER_IDS, isProviderId, getProvider } from "@/core/providers"

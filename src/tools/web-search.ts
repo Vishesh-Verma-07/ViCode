@@ -50,6 +50,10 @@ export function setWebSearchDeps(next: WebSearchDeps): () => void {
  * never a module. An id the registry does not hold falls back to the default
  * rather than throwing mid-Tool Call: the model asked for a search, and the most
  * useful answer to that is a search from the backend ViCode does have.
+ *
+ * `backendId` is typed as a `SearchBackendId`, so the guard cannot fire for a
+ * well-typed caller — it is here for an id that arrived without the type's help,
+ * which the registry's totality does not catch.
  */
 function backendFor(): SearchBackend {
   const requested = deps.backendId
@@ -84,12 +88,14 @@ export function formatResults(query: string, results: SearchResult[]): string {
  * A search that matched nothing, said in words.
  *
  * Not an empty string: a model reads an empty result as a successful answer, and
- * then concludes there is nothing on the web about the question.
+ * then concludes there is nothing on the web about the question. Takes the
+ * backend it ran against rather than reaching for it again, so the two
+ * renderings of a failed search cannot name different backends.
  */
-export function noResultsMessage(query: string): string {
+export function noResultsMessage(query: string, backend: SearchBackend): string {
   return [
     `The search succeeded and matched nothing for "${query}".`,
-    `This is an absence, not a failure — the request reached ${backendFor().label} and came back with no results.`,
+    `This is an absence, not a failure — the request reached ${backend.label} and came back with no results.`,
     `Try different or broader terms; do not report this as an error.`,
   ].join("\n")
 }
@@ -166,7 +172,12 @@ export const webSearchTool: ToolDefinition = {
       .int()
       .min(1)
       .optional()
-      .describe(`How many ranked results to return. Omit for ${DEFAULT_RESULT_COUNT}; the service caps it at 20.`),
+      // The ceiling is left unstated rather than restated: it belongs to the
+      // backend (`maxResults`), and a number written here would be a second
+      // home for it that the registry could contradict.
+      .describe(
+        `How many ranked results to return. Omit for ${DEFAULT_RESULT_COUNT}; a larger count is clamped to what the search backend will serve.`,
+      ),
   }),
   dangerous: false,
   execute: async (args, _context: ToolContext) => {
@@ -185,7 +196,7 @@ export const webSearchTool: ToolDefinition = {
         { query, count, credential },
         { fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs },
       )
-      if (results.length === 0) return noResultsMessage(query)
+      if (results.length === 0) return noResultsMessage(query, backend)
       return formatResults(query, results)
     } catch (error) {
       return failureMessage(query, backend, error)

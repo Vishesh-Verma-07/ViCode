@@ -4,6 +4,7 @@ import { mkdirSync, rmSync, existsSync } from "fs"
 import { webSearchTool, setWebSearchDeps, formatResults } from "@/tools/web-search"
 import { DEFAULT_RESULT_COUNT } from "@/tools/web-search"
 import { getSearchBackend, DEFAULT_SEARCH_BACKEND } from "@/core/search"
+import type { SearchBackendId } from "@/core/search/types"
 import { searchEnvVars } from "@/core/search/credential"
 import type { ToolContext } from "@/core/types"
 import type { AppConfig } from "@/config/config"
@@ -110,6 +111,29 @@ describe("web_search metadata", () => {
     useDeps({ config: CONFIG_WITH_KEY, fetchImpl: answering(1, sink) })
     await call({ query: "zod" })
     expect(new URL(sink.url!).searchParams.get("count")).toBe(String(DEFAULT_RESULT_COUNT))
+  })
+
+  it("falls back to the default backend for an id the registry does not hold", async () => {
+    // The type forbids such an id, so the guard in `backendFor` cannot fire for
+    // a well-typed caller. Asserted anyway, because the claim it makes — the
+    // model gets a search rather than a crash — is worth being true at runtime
+    // too, where the type's help is not available.
+    useDeps({
+      config: CONFIG_WITH_KEY,
+      fetchImpl: answering(1),
+      backendId: "not-a-backend" as unknown as SearchBackendId,
+    })
+    const result = await call({ query: "zod" })
+    expect(result).toContain("Result 1")
+  })
+
+  it("states no ceiling of its own, leaving that number to the backend", async () => {
+    // A count written into the schema description would be a second home for
+    // `maxResults`, and the registry could contradict it.
+    const shape = webSearchTool.parameters.shape as Record<string, { description?: string }>
+    const description = shape.numResults?.description ?? ""
+    expect(description).toContain("clamped")
+    expect(description).not.toContain(String(backend.maxResults))
   })
 })
 
