@@ -2,12 +2,28 @@ import { z, type ZodError } from "zod"
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs"
 import { join, dirname } from "path"
 import { isProviderId, providerEnvVars, type ProviderId } from "../core/providers"
+import { SEARCH_BACKEND_IDS } from "../core/search/types"
 import {
   LEGACY_PROVIDER,
   qualifyStoredModel,
   isLegacyModelValue,
   renameModelFormatMarker,
 } from "../core/model-id"
+
+/**
+ * Refuses a backend name the search registry does not hold, listing the ones it
+ * does — the same treatment an unknown field gets. It is used for the selection
+ * field and for a credential keyed to a nonexistent backend, because both are
+ * the same mistake: a name ViCode cannot act on (issue #94).
+ */
+function unknownSearchBackendMessage(name: string): string {
+  return `"${name}" is not a search backend; available: ${SEARCH_BACKEND_IDS.join(", ")}`
+}
+
+/** The backends a selection or a credential may name, as a Zod enum. */
+const searchBackendEnum = z.enum(SEARCH_BACKEND_IDS, {
+  error: (issue) => unknownSearchBackendMessage(String(issue.input)),
+})
 
 /** The fields both config layers accept. An API Key is not among them. */
 const configLayerFields = {
@@ -29,17 +45,28 @@ const configLayerFields = {
   systemPrompt: z.string().optional(),
   sensitiveFiles: z.array(z.string()).optional(),
   silentBashCommands: z.array(z.string()).optional(),
+  /**
+   * Which Search Backend `web_search` runs against. A configuration choice
+   * rather than a credential, so unlike the credential it has a Project Config
+   * half and layers project-over-global (issue #94). An unconfigured value
+   * leaves the default backend running; a value naming a backend ViCode does
+   * not have is refused here, by name, listing the ones that do.
+   */
+  searchBackend: searchBackendEnum.optional(),
 }
 
 /**
- * The Global Config field the search credential is written to.
+ * The Global Config field each Search Backend's credential is written to: a map
+ * from backend id to that backend's own key.
  *
  * Declared here, beside the schema that reads it, so the wire name has one home:
  * the search module names this constant rather than restating the string, and
  * the two cannot drift. It is deliberately not an entry in the Provider key map,
- * which discards any entry that is not a Provider id (issue #93).
+ * which discards any entry that is not a Provider id (issue #93), and it is a
+ * map rather than one flat field because a flat field has no answer to "whose
+ * key is this?" once there is more than one backend to name (issue #94).
  */
-export const SEARCH_CREDENTIAL_FIELD = "searchApiKey"
+export const SEARCH_CREDENTIALS_FIELD = "searchApiKeys"
 
 /**
  * The Global Config: the only layer that holds an API Key, because a key is a
@@ -57,13 +84,20 @@ export const globalConfigSchema = z
     /** One key per Provider, keyed by Provider id. */
     apiKeys: z.record(z.string(), z.string()).optional(),
     /**
-     * The search credential `web_search` authenticates with — its own field,
+     * One search credential per backend, keyed by backend id — its own field,
      * because the Provider key map discards any entry that is not a Provider id
      * and would silently drop it. A network credential, not a route you chat
      * through, so it never appears in the Provider picker, the Route Label or
-     * cost accounting, and a Project Config refuses it (issue #93).
+     * cost accounting, and a Project Config refuses it (issue #93). An entry
+     * keyed to a backend ViCode does not have is refused by name, so a typo'd
+     * id cannot read later as "no credential configured" (issue #94).
      */
-    [SEARCH_CREDENTIAL_FIELD]: z.string().optional(),
+    [SEARCH_CREDENTIALS_FIELD]: z
+      .partialRecord(z.enum(SEARCH_BACKEND_IDS), z.string(), {
+        error: (issue) =>
+          issue.code === "invalid_key" ? unknownSearchBackendMessage(String(issue.input)) : undefined,
+      })
+      .optional(),
   })
   .strict()
 
@@ -140,7 +174,7 @@ export class ConfigError extends Error {
   }
 
   /** Every credential field, in either schema's vocabulary. */
-  private static readonly CREDENTIAL_FIELDS = ["apiKey", "apiKeys", "searchApiKey"]
+  private static readonly CREDENTIAL_FIELDS = ["apiKey", "apiKeys", SEARCH_CREDENTIALS_FIELD]
 
   /**
    * True when a credential is what the file was refused for. Covers the search
@@ -242,13 +276,19 @@ export function loadConfig(options: LoadConfigOptions): AppConfig {
         ? undefined
         : qualifyStoredModel(rawModel, isLegacyModelValue(rawModelSource)),
     systemPrompt: projectConfig.systemPrompt ?? globalConfig.systemPrompt,
+    // A backend selection is a configuration choice, so it layers like any
+    // other setting: the Project Config wins (issue #94).
+    searchBackend: projectConfig.searchBackend ?? globalConfig.searchBackend,
     apiKeys: collectKeys(globalConfig),
   }
 
   // Only the Global Config has a credential field for search, so there is no
-  // project half to layer and nothing to merge.
-  if (globalConfig.searchApiKey) {
-    merged.searchApiKey = globalConfig.searchApiKey
+  // project half to layer and nothing to merge. An empty map is left unset, so
+  // "no credential configured" stays observable as an absent value rather than
+  // as a map nobody remembers to check.
+  const searchApiKeys = globalConfig.searchApiKeys
+  if (searchApiKeys && Object.keys(searchApiKeys).length > 0) {
+    merged.searchApiKeys = searchApiKeys
   }
 
   // sensitiveFiles merges across layers instead of overriding

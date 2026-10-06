@@ -8,7 +8,7 @@ import { routeLabel } from "@/ui/route-label"
 import { PROVIDER_IDS, listProviders, type ProviderId } from "@/core/providers"
 import { SEARCH_BACKEND_IDS, listSearchBackends } from "@/core/search"
 import { calculateCost } from "@/core/cost-calculator"
-import { loadConfig, SEARCH_CREDENTIAL_FIELD } from "@/config/config"
+import { loadConfig, SEARCH_CREDENTIALS_FIELD } from "@/config/config"
 import { mkdtempSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
@@ -53,7 +53,7 @@ function configWithSearchCredential() {
   writeFileSync(
     globalConfigPath,
     JSON.stringify({
-      [SEARCH_CREDENTIAL_FIELD]: CREDENTIAL,
+      [SEARCH_CREDENTIALS_FIELD]: { brave: CREDENTIAL },
       apiKeys: { anthropic: "sk-ant-real" },
     }),
   )
@@ -71,7 +71,7 @@ function configWithSearchCredential() {
 describe("the search credential reaches no Provider surface", () => {
   it("is genuinely configured, so every assertion below is about a credential that exists", () => {
     const config = configWithSearchCredential()
-    expect(config.searchApiKey).toBe(CREDENTIAL)
+    expect(config.searchApiKeys).toEqual({ brave: CREDENTIAL })
     // And a Provider key is configured too, so the Provider surfaces below have
     // a real key to show — the search credential is not passing because there
     // was nothing else on offer.
@@ -104,7 +104,7 @@ describe("the search credential reaches no Provider surface", () => {
       const instance = render(<KeyEntryScreen provider={PROVIDER} requireKey onSubmit={() => {}} />)
       const frame = instance.lastFrame() ?? ""
       expect(frame).not.toContain(CREDENTIAL)
-      expect(frame).not.toContain(SEARCH_CREDENTIAL_FIELD)
+      expect(frame).not.toContain(SEARCH_CREDENTIALS_FIELD)
       instance.unmount()
     })
 
@@ -131,7 +131,7 @@ describe("the search credential reaches no Provider surface", () => {
       })
       expect(label).toBe(`${PROVIDER}/${MODEL}`)
       expect(label).not.toContain(CREDENTIAL)
-      expect(label).not.toContain(SEARCH_CREDENTIAL_FIELD)
+      expect(label).not.toContain(SEARCH_CREDENTIALS_FIELD)
     })
   })
 
@@ -158,7 +158,7 @@ describe("the search credential reaches no Provider surface", () => {
       )
 
       expect(frame).not.toContain(CREDENTIAL)
-      expect(frame).not.toContain(SEARCH_CREDENTIAL_FIELD)
+      expect(frame).not.toContain(SEARCH_CREDENTIALS_FIELD)
       for (const backend of listSearchBackends()) {
         expect(frame.toLowerCase()).not.toContain(backend.label.toLowerCase())
       }

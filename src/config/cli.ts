@@ -1,7 +1,7 @@
 import { listProviders, providerEnvVars } from "../core/providers"
-import { listSearchBackends } from "../core/search"
+import { DEFAULT_SEARCH_BACKEND, SEARCH_BACKEND_IDS, listSearchBackends } from "../core/search"
 import { searchEnvVars } from "../core/search/credential"
-import { SEARCH_CREDENTIAL_FIELD } from "./config"
+import { SEARCH_CREDENTIALS_FIELD } from "./config"
 
 export interface CliArgs {
   directory?: string
@@ -111,7 +111,8 @@ function formatSearchBlock(): string {
     "  not appear in the picker, the Route Label or cost. ViCode works without",
     "  one — a missing search credential is reported to the model that asked for",
     "  a search, not at startup.",
-    `  1. ~/.vicode/config.json  → { "${SEARCH_CREDENTIAL_FIELD}": "your-key" }`,
+    `  Which backend runs: \`"searchBackend": ${SEARCH_BACKEND_IDS.join('" | "')}\`, in either config file.`,
+    `  1. ~/.vicode/config.json  → { "${SEARCH_CREDENTIALS_FIELD}": { "${DEFAULT_SEARCH_BACKEND}": "your-key" } }`,
     "  2. Environment variables, highest precedence first:",
     ...vars,
     ...sources,

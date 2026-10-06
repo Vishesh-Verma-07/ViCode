@@ -1,9 +1,9 @@
 import { describe, it, expect } from "bun:test"
 import { parseArgs, formatHelp } from "@/config/cli"
 import { listProviders, providerEnvVars } from "@/core/providers"
-import { listSearchBackends } from "@/core/search"
+import { listSearchBackends, SEARCH_BACKEND_IDS } from "@/core/search"
 import { searchEnvVars } from "@/core/search/credential"
-import { SEARCH_CREDENTIAL_FIELD } from "@/config/config"
+import { SEARCH_CREDENTIALS_FIELD } from "@/config/config"
 
 describe("parseArgs", () => {
   it("returns defaults for empty args", () => {
@@ -170,8 +170,16 @@ describe("formatHelp", () => {
 
   it("names the Global Config field for the search credential, not a project config", () => {
     const help = formatHelp()
-    expect(help).toContain(SEARCH_CREDENTIAL_FIELD)
+    expect(help).toContain(SEARCH_CREDENTIALS_FIELD)
     expect(help).toContain("~/.vicode/config.json")
+  })
+
+  it("names the config field that chooses which backend runs", () => {
+    // The selection is a documented, ordinary config key — not something a user
+    // has to discover from the source.
+    const help = formatHelp()
+    expect(help).toContain('"searchBackend"')
+    for (const id of SEARCH_BACKEND_IDS) expect(help).toContain(id)
   })
 
   it("says a missing search credential does not block the chat", () => {

@@ -15,7 +15,7 @@
  */
 import { namespacedEnvVar } from "../providers"
 import { DEFAULT_SEARCH_BACKEND, getSearchBackend, type SearchBackend } from "./index"
-import { SEARCH_CREDENTIAL_FIELD, type AppConfig } from "../../config/config"
+import { SEARCH_CREDENTIALS_FIELD, type AppConfig } from "../../config/config"
 
 /**
  * The variables a search credential is read from, highest precedence first: the
@@ -33,16 +33,18 @@ export function searchEnvVars(backend: SearchBackend): [string, string] {
 /**
  * The credential for a backend, or undefined when none is configured.
  *
- * Takes anything carrying a `searchApiKey`, so the Tool can resolve against a
- * loaded config or against no config at all — in which case the environment
- * variables still apply, which is what makes the env route work with no Global
- * Config file present.
+ * Resolved per backend, so naming one leaves the other's key where it is: the
+ * map is keyed by backend id, and the environment variables consulted are the
+ * ones that backend owns. Takes anything carrying a `searchApiKeys`, so the
+ * Tool can resolve against a loaded config or against no config at all — in
+ * which case the environment variables still apply, which is what makes the env
+ * route work with no Global Config file present.
  */
 export function searchCredentialFor(
-  config: Pick<AppConfig, "searchApiKey">,
+  config: Pick<AppConfig, "searchApiKeys">,
   backend: SearchBackend = getSearchBackend(DEFAULT_SEARCH_BACKEND),
 ): string | undefined {
-  const configured = config.searchApiKey
+  const configured = config.searchApiKeys?.[backend.id]
   if (configured) return configured
   for (const envVar of searchEnvVars(backend)) {
     const value = process.env[envVar]
@@ -54,17 +56,20 @@ export function searchCredentialFor(
 /**
  * What to tell a model that called `web_search` with no credential configured.
  *
- * Names the credential and how to set it, because a Tool Result the model cannot
- * act on is the same failure as one that says nothing. Distinct from every other
+ * Names the backend whose credential is missing as well as the credential
+ * itself, because with more than one backend on offer "no credential" is not
+ * actionable until it says which one — the user may well hold a key for the
+ * other. Also names how to set it, because a Tool Result the model cannot act
+ * on is the same failure as one that says nothing. Distinct from every other
  * outcome: this is ViCode not being set up, not a search that found nothing.
  */
 export function missingSearchCredentialMessage(backend: SearchBackend): string {
   const [namespaced, native] = searchEnvVars(backend)
   return [
-    `web_search is not configured: no search credential is set, so no search was run.`,
+    `web_search is not configured: no search credential is set for the "${backend.id}" backend (${backend.label}), so no search was run.`,
     `This is a missing credential, not an empty result.`,
     `Set it one of these ways:`,
-    `- add "${SEARCH_CREDENTIAL_FIELD}" to ~/.vicode/config.json, the Global Config (e.g. { "${SEARCH_CREDENTIAL_FIELD}": "your-key" })`,
+    `- add "${SEARCH_CREDENTIALS_FIELD}": { "${backend.id}": "your-key" } to ~/.vicode/config.json, the Global Config`,
     `- export ${namespaced} in the environment, which overrides ${native} for ViCode alone`,
     `- export ${native}, which ${backend.label} reads on its own`,
     `Get a ${backend.label} key at ${backend.keyUrl}`,

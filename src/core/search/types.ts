@@ -2,7 +2,7 @@
  * The backends that can exist. The registry is keyed by these, so adding one is
  * a single entry here plus its implementation.
  */
-export const SEARCH_BACKEND_IDS = ["brave"] as const
+export const SEARCH_BACKEND_IDS = ["brave", "serper"] as const
 
 export type SearchBackendId = (typeof SEARCH_BACKEND_IDS)[number]
 

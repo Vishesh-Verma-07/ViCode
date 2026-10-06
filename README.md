@@ -135,13 +135,16 @@ Every surface that names the live Model names the route with it — `provider/mo
 
 `web_search` asks a search backend a real question and returns ranked results, each with a title, a URL, and a snippet. The model uses it for discovery — anything whose answer is not in the project — and you can name how many results you want, up to the backend's own ceiling. It is read-only, so all three Modes offer it, and a search changes nothing on disk.
 
-| Backend | Route | Environment variables, highest precedence first |
-|---|---|---|
-| `brave` | Brave Search | `VICODE_BRAVE_SEARCH_API_KEY`, then `BRAVE_SEARCH_API_KEY` |
+Which backend runs is a config choice — `"searchBackend": "brave"` (the default) or `"serper"`, in either config file. Two ship:
 
-The search credential is **not** a provider key. It is not a route you chat through and consumes no model tokens, so it is never selectable as a route and never appears in cost accounting — it reaches none of the Provider picker, the API Key Entry Screen, the Route Label, the Usage Panel, or a total. It has no `/key` screen either, because there is nothing to pick: set it in `~/.vicode/config.json` as `searchApiKey`, or export one of the two variables above. The same `VICODE_` precedence applies as for a provider key, and the backend's own name still authenticates on its own. A search credential in `.vicode.json` is refused by name, exactly as a provider key is.
+| Backend | Search service | Environment variables, highest precedence first | Get a key |
+|---|---|---|---|
+| `brave` | Brave Search | `VICODE_BRAVE_SEARCH_API_KEY`, then `BRAVE_SEARCH_API_KEY` | [brave.com/search/api](https://brave.com/search/api/) |
+| `serper` | Serper | `VICODE_SERPER_API_KEY`, then `SERPER_API_KEY` | [serper.dev](https://serper.dev/) |
 
-Web search is **optional**. With no credential set, everything else keeps working and the chat is never gated — the absence is reported to the model at the moment it calls `web_search`, naming the credential and how to set it. Get a Brave key at [brave.com/search/api](https://brave.com/search/api/). See [ADR-0012](docs/adr/0012-a-search-credential-is-not-a-provider-credential.md).
+The search credential is **not** a provider key. It is not a route you chat through and consumes no model tokens, so it is never selectable as a route and never appears in cost accounting — it reaches none of the Provider picker, the API Key Entry Screen, the Route Label, the Usage Panel, or a total. It has no `/key` screen either, because there is nothing to pick: set it in `~/.vicode/config.json` as `searchApiKeys`, keyed by backend (`{ "brave": "your-key" }`), or export the variables for the backend you chose. The same `VICODE_` precedence applies as for a provider key, and the backend's own name still authenticates on its own. A search credential in `.vicode.json` is refused by name, exactly as a provider key is.
+
+Web search is **optional**. With no credential set, everything else keeps working and the chat is never gated — the absence is reported to the model at the moment it calls `web_search`, naming the credential and how to set it. See [ADR-0012](docs/adr/0012-a-search-credential-is-not-a-provider-credential.md).
 
 The catalog comes from [models.dev](https://models.dev), cached in `~/.vicode/models-dev-cache.json` for a day. A cold first run populates it; until then, prices and context windows read as unknown rather than blocking the picker.
 
@@ -183,7 +186,8 @@ An API key is a credential rather than a configuration choice, so **only the glo
 |---|---|---|---|---|
 | `apiKeys` | `object` | global only | per-provider environment variables | API keys keyed by provider id. `/key` writes here. |
 | `apiKey` | `string` | global only | — | Legacy single key. Read as the `openrouter` key and migrated on first write. |
-| `searchApiKey` | `string` | global only | `VICODE_BRAVE_SEARCH_API_KEY`, then `BRAVE_SEARCH_API_KEY` | The credential `web_search` authenticates with. Not a provider key: it is never a route, so it has no `/key` screen, no picker row, and no cost. Optional — see [Web search](#web-search). |
+| `searchApiKeys` | `object` | global only | per-backend environment variables | Search credentials keyed by backend id. Not provider keys: never a route, so no `/key` screen, no picker row, and no cost. Optional — see [Web search](#web-search). |
+| `searchBackend` | `string` | either layer | `brave` | Which search backend `web_search` runs against: `brave` or `serper`. |
 | `model` | `string` | either layer | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | Provider-qualified model id. Switch mid-session with `/model`. |
 | `systemPrompt` | `string` | either layer | — | Extra System Prompt text, or a path to a Markdown file. Overridden by `.vicode/system.md` if that file exists. |
 | `sensitiveFiles` | `string[]` | either layer | seven built-in patterns | Extra glob patterns treated as Sensitive Paths, merged across config layers. |

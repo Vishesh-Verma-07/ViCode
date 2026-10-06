@@ -43,8 +43,8 @@ describe("search backend registry", () => {
   })
 
   it("is keyed by id, so a second backend is one entry rather than a rewrite", () => {
-    expect(Object.keys(SEARCH_BACKENDS)).toEqual(["brave"])
-    expect(listSearchBackends()).toHaveLength(1)
+    expect(Object.keys(SEARCH_BACKENDS)).toEqual(["brave", "serper"])
+    expect(listSearchBackends()).toHaveLength(2)
   })
 
   it("describes each backend with a credential source and a result ceiling", () => {

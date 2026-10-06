@@ -47,16 +47,19 @@ export function setWebSearchDeps(next: WebSearchDeps): () => void {
 
 /**
  * Resolves the backend through the registry, so the Tool names a backend id and
- * never a module. An id the registry does not hold falls back to the default
- * rather than throwing mid-Tool Call: the model asked for a search, and the most
- * useful answer to that is a search from the backend ViCode does have.
+ * never a module. The id comes from the config's `searchBackend` selection —
+ * whichever backend ViCode is configured to use. An id the registry does not
+ * hold falls back to the default rather than throwing mid-Tool Call: the model
+ * asked for a search, and the most useful answer to that is a search from the
+ * backend ViCode does have.
  *
- * `backendId` is typed as a `SearchBackendId`, so the guard cannot fire for a
- * well-typed caller — it is here for an id that arrived without the type's help,
- * which the registry's totality does not catch.
+ * `deps.backendId` is an explicit override for callers that know which backend
+ * they want regardless of configuration; it is typed as a `SearchBackendId`, so
+ * the guard cannot fire for a well-typed caller — it is here for an id that
+ * arrived without the type's help, which the registry's totality does not catch.
  */
 function backendFor(): SearchBackend {
-  const requested = deps.backendId
+  const requested = deps.backendId ?? deps.config?.searchBackend
   return getSearchBackend(requested && isSearchBackendId(requested) ? requested : DEFAULT_SEARCH_BACKEND)
 }
 

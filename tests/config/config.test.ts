@@ -5,9 +5,11 @@ import {
   saveApiKeyToGlobalConfig,
   removeApiKeyFromGlobalConfig,
   ConfigError,
+  SEARCH_CREDENTIALS_FIELD,
 } from "@/config/config"
 import { QUALIFIED_MODEL_FORMAT_VERSION } from "@/core/model-id"
 import { PROVIDER_IDS, providerEnvVars } from "@/core/providers"
+import { SEARCH_BACKEND_IDS } from "@/core/search/types"
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "fs"
 import { join, dirname } from "path"
 
@@ -26,6 +28,13 @@ function writeGlobalConfigAt(path: string, contents: Record<string, unknown>): v
 function defaultGlobalConfigPath(): string {
   return join(tmpDir, "global-only", "config.json")
 }
+
+/** Writes the Global Config the config-layering tests below load from. */
+const writeGlobalConfig = (contents: Record<string, unknown>): void =>
+  writeGlobalConfigAt(defaultGlobalConfigPath(), contents)
+
+/** Loads both layers from the temp home these tests control. */
+const load = () => loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
 
 /**
  * Every variable `keyForProvider` reads, derived from the registry so a
@@ -578,55 +587,134 @@ describe("per-Provider API keys", () => {
   })
 })
 
-describe("search credential field", () => {
-  const writeGlobalConfig = (contents: Record<string, unknown>) =>
-    writeGlobalConfigAt(defaultGlobalConfigPath(), contents)
+describe("searchBackend: choosing which backend runs", () => {
+  it("is unset when nothing names one, so the default backend runs", () => {
+    writeGlobalConfig({})
+    expect(load().searchBackend).toBeUndefined()
+  })
 
-  it("is accepted in the Global Config and merged onto the loaded config", () => {
-    writeGlobalConfig({ searchApiKey: "brave-key" })
-    const config = loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
-    expect(config.searchApiKey).toBe("brave-key")
+  it("is read from the Global Config when the Project Config says nothing", () => {
+    writeGlobalConfig({ searchBackend: "serper" })
+    expect(load().searchBackend).toBe("serper")
+  })
+
+  it("layers: the Project Config wins over the Global Config", () => {
+    // A selection is a configuration choice rather than a credential, so unlike
+    // the credential it has a Project Config half (issue #94).
+    writeGlobalConfig({ searchBackend: "serper" })
+    writeFileSync(join(tmpDir, ".vicode.json"), JSON.stringify({ searchBackend: "brave" }))
+    expect(load().searchBackend).toBe("brave")
+  })
+
+  it("is refused by name when it names a backend that does not exist, listing the ones that do", () => {
+    writeGlobalConfig({ searchBackend: "googel" })
+    try {
+      load()
+      throw new Error("expected the config to be refused")
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError)
+      const message = (error as ConfigError).message
+      expect(message).toContain("searchBackend")
+      expect(message).toContain("googel")
+      for (const id of SEARCH_BACKEND_IDS) expect(message).toContain(id)
+      // A selection is not a credential, so the credential advice must stay
+      // quiet about it — it would send the user to move a setting that belongs
+      // wherever they wrote it.
+      expect((error as ConfigError).refusesApiKey).toBe(false)
+    }
+  })
+
+  it("is refused from a Project Config by the same rule, naming that file", () => {
+    writeGlobalConfig({})
+    writeFileSync(join(tmpDir, ".vicode.json"), JSON.stringify({ searchBackend: "googel" }))
+    try {
+      load()
+      throw new Error("expected the config to be refused")
+    } catch (error) {
+      expect((error as ConfigError).message).toContain("googel")
+      expect((error as ConfigError).path).toBe(join(tmpDir, ".vicode.json"))
+    }
+  })
+})
+
+describe("searchApiKeys: the per-backend credential field", () => {
+  it("holds one credential per backend, so naming one leaves the other's in place", () => {
+    writeGlobalConfig({ searchApiKeys: { brave: "brave-key", serper: "serper-key" } })
+    const config = load()
+    expect(config.searchApiKeys).toEqual({ brave: "brave-key", serper: "serper-key" })
+  })
+
+  it("has its own field and never travels through the Provider key map", () => {
+    writeGlobalConfig({ apiKeys: { openai: "sk-openai" }, searchApiKeys: { brave: "brave-key" } })
+    const config = load()
+    expect(config.apiKeys).toEqual({ openai: "sk-openai" })
+    expect(config.searchApiKeys).toEqual({ brave: "brave-key" })
+  })
+
+  it("leaves it undefined when nothing sets it", () => {
+    writeGlobalConfig({})
+    expect(load().searchApiKeys).toBeUndefined()
   })
 
   it("is refused in a Project Config, and reported as a credential", () => {
     // A Project Config is committed, so a credential there is a leaked one —
     // the same reason `apiKeys` is refused from it.
-    writeFileSync(join(tmpDir, ".vicode.json"), JSON.stringify({ searchApiKey: "leaked" }))
+    writeFileSync(
+      join(tmpDir, ".vicode.json"),
+      JSON.stringify({ [SEARCH_CREDENTIALS_FIELD]: { brave: "leaked" } }),
+    )
     try {
-      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      load()
       throw new Error("expected the project config to be refused")
     } catch (error) {
       expect(error).toBeInstanceOf(ConfigError)
       expect((error as ConfigError).refusesApiKey).toBe(true)
-      expect((error as ConfigError).refusedCredentialFields).toEqual(["searchApiKey"])
-      expect((error as ConfigError).message).toContain("searchApiKey")
+      expect((error as ConfigError).refusedCredentialFields).toEqual([SEARCH_CREDENTIALS_FIELD])
+      expect((error as ConfigError).message).toContain(SEARCH_CREDENTIALS_FIELD)
     }
   })
 
   it("names every refused credential field when several are present", () => {
     writeFileSync(
       join(tmpDir, ".vicode.json"),
-      JSON.stringify({ searchApiKey: "leaked", apiKeys: { openai: "leaked" }, model: 42 }),
+      JSON.stringify({
+        [SEARCH_CREDENTIALS_FIELD]: { brave: "leaked" },
+        apiKeys: { openai: "leaked" },
+        model: 42,
+      }),
     )
     try {
-      loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+      load()
       throw new Error("expected the project config to be refused")
     } catch (error) {
-      expect((error as ConfigError).refusedCredentialFields.sort()).toEqual(["apiKeys", "searchApiKey"])
+      expect((error as ConfigError).refusedCredentialFields.sort()).toEqual([
+        "apiKeys",
+        SEARCH_CREDENTIALS_FIELD,
+      ])
     }
   })
 
-  it("leaves it undefined when nothing sets it", () => {
-    writeGlobalConfig({})
-    expect(loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() }).searchApiKey)
-      .toBeUndefined()
+  it("is refused by name when a credential is keyed to a backend that does not exist", () => {
+    // A typo'd key would otherwise read as "no credential configured" at the
+    // moment of use, which sends the user looking for a key they already set.
+    writeGlobalConfig({ searchApiKeys: { googel: "key" } })
+    try {
+      load()
+      throw new Error("expected the config to be refused")
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError)
+      const message = (error as ConfigError).message
+      expect(message).toContain(SEARCH_CREDENTIALS_FIELD)
+      expect(message).toContain("googel")
+      for (const id of SEARCH_BACKEND_IDS) expect(message).toContain(id)
+    }
   })
 
   it("keeps it out of the Provider key map, which only ever holds Providers", () => {
-    writeGlobalConfig({ searchApiKey: "brave-key", apiKeys: { openai: "sk-openai" } })
-    const config = loadConfig({ projectPath: tmpDir, globalConfigPath: defaultGlobalConfigPath() })
+    writeGlobalConfig({ searchApiKeys: { brave: "brave-key" }, apiKeys: { openai: "sk-openai" } })
+    const config = load()
     expect(config.apiKeys).toEqual({ openai: "sk-openai" })
-    expect(config.searchApiKey).toBe("brave-key")
+    expect(config.searchApiKeys).toEqual({ brave: "brave-key" })
   })
 })
 

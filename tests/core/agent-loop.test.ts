@@ -1359,7 +1359,7 @@ describe("agent-loop", () => {
       ])
       const results: string[] = []
       const restore = setWebSearchDeps({
-        config: { apiKeys: {}, searchApiKey: "brave-secret" },
+        config: { apiKeys: {}, searchApiKeys: { brave: "brave-secret" } },
         fetchImpl: (async () =>
           new Response(
             JSON.stringify({
