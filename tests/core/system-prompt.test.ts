@@ -203,7 +203,7 @@ describe("assembleSystemPrompt (tool-array-driven)", () => {
     }
   })
 
-  it("read-only tool set lists only the read-only quartet and never mentions write/edit/bash", () => {
+  it("read-only tool set lists only the read-only tools and never mentions write/edit/bash", () => {
     const result = assembleSystemPrompt({ projectPath: tmpDir, tools: readOnlyTools })
     const toolsSection = sectionOf(result, "Available Tools")
     const toolLines = toolsSection.split("\n").filter((l) => l.startsWith("- **"))
@@ -212,6 +212,7 @@ describe("assembleSystemPrompt (tool-array-driven)", () => {
       "- **list_files** — List directory contents or glob for files. Use to discover project structure.",
       "- **search** — Search across files using regex/grep. Use to find relevant code quickly.",
       "- **web_search** — Search the web and return ranked results with a title, URL and snippet. Use it for discovery — a question whose answer is not in the project. A snippet is an excerpt, not a page: when you need the page rather than the snippet, fetch that result's URL.",
+    "- **web_fetch** — Fetch a web page and return its readable content. Accepts only http or https URLs. Treats the URL as untrusted input and pauses for user approval before making the request.",
     ])
     expect(result).not.toContain("bash")
     expect(result).not.toContain("write_file")

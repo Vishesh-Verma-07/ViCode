@@ -6,6 +6,7 @@ import { webSearchTool } from "./web-search"
 import { writeFileTool } from "./write-file"
 import { editFileTool } from "./edit-file"
 import { bashTool } from "./bash"
+import { webFetchTool } from "./web-fetch"
 
 /**
  * Read-only in the strict sense: nothing here changes anything on disk.
@@ -20,8 +21,10 @@ export const readOnlyTools: ToolDefinition[] = [
   listFilesTool,
   searchTool,
   webSearchTool,
+  webFetchTool,
 ]
 
 export const writeTools: ToolDefinition[] = [writeFileTool, editFileTool, bashTool]
 
 export const allTools: ToolDefinition[] = [...readOnlyTools, ...writeTools]
+

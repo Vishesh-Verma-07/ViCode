@@ -4774,7 +4774,7 @@ describe("Mode switching via Tab", () => {
 
       await typeAndSubmit("first turn as build")
       await until(() => seen.length === 1)
-      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
+      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_fetch", "web_search", "write_file"])
       expect(seen[0]!.prompt).toContain("build mode")
 
       await typeAndSubmit("/skill")
@@ -4789,19 +4789,19 @@ describe("Mode switching via Tab", () => {
       await pressTab()
       await typeAndSubmit("plan this")
       await until(() => seen.length === 2)
-      expect(seen[1]!.tools).toEqual(["list_files", "read_file", "search", "web_search"])
+      expect(seen[1]!.tools).toEqual(["list_files", "read_file", "search", "web_fetch", "web_search"])
       expect(seen[1]!.prompt).toContain("plan mode")
       expect(seen[1]!.prompt).not.toContain("write_file")
       expect(seen[1]!.prompt).not.toContain("edit_file")
       expect(seen[1]!.prompt).not.toContain("bash")
       expect(seen[1]!.prompt).toContain("# Review Ritual")
       expect(seen[1]!.prompt).toContain("Always run the full suite before committing")
-      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
+      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_fetch", "web_search", "write_file"])
 
       await pressTab()
       await typeAndSubmit("build again")
       await until(() => seen.length === 3)
-      expect(seen[2]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
+      expect(seen[2]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_fetch", "web_search", "write_file"])
       expect(seen[2]!.prompt).toContain("build mode")
       expect(seen[2]!.prompt).toContain("# Review Ritual")
     } finally {
@@ -4819,7 +4819,7 @@ describe("Mode switching via Tab", () => {
 
       await typeAndSubmit("hello from welcome")
       await until(() => seen.length === 1)
-      expect(seen[0]!.tools).toEqual(["edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
+      expect(seen[0]!.tools).toEqual(["edit_file", "list_files", "read_file", "search", "web_fetch", "web_search", "write_file"])
       expect(seen[0]!.prompt).toContain("discuss mode")
     } finally {
       instance.unmount()
@@ -4912,7 +4912,7 @@ describe("Mode switching via Tab", () => {
       await typeAndSubmit("start a turn")
       await until(() => frameText().includes("partial reply"))
       expect(seen).toHaveLength(1)
-      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
+      expect(seen[0]!.tools).toEqual(["bash", "edit_file", "list_files", "read_file", "search", "web_fetch", "web_search", "write_file"])
       expect(frameText()).toContain("[Build]")
 
       await pressTab()
@@ -4925,7 +4925,7 @@ describe("Mode switching via Tab", () => {
 
       await typeAndSubmit("next turn")
       await until(() => seen.length === 2)
-      expect(seen[1]!.tools).toEqual(["edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
+      expect(seen[1]!.tools).toEqual(["edit_file", "list_files", "read_file", "search", "web_fetch", "web_search", "write_file"])
     } finally {
       instance.unmount()
       rmSync(projectDir, { recursive: true, force: true })
@@ -5090,7 +5090,7 @@ describe("Mode persistence across sessions", () => {
 
       await typeAndSubmit("follow up")
       await until(() => seen.length >= 1)
-      expect(seen[0]!.tools).toEqual(["list_files", "read_file", "search", "web_search"])
+      expect(seen[0]!.tools).toEqual(["list_files", "read_file", "search", "web_fetch", "web_search"])
       expect(seen[0]!.prompt).toContain("plan mode")
 
       await waitForSessionToContain("sess_plan", "follow up")

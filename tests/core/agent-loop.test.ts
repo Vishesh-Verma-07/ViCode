@@ -1336,7 +1336,7 @@ describe("agent-loop", () => {
 
       expect(seen.length).toBeGreaterThanOrEqual(3)
       for (const names of seen) {
-        expect(names).toEqual(["list_files", "read_file", "search", "web_search"])
+        expect(names).toEqual(["list_files", "read_file", "search", "web_fetch", "web_search"])
       }
       expect(results[0]).toContain("denied by mode")
       expect(results[1]).toContain("denied by mode")
@@ -1437,7 +1437,7 @@ describe("agent-loop", () => {
       expect(results[3]).toContain("denied by mode")
       expect(approvals).toEqual([])
       for (const names of seen) {
-        expect(names).toEqual(["edit_file", "list_files", "read_file", "search", "web_search", "write_file"])
+        expect(names).toEqual(["edit_file", "list_files", "read_file", "search", "web_fetch", "web_search", "write_file"])
       }
     })
   })

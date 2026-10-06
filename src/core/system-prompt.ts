@@ -9,7 +9,7 @@ const BASE_INTRO = `You are ViCode, an interactive terminal AI coding agent. You
 // web_search sits after the filesystem Tools and after bash: it is the one Tool
 // that leaves the machine, so it reads last rather than being buried among the
 // reads it is easy to mistake for.
-const TOOL_PROMPT_ORDER = ["read_file", "write_file", "edit_file", "list_files", "search", "bash", "web_search"]
+const TOOL_PROMPT_ORDER = ["read_file", "write_file", "edit_file", "list_files", "search", "bash", "web_search", "web_fetch"]
 
 const TOOL_PROMPT_DESCRIPTIONS: Record<string, string> = {
   read_file: "Read the contents of a file. Use this to understand existing code.",
@@ -20,6 +20,9 @@ const TOOL_PROMPT_DESCRIPTIONS: Record<string, string> = {
   bash: "Execute shell commands. Use to run tests, build projects, install packages.",
   web_search:
     "Search the web and return ranked results with a title, URL and snippet. Use it for discovery — a question whose answer is not in the project. A snippet is an excerpt, not a page: when you need the page rather than the snippet, fetch that result's URL.",
+
+  web_fetch:
+    "Fetch a web page and return its readable content. Accepts only http or https URLs. Treats the URL as untrusted input and pauses for user approval before making the request.",
 }
 
 const BASH_ALLOWLIST_BULLET = `A bash command runs as a **Silent Bash Call** — executing without pausing for user approval — only when ALL THREE of these hold: (1) its first token is on the Bash Allowlist (the \`silentBashCommands\` list in the global or project config), (2) none of its command tokens resolves to a Sensitive Path (like .env files, private keys, or \`.ssh\`), and (3) its resolved working directory stays inside the Project Root and is not a Sensitive Path. Any other bash command pauses for explicit user approval. Anyone can add commands to the allowlist, so never assume an allowlisted command is harmless just because it usually runs silently.`
