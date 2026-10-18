@@ -21,15 +21,15 @@ function tailStartAt(bytes: Uint8Array, budget: number): number {
   return i
 }
 
-function retMarker(omitted: number, cap: number): string {
+function retMarker(omitted: number, cap: number, subject: string): string {
   const s = VICODE_TRUNCATION_SENTINEL
   return (
-    "\n\n" + s + "\n" + omitted + " bytes omitted; tool result capped at " + cap +
+    "\n\n" + s + "\n" + omitted + " bytes omitted; " + subject + " capped at " + cap +
     " bytes.\nRe-query narrowly (bounded read range, narrower search, targeted command) before relying on exact text such as oldText.\n" + s + "\n"
   )
 }
 
-function doCap(bytes: Uint8Array, cap: number): string {
+function doCap(bytes: Uint8Array, cap: number, subject: string): string {
   if (bytes.length <= cap) return decoderGlobal.decode(bytes)
   const STEP = 8
   let budget = cap - TRUNCATION_MARKER_BYTES
@@ -39,7 +39,7 @@ function doCap(bytes: Uint8Array, cap: number): string {
     const hEnd = headEndAt(bytes, half)
     const tStart = tailStartAt(bytes, contentBudget - half)
     const omitted = bytes.length - (hEnd + (bytes.length - tStart))
-    const marker = retMarker(omitted, cap)
+    const marker = retMarker(omitted, cap, subject)
     const markerBytes = encoderGlobal.encode(marker).length
     const total = hEnd + (bytes.length - tStart) + markerBytes
     if (total <= cap) {
@@ -53,9 +53,16 @@ function doCap(bytes: Uint8Array, cap: number): string {
   }
   const end = headEndAt(bytes, Math.max(0, cap - TRUNCATION_MARKER_BYTES))
   const o2 = bytes.length - end
-  return new TextDecoder().decode(bytes.subarray(0, end)) + retMarker(o2, cap)
+  return new TextDecoder().decode(bytes.subarray(0, end)) + retMarker(o2, cap, subject)
 }
 
-export function capResult(result: string, cap: number = MAX_TOOL_RESULT_BYTES): string {
-  return doCap(encoderGlobal.encode(result), cap)
+/**
+ * Caps `result` at `cap` bytes, head+tail, with a marker naming what was
+ * omitted. `subject` names the thing being capped — a tool result by default,
+ * a file mention when the capped text is a File Attachment — because a
+ * truncation marker that misnames its own contents is a marker the reader has
+ * to translate before it can be believed.
+ */
+export function capResult(result: string, cap: number = MAX_TOOL_RESULT_BYTES, subject: string = "tool result"): string {
+  return doCap(encoderGlobal.encode(result), cap, subject)
 }

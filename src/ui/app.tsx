@@ -8,6 +8,7 @@ import type { Provider } from "../core/provider"
 import type { ProviderId } from "../core/providers"
 import { CommandRegistry } from "../core/command-registry"
 import { filterCommands, findUsageHint, moveHighlight } from "./command-suggestion"
+import { detectMention, filterMentionFiles, listMentionableFiles } from "../core/file-mentions"
 import { Picker } from "./picker"
 import { routeLabel } from "./route-label"
 import { WelcomeScreen } from "./welcome"
@@ -193,6 +194,26 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
   const suggestionArrows = suggestionVisible && suggestedCommands.length > 0
   const suggestionHint = suggestionVisible ? findUsageHint(allCommands, drafting.inputValue) : undefined
 
+  // A File Mention lives inside a message, so it is offered only when the draft
+  // is not a Command attempt: a slash command carries arguments, not mentions.
+  const mention = firstWord.startsWith("/") ? null : detectMention(drafting.inputValue, drafting.inputCursor)
+  const fileSuggestionVisible =
+    !session.isStreaming &&
+    !drafting.pickerRequest &&
+    !keyEntry &&
+    !confirmation &&
+    !session.pendingApproval &&
+    !session.showExitSummary &&
+    view === "chat" &&
+    mention !== null &&
+    !drafting.fileMentionDismissed
+  const mentionFiles =
+    fileSuggestionVisible && mention
+      ? filterMentionFiles(listMentionableFiles(context.projectPath), mention.fragment)
+      : []
+  const clampedFileHighlight = Math.min(drafting.fileMentionHighlight, Math.max(0, mentionFiles.length - 1))
+  const fileSuggestionArrows = fileSuggestionVisible && mentionFiles.length > 0
+
   useInput(
     (input, key) => {
       if (drafting.pickerRequest) return
@@ -240,6 +261,22 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
         return
       }
 
+      if (fileSuggestionArrows) {
+        if (key.upArrow) {
+          drafting.setFileMentionHighlight((prev) => moveHighlight(prev, mentionFiles.length, -1))
+          return
+        }
+        if (key.downArrow) {
+          drafting.setFileMentionHighlight((prev) => moveHighlight(prev, mentionFiles.length, 1))
+          return
+        }
+      }
+
+      if (key.escape && fileSuggestionVisible) {
+        drafting.setFileMentionDismissed(true)
+        return
+      }
+
       if (key.upArrow && !suggestionArrows && view === "chat" && !session.isStreaming) {
         drafting.recallUp()
         return
@@ -256,6 +293,10 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           const commandInput = `/${suggestedCommand.name}${typedRest}`
           drafting.submitInput(commandInput)
           void session.handleSend(commandInput)
+        } else if (fileSuggestionVisible && mention && mentionFiles.length > 0) {
+          // A mention is one word of a message, so accepting it completes the
+          // draft and leaves the floor open rather than sending anything.
+          drafting.replaceDraftRange(mention.start, drafting.inputCursor, `@${mentionFiles[clampedFileHighlight]!} `)
         } else if (drafting.inputValue.trim()) {
           const message = drafting.inputValue
           drafting.submitInput(message)
@@ -341,6 +382,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
           inputDisabled={drafting.pickerRequest !== null || keyEntry !== null || confirmation !== null}
           onInputChange={drafting.handleInputChange}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight, hint: suggestionHint } : undefined}
+          fileSuggestion={fileSuggestionVisible ? { items: mentionFiles, highlightIndex: clampedFileHighlight } : undefined}
           route={route}
           mode={session.activeModeDefinition}
           onTab={session.cycleMode}

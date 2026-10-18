@@ -26,6 +26,14 @@ export interface ToolResultContent {
   isError?: boolean
 }
 
+export interface FileAttachmentContent {
+  type: "file-attachment"
+  /** Path relative to the Project Root, forward slashes. */
+  path: string
+  /** The file's content as it was on disk, capped to the attachment budget. */
+  content: string
+}
+
 export interface ContextSummaryContent {
   type: "context-summary"
   summary: string
@@ -34,7 +42,7 @@ export interface ContextSummaryContent {
   at: number
 }
 
-export type Content = TextContent | ToolCallContent | ToolResultContent | ContextSummaryContent
+export type Content = TextContent | ToolCallContent | ToolResultContent | ContextSummaryContent | FileAttachmentContent
 
 export interface Message {
   id: string

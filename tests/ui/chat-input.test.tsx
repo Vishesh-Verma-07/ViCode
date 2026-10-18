@@ -47,6 +47,20 @@ function ExternalReplaceHarness({ onValue, replaceRef }: { onValue: (value: stri
   )
 }
 
+function CursorHarness({ onCommit }: { onCommit: (value: string, cursor: number) => void }) {
+  const [value, setValue] = useState("")
+  return (
+    <ChatInput
+      value={value}
+      placeholder="Type..."
+      onChange={(next, cursor) => {
+        setValue(next)
+        onCommit(next, cursor)
+      }}
+    />
+  )
+}
+
 describe("ChatInput cursor-aware editing", () => {
   const originalExit = process.exit
 
@@ -166,6 +180,20 @@ describe("ChatInput cursor-aware editing", () => {
     await new Promise((resolve) => setTimeout(resolve, 25)) // let React settle the external value
     await sendKeys(instance, ["!"])
     expect(changes.at(-1)).toBe("fresh!")
+    instance.unmount()
+  })
+
+  it("reports the cursor position alongside the changed text", async () => {
+    const commits: Array<{ value: string; cursor: number }> = []
+    const instance = render(<CursorHarness onCommit={(value, cursor) => commits.push({ value, cursor })} />)
+    await sendKeys(instance, ["h", "e", "y"])
+    expect(commits.at(-1)).toEqual({ value: "hey", cursor: 3 })
+
+    await sendKeys(instance, [LEFT, LEFT]) // cursor between "h"|"ey"
+    expect(commits.at(-1)).toEqual({ value: "hey", cursor: 1 })
+
+    await sendKeys(instance, ["X"])
+    expect(commits.at(-1)).toEqual({ value: "hXey", cursor: 2 })
     instance.unmount()
   })
 })

@@ -199,4 +199,21 @@ describe("serializeTranscript", () => {
     expect(text).toContain('tool call: bash({"command":"bun test"})')
     expect(text).toContain("tool result (bash): 603 pass")
   })
+
+  it("names an attached file beside the user's words so a summary can cite it", () => {
+    const messages: Message[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: [
+          { type: "text", text: "explain this" },
+          { type: "file-attachment", path: "src/a.ts", content: "const x = 1" },
+        ],
+        timestamp: 0,
+      },
+    ]
+    const text = serializeTranscript(messages)
+    expect(text).toContain("User: explain this")
+    expect(text).toContain("User attached file (src/a.ts): const x = 1")
+  })
 })

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { contextBudget, project } from "@/core/project-context"
+import { contextBudget, estimateMessageTokens, project } from "@/core/project-context"
 import { VICODE_TRUNCATION_SENTINEL } from "@/core/cap-result"
 import { CONTEXT_BUDGET_RATIO } from "@/core/constants"
 import type { Provider } from "@/core/provider"
@@ -197,6 +197,19 @@ describe("project", () => {
     const original = JSON.stringify(history)
     project(history, 2000)
     expect(JSON.stringify(history)).toBe(original)
+  })
+})
+
+describe("estimateMessageTokens", () => {
+  it("counts a File Attachment's content as load, not as nothing", () => {
+    const withAttachment = msg("1", "user", [
+      textContent("look"),
+      { type: "file-attachment", path: "a.ts", content: "x".repeat(4_000) },
+    ])
+    const withoutAttachment = msg("1", "user", [textContent("look")])
+    expect(estimateMessageTokens(withAttachment)).toBe(
+      estimateMessageTokens(withoutAttachment) + estimateTokens("x".repeat(4_000)),
+    )
   })
 })
 

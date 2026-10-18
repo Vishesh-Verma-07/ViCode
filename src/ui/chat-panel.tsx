@@ -8,6 +8,7 @@ import { InlineCodeText } from "./inline-chip"
 import { CodeBlock } from "./code-block"
 import { DiffView } from "./diff-view"
 import { CommandSuggestion, type CommandSuggestionProps } from "./command-suggestion"
+import { FileSuggestion, type FileSuggestionProps } from "./file-suggestion"
 import { FeedbackLine, type FeedbackEntry } from "./feedback-line"
 import { ChatInput } from "./chat-input"
 import { ModeInputBox } from "./mode-input-box"
@@ -28,8 +29,9 @@ interface ChatPanelProps {
   inputKey: number
   inputValue: string
   inputDisabled?: boolean
-  onInputChange?: (value: string) => void
+  onInputChange?: (value: string, cursor: number) => void
   suggestion?: CommandSuggestionProps
+  fileSuggestion?: FileSuggestionProps
   route?: RouteLabel
   mode?: ModeDefinition
   onTab?: () => void
@@ -71,7 +73,7 @@ function commandFromArgs(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, route, mode, onTab }: ChatPanelProps) {
+export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, fileSuggestion, route, mode, onTab }: ChatPanelProps) {
   const [bottomOffset, setBottomOffset] = useState(0)
 
   useInput((_input, key) => {
@@ -216,6 +218,20 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
         continue
       }
       addCodeAwareBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
+      for (const c of msg.content) {
+        if (c.type !== "file-attachment") continue
+        const lines = c.content.split("\n").length
+        const label = `@${c.path} · ${lines} lines`
+        pushBlock(
+          `${msg.id}:attach:${c.path}`,
+          <Text key={`${msg.id}:attach:${c.path}`} color={COLORS.muted}>
+            <Text color={COLORS.accent}>@</Text>
+            {c.path} <Text color={COLORS.dimText}>· {lines} lines</Text>
+          </Text>,
+          1,
+          label,
+        )
+      }
     } else if (msg.role === "assistant") {
       const text = textContentOf(msg)
       if (text) {
@@ -361,6 +377,11 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
       {suggestion && (
         <Box paddingBottom={1} paddingX={2}>
           <CommandSuggestion {...suggestion} />
+        </Box>
+      )}
+      {fileSuggestion && (
+        <Box paddingBottom={1} paddingX={2}>
+          <FileSuggestion {...fileSuggestion} />
         </Box>
       )}
       <ModeInputBox mode={mode} marginTop={1}>

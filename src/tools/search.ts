@@ -1,39 +1,9 @@
 import { z } from "zod"
-import { readdirSync, readFileSync } from "fs"
-import { join, relative, extname } from "path"
+import { readFileSync } from "fs"
+import { relative } from "path"
 import { isSensitivePath } from "../core/sensitive-files"
+import { collectProjectFiles } from "../core/project-files"
 import type { ToolDefinition, ToolContext } from "../core/types"
-
-const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build", "__pycache__"])
-const BINARY_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp",
-  ".mp3", ".mp4", ".wav", ".avi", ".mov",
-  ".zip", ".tar", ".gz", ".rar", ".7z",
-  ".exe", ".dll", ".so", ".dylib",
-  ".woff", ".woff2", ".ttf", ".eot",
-  ".pdf", ".bin",
-])
-
-function isBinaryFile(filePath: string): boolean {
-  return BINARY_EXTENSIONS.has(extname(filePath).toLowerCase())
-}
-
-function collectFiles(dir: string, projectPath: string): string[] {
-  const results: string[] = []
-  const entries = readdirSync(dir, { withFileTypes: true })
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue
-      results.push(...collectFiles(join(dir, entry.name), projectPath))
-    } else {
-      const absPath = join(dir, entry.name)
-      if (!isBinaryFile(absPath)) {
-        results.push(absPath)
-      }
-    }
-  }
-  return results
-}
 
 export const searchTool: ToolDefinition = {
   name: "search",
@@ -55,7 +25,7 @@ export const searchTool: ToolDefinition = {
     }
 
     try {
-      const files = collectFiles(projectPath, projectPath)
+      const files = collectProjectFiles(projectPath)
       const results: string[] = []
 
       for (const filePath of files) {

@@ -174,6 +174,40 @@ describe("convertMessages", () => {
     ])
   })
 
+  it("appends a File Attachment to the user's own words as a tagged block", () => {
+    const messages: Message[] = [
+      {
+        id: "1",
+        role: "user",
+        content: [
+          { type: "text", text: "explain this" },
+          { type: "file-attachment", path: "src/a.ts", content: "const x = 1\n" },
+        ],
+        timestamp: Date.now(),
+      },
+    ]
+    const result = convertMessages(messages)
+    expect(result).toEqual([
+      {
+        role: "user",
+        content: 'explain this\n<file path="src/a.ts">\nconst x = 1\n\n</file>',
+      },
+    ])
+  })
+
+  it("carries an attachment whose message has no prose of its own", () => {
+    const messages: Message[] = [
+      {
+        id: "1",
+        role: "user",
+        content: [{ type: "file-attachment", path: "a.ts", content: "a" }],
+        timestamp: Date.now(),
+      },
+    ]
+    const result = convertMessages(messages)
+    expect(result).toEqual([{ role: "user", content: '<file path="a.ts">\na\n</file>' }])
+  })
+
   it("converts multi-turn conversation", () => {
     const messages: Message[] = [
       { id: "1", role: "user", content: [{ type: "text", text: "Read foo.ts" }], timestamp: 1 },

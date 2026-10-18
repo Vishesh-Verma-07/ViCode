@@ -122,6 +122,7 @@ export function serializeTranscript(messages: Message[]): string {
     const label = roleLabel(msg.role)
     for (const part of msg.content) {
       if (part.type === "text") lines.push(`${label}: ${part.text.trim()}`)
+      else if (part.type === "file-attachment") lines.push(`${label} attached file (${part.path}): ${part.content.trim()}`)
       else if (part.type === "tool-call") lines.push(`${label} tool call: ${part.toolName}(${JSON.stringify(part.args)})`)
       else if (part.type === "tool-result") lines.push(`${label} tool result (${part.toolName}): ${part.result.trim()}`)
     }

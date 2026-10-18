@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useApp } from "ink"
-import type { Command, CommandContext, Message, ModelSwitchResult, PickerRequest, ProviderOffering, ToolContext, ToolDefinition } from "../core/types"
+import { resolve } from "path"
+import type { Command, CommandContext, FileAttachmentContent, Message, ModelSwitchResult, PickerRequest, ProviderOffering, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
 import type { ModelListing, Provider, TokenUsage } from "../core/provider"
 import type { ProviderId } from "../core/providers"
@@ -12,6 +13,7 @@ import { addCost } from "../core/cost-calculator"
 import { assembleSystemPrompt } from "../core/system-prompt"
 import { DEFAULT_MODE, MODES, cycleMode as cycleModeId, findMode, selectModeTools, type ModeDefinition, type ModeId } from "../core/modes"
 import { compactHistory } from "../core/compaction"
+import { attachMentionedFiles } from "../core/file-mentions"
 import { contextShortfall, describeContextShortfall } from "../core/context-shortfall"
 import { CommandRegistry } from "../core/command-registry"
 import { dispatchCommand, getCommandName, isCommandAttempt } from "../core/command-dispatcher"
@@ -339,6 +341,31 @@ export function useAgentSession({
     abortRef.current?.abort()
   }, [])
 
+  /**
+   * Puts a File Mention's read on screen for consent, reusing the Approval
+   * Prompt the Agent Loop already uses for file operations: a mention that
+   * names a Sensitive Path or reaches outside the Project Root asks in the
+   * same words, and an approval is remembered for that path for the Turn.
+   */
+  const requestMentionReadApproval = useCallback(
+    (declaredPath: string): Promise<boolean> => {
+      const approvalKey = resolve(context.projectPath, declaredPath)
+      if (isPathApproved(approvalKey)) return Promise.resolve(true)
+      return new Promise<boolean>((resolveApproval) => {
+        setTurnStatus({ kind: "waiting-approval" })
+        setPendingApproval({
+          toolName: "read_file",
+          args: { path: declaredPath },
+          resolve: (approved) => {
+            if (approved) approvePath(approvalKey)
+            resolveApproval(approved)
+          },
+        })
+      })
+    },
+    [context.projectPath],
+  )
+
   const clearSessionState = useCallback(() => {
     clearApprovedPaths()
     resetHistory()
@@ -530,10 +557,25 @@ export function useAgentSession({
         if (!ok) return
       }
 
+      // The Turn's approval memory starts with the message that begins the
+      // Turn, so a File Mention's read is remembered under the same per-Path
+      // rule the Agent Loop's own file calls use: approving `@.env` here
+      // spares the model's later read of it a second prompt.
+      clearApprovedPaths()
+      const { attachments, notes } = await attachMentionedFiles(input, context, {
+        requestApproval: requestMentionReadApproval,
+      })
+      for (const note of notes) appendFeedback(note, "info")
+
       const userMsg: Message = {
         id: `user_${Date.now()}`,
         role: "user",
-        content: [{ type: "text", text: input }],
+        content: [
+          { type: "text", text: input },
+          ...attachments.map(
+            (a): FileAttachmentContent => ({ type: "file-attachment", path: a.path, content: a.content }),
+          ),
+        ],
         timestamp: Date.now(),
       }
 
@@ -544,7 +586,6 @@ export function useAgentSession({
 
       const controller = new AbortController()
       abortRef.current = controller
-      clearApprovedPaths()
       const turnStart = Date.now()
       let hadError = false
       let turnFailed = false
@@ -700,7 +741,7 @@ export function useAgentSession({
         if (activeTurnRef.current === turn) activeTurnRef.current = null
       }
     },
-    [messages, providerState, createProvider, tools, projectPrompt, cliPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, activeMode, view, enterChat, enterHome, resetDraft, clearSessionState, ensureKeyFor, openKeyEntryFor, currentProvider, switchTo, resolveKey],
+    [messages, providerState, createProvider, tools, projectPrompt, cliPrompt, context, isStreaming, session, sessionsDir, commandRegistry, appendFeedback, openPicker, performExit, activeSkills, activeMode, view, enterChat, enterHome, resetDraft, clearSessionState, ensureKeyFor, openKeyEntryFor, currentProvider, switchTo, resolveKey, requestMentionReadApproval],
   )
 
   return {

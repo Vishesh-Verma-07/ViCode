@@ -26,6 +26,7 @@ import { parseModelId } from "@/core/model-id"
 import { z } from "zod"
 import { allTools } from "@/tools/index"
 import { createSkillCommand } from "@/commands/skill"
+import { clearMentionFileIndex } from "@/core/file-mentions"
 
 function until(condition: () => boolean, timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -440,6 +441,142 @@ describe("App command suggestion dropdown", () => {
       expect(frame).toContain("hello world")
       expect(frame).not.toContain("List available commands")
       expect(capturedMessages.length).toBeGreaterThan(0)
+    } finally {
+      unmount()
+    }
+  })
+})
+
+describe("App file mention dropdown", () => {
+  let project: string
+
+  beforeEach(() => {
+    project = mkdtempSync(join(tmpdir(), "vicode-mention-app-"))
+    writeFileSync(join(project, "app.ts"), "const x = 1\n")
+    clearMentionFileIndex()
+  })
+
+  afterEach(() => {
+    rmSync(project, { recursive: true, force: true })
+    clearMentionFileIndex()
+  })
+
+  function setup() {
+    const capturedMessages: Message[][] = []
+    const provider = createStubProvider(capturedMessages, [
+      { type: "text-delta" as const, text: "ok" },
+      { type: "finish" as const, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 } },
+    ])
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        context={{ projectPath: project }}
+        keyFor={() => "test-key"}
+        initialView="chat"
+        commands={[]}
+      />,
+    )
+
+    async function typeText(text: string): Promise<void> {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+    }
+
+    async function pressKey(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    }
+
+    return { ...instance, capturedMessages, typeText, pressKey }
+  }
+
+  it("completes the draft with the highlighted file on Enter, then attaches it on send", async () => {
+    const { lastFrame, capturedMessages, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeText("@app")
+      await until(() => (lastFrame() ?? "").includes("@app.ts"))
+      // Accepting a mention completes the draft; it does not send anything.
+      expect(lastFrame() ?? "").toContain("Enter to attach")
+
+      await pressKey("\r")
+      await until(() => !(lastFrame() ?? "").includes("Enter to attach"))
+      expect(capturedMessages).toHaveLength(0)
+
+      await pressKey("\r")
+      await until(() => capturedMessages.length > 0)
+
+      const sent = capturedMessages.at(-1)!
+      const user = sent.find((m) => m.role === "user")!
+      expect(user.content.find((c) => c.type === "text")).toEqual({ type: "text", text: "@app.ts " })
+      const attachment = user.content.find((c) => c.type === "file-attachment")
+      expect(attachment).toEqual({ type: "file-attachment", path: "app.ts", content: "const x = 1\n" })
+    } finally {
+      unmount()
+    }
+  })
+
+  it("attaches a mention accepted by arrow key rather than the first row", async () => {
+    writeFileSync(join(project, "app.test.ts"), "test file\n")
+    clearMentionFileIndex()
+    const { lastFrame, capturedMessages, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeText("@app")
+      await until(() => (lastFrame() ?? "").includes("> @app.ts"))
+      await pressKey("\u001B[B")
+      await until(() => (lastFrame() ?? "").includes("> @app.test.ts"))
+      await pressKey("\r")
+      await pressKey("\r")
+
+      await until(() => capturedMessages.length > 0)
+      const user = capturedMessages.at(-1)!.find((m) => m.role === "user")!
+      const attachment = user.content.find((c) => c.type === "file-attachment")
+      expect(attachment).toEqual({ type: "file-attachment", path: "app.test.ts", content: "test file\n" })
+    } finally {
+      unmount()
+    }
+  })
+
+  it("dismisses the dropdown on Escape without touching the draft", async () => {
+    const { lastFrame, capturedMessages, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeText("@app")
+      await until(() => (lastFrame() ?? "").includes("Enter to attach"))
+
+      await pressKey("\u001B")
+      await until(() => !(lastFrame() ?? "").includes("Enter to attach"))
+      expect(lastFrame() ?? "").toContain("@app")
+
+      // The next keystroke is a fresh edit, so the dropdown may offer again.
+      await pressKey("\r")
+      await until(() => capturedMessages.length > 0)
+    } finally {
+      unmount()
+    }
+  })
+
+  it("sends the message with a note when a mention names no file", async () => {
+    const { lastFrame, capturedMessages, typeText, pressKey, unmount } = setup()
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeText("@ghost.ts")
+      await pressKey("\r")
+
+      await until(() => (lastFrame() ?? "").includes("@ghost.ts does not exist"))
+      await until(() => capturedMessages.length > 0)
+
+      const user = capturedMessages.at(-1)!.find((m) => m.role === "user")!
+      expect(user.content.some((c) => c.type === "file-attachment")).toBe(false)
+      expect((user.content.find((c) => c.type === "text") as { text: string }).text).toContain("@ghost.ts")
     } finally {
       unmount()
     }

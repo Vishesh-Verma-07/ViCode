@@ -40,6 +40,7 @@ vicode
 - **Cursor-aware input** — left/right arrows move by grapheme cluster, so ZWJ emoji and combining marks behave as one character; word-delete works mid-word and at boundaries
 - **Input History** — every input you submit is recalled into the draft with Up/Down; recalled inputs are drafts, not replays
 - **Command Suggestion** — a filtered dropdown above the input as you type after `/`, with arrow-key selection and `Enter` to accept
+- **File Mentions** — type `@` to autocomplete a project file; accepting one attaches its content to your message so the model reads it without spending a tool call. Sensitive Paths are never offered, and a mention of one (or a path outside the Project Root) asks for approval like any other read
 - **Cursor-aware Welcome Screen** — edit your first message with the same editing primitives before you send it
 - **Terminal-friendly navigation** — mouse-wheel scrolling, PageUp/PageDown, End to jump to the bottom, and a `↑ N lines — End to return` hint when you're scrolled up
 
@@ -231,14 +232,14 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 
 | Key | Action |
 |---|---|
-| `Enter` | Submit — or accept the highlighted Command Suggestion |
+| `Enter` | Submit — or accept the highlighted Command Suggestion or File Mention |
 | `Tab` | Cycle the Mode (build → discuss → plan) |
 | `Esc` | Cancel the in-progress response, or dismiss the suggestion dropdown |
 | `←` / `→` | Move the cursor one grapheme cluster |
 | `Home` / `End` | Jump the cursor to the start / end of the input (`End` also scrolls the chat to the bottom) |
 | `Backspace` / `Delete` | Delete the grapheme before / at the cursor |
 | `Ctrl+W`, `Ctrl+U`, `Ctrl+Backspace`, `Alt+Backspace` | Delete the previous word (at a boundary, also consumes the following whitespace) |
-| `↑` / `↓` | Move the suggestion highlight, or recall Input History when no dropdown is open |
+| `↑` / `↓` | Move the dropdown highlight, or recall Input History when no dropdown is open |
 | `y` / `n` | Approve / reject a pending tool call |
 | `Ctrl+C` | Show the session summary; the next keypress exits |
 | `PageUp` / `PageDown` | Scroll chat history by a screen |
@@ -251,6 +252,8 @@ Picky surfaces (model, skill, and session pickers) take `↑`/`↓` to move, `En
 Approval attaches to individual **Tool Calls**, not to whole tools. In practice most of the agent's work is silent.
 
 **File operations** (`read_file`, `write_file`, `edit_file`) pause for approval only when the target is a **Sensitive Path** or resolves **outside the Project Root**. Ordinary in-project files run without a prompt. Approving a resolved path also auto-approves later calls to that same path for the rest of the turn, so each distinct path surfaces at most one explicit approval per turn. (This memory resets at the start of every turn, on session switch, and on a new session.)
+
+**File Mentions** (`@path`) read the named file and carry its content on your message. A mention of a Sensitive Path or a path outside the Project Root pauses for the same approval a `read_file` of that path would, under the same per-turn path memory — so approving `@.env` also spares the model's own read of `.env` the second prompt. The File Suggestion never offers a Sensitive Path, but one typed out in full still asks.
 
 **`bash` calls** run as **Silent Bash Calls** only when all three of these hold:
 
@@ -397,7 +400,6 @@ Coverage is organised around the five seams — Provider, Tool, Config, Session,
 - **A gateway model is only offered if its protocol is supported.** The catalog lists models speaking many wire protocols; only OpenAI and Anthropic ones are routed. Everything else is left out of `/model` deliberately rather than failing at call time.
 - **`./debug.log` grows without bound.** ViCode appends a verbose run log to `<cwd>/debug.log` with no level check and no size cap, including raw model responses. Worth deleting periodically, and worth adding to your `.gitignore`.
 - **Sessions cannot be deleted from the UI.** `/session` lists and switches; pruning old `<project>/.vicode/sessions/*.json` files is manual. `/rename` names the current session (up to 60 characters) and the name shows in the `/session` picker, but nothing renames sessions other than the one you are in.
-- **No `@` file mentions.** There is no mention autocomplete or file-picker — the model finds files with `list_files` and `search`.
 
 ## Roadmap
 

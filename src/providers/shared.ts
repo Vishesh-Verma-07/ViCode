@@ -10,8 +10,9 @@
 import type { ModelMessage, ToolSet } from "ai"
 import { tool, zodSchema } from "ai"
 import type { StreamEvent, TokenUsage } from "../core/provider"
-import type { Message, ToolDefinition, ContextSummaryContent } from "../core/types"
+import type { Message, ToolDefinition, ContextSummaryContent, TextContent, FileAttachmentContent } from "../core/types"
 import { composeSummaryMessageText } from "../core/compaction"
+import { composeFileAttachmentText } from "../core/file-mentions"
 import { calculateCost } from "../core/cost-calculator"
 import { resolvePricing } from "../core/catalog"
 import { parseModelId } from "../core/model-id"
@@ -29,10 +30,15 @@ export function convertMessages(messages: Message[]): ModelMessage[] {
       })
     } else if (msg.role === "user") {
       const textParts = msg.content
-        .filter((c) => c.type === "text" || c.type === "context-summary")
-        .map((c) =>
-          c.type === "text" ? c.text : composeSummaryMessageText(c as ContextSummaryContent),
+        .filter(
+          (c): c is TextContent | ContextSummaryContent | FileAttachmentContent =>
+            c.type === "text" || c.type === "context-summary" || c.type === "file-attachment",
         )
+        .map((c) => {
+          if (c.type === "text") return c.text
+          if (c.type === "context-summary") return composeSummaryMessageText(c)
+          return composeFileAttachmentText(c)
+        })
       result.push({
         role: "user",
         content: textParts.join("\n"),
