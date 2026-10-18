@@ -64,6 +64,53 @@ function createContext(opts: {
   }
 }
 
+/**
+ * A context for the picker's own actions. `onPicker` runs while the picker is
+ * open, which is where Ctrl+D and Ctrl+R land in the real UI, so a test can
+ * drive a delete or rename before the picker resolves.
+ */
+function createActionContext(opts: {
+  dir: string
+  activeSession?: Session | null
+  pickerResult?: number | null
+  onPicker?: (request: PickerRequest) => void
+}): {
+  context: CommandContext
+  pickerRequests: PickerRequest[]
+  switchedTo: Session[]
+  renameCalls: (string | null)[]
+  freshCalls: () => number
+} {
+  const pickerRequests: PickerRequest[] = []
+  const switchedTo: Session[] = []
+  const renameCalls: (string | null)[] = []
+  const activeSession = opts.activeSession ?? null
+  let fresh = 0
+  return {
+    pickerRequests,
+    switchedTo,
+    renameCalls,
+    freshCalls: () => fresh,
+    context: {
+      projectPath: "/tmp/project",
+      openPicker: async (request) => {
+        pickerRequests.push(request)
+        opts.onPicker?.(request)
+        return opts.pickerResult ?? null
+      },
+      sessions: {
+        dir: opts.dir,
+        getActiveSession: () => activeSession,
+        switchTo: (session) => switchedTo.push(session),
+        startFresh: () => {
+          fresh += 1
+        },
+        rename: (name) => renameCalls.push(name),
+      },
+    },
+  }
+}
+
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "vicode-session-cmd-test-"))
 })
@@ -250,5 +297,121 @@ describe("createSessionCommand", () => {
   it("throws a helpful error when session capabilities are missing", async () => {
     const command = createSessionCommand()
     await expect(command.execute([], { projectPath: "/tmp/project" })).rejects.toThrow(/interactive/)
+  })
+
+  it("exposes delete and rename on the picker request", async () => {
+    saveSession(makeSession({ id: "s1" }), tempDir)
+    const { context, pickerRequests } = createContext({ dir: tempDir, pickerResult: null })
+
+    await createSessionCommand().execute([], context)
+
+    expect(typeof pickerRequests[0]!.onDelete).toBe("function")
+    expect(typeof pickerRequests[0]!.onRename).toBe("function")
+    expect(pickerRequests[0]!.hint).toContain("Ctrl+D")
+    expect(pickerRequests[0]!.hint).toContain("Ctrl+R")
+  })
+})
+
+describe("session delete and rename from the picker", () => {
+  it("removes the deleted session's file", async () => {
+    saveSession(makeSession({ id: "keep", updatedAt: "2025-06-01T10:00:00.000Z" }), tempDir)
+    saveSession(makeSession({ id: "gone", updatedAt: "2025-05-01T10:00:00.000Z" }), tempDir)
+
+    const { context } = createActionContext({
+      dir: tempDir,
+      pickerResult: null,
+      onPicker: (request) => request.onDelete?.(request.items[1]!),
+    })
+
+    await createSessionCommand().execute([], context)
+
+    expect(existsSync(join(tempDir, "gone.json"))).toBe(false)
+    expect(existsSync(join(tempDir, "keep.json"))).toBe(true)
+  })
+
+  it("starts fresh when the deleted session is the live one", async () => {
+    const active = makeSession({ id: "active" })
+    saveSession(active, tempDir)
+
+    const { context, freshCalls } = createActionContext({
+      dir: tempDir,
+      activeSession: active,
+      pickerResult: null,
+      onPicker: (request) => request.onDelete?.(request.items[0]!),
+    })
+
+    await createSessionCommand().execute([], context)
+
+    expect(freshCalls()).toBe(1)
+    expect(existsSync(join(tempDir, "active.json"))).toBe(false)
+  })
+
+  it("rewrites a stored session's name and returns its new label", async () => {
+    saveSession(makeSession({ id: "s1", updatedAt: "2025-06-01T10:00:00.000Z" }), tempDir)
+
+    let label: string | void = ""
+    const { context, renameCalls } = createActionContext({
+      dir: tempDir,
+      pickerResult: null,
+      onPicker: (request) => {
+        label = request.onRename?.(request.items[0]!, "Deep work")
+      },
+    })
+
+    await createSessionCommand().execute([], context)
+
+    expect(loadSession("s1", tempDir)!.name).toBe("Deep work")
+    expect(label).toContain("Deep work")
+    expect(label).toContain("s1")
+    // A non-active session is written straight to disk, not through the app.
+    expect(renameCalls).toEqual([])
+  })
+
+  it("renames the live session through the sessions capability", async () => {
+    const active = makeSession({ id: "active", name: "Old" })
+    saveSession(active, tempDir)
+
+    const { context, renameCalls } = createActionContext({
+      dir: tempDir,
+      activeSession: active,
+      pickerResult: null,
+      onPicker: (request) => request.onRename?.(request.items[0]!, "New name"),
+    })
+
+    await createSessionCommand().execute([], context)
+
+    expect(renameCalls).toEqual(["New name"])
+  })
+
+  it("clears the name when the rename is emptied", async () => {
+    saveSession(makeSession({ id: "named", name: "Old", updatedAt: "2025-06-01T10:00:00.000Z" }), tempDir)
+
+    const { context } = createActionContext({
+      dir: tempDir,
+      pickerResult: null,
+      onPicker: (request) => {
+        request.onRename?.(request.items[0]!, "   ")
+      },
+    })
+
+    await createSessionCommand().execute([], context)
+
+    expect(loadSession("named", tempDir)!.name).toBeUndefined()
+  })
+
+  it("switches to the session that shifted up after a delete", async () => {
+    saveSession(makeSession({ id: "newer", updatedAt: "2025-06-01T10:00:00.000Z" }), tempDir)
+    saveSession(makeSession({ id: "older", updatedAt: "2025-01-01T10:00:00.000Z" }), tempDir)
+
+    const { context, switchedTo } = createActionContext({
+      dir: tempDir,
+      pickerResult: 0,
+      onPicker: (request) => request.onDelete?.(request.items[0]!),
+    })
+
+    const output = await createSessionCommand().execute([], context)
+
+    expect(switchedTo.map((s) => s.id)).toEqual(["older"])
+    expect(output).toContain("older")
   })
 })

@@ -137,7 +137,7 @@ Configuration:
   /provider  - switch provider
   /skill     - load skill markdown as System Prompt layer
   /new       - save current session and start fresh
-  /session   - switch to a saved session
+  /session   - switch to, rename, or delete a saved session
   /rename    - name the current session (or /rename clear)
   /key       - set or change an API key (interactive prompt)
 

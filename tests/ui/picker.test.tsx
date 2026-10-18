@@ -22,7 +22,7 @@ async function sendKeys(instance: { stdin: { write: (s: string) => void } }, key
 function plainLines(frame: string | undefined): string[] {
   return (frame ?? "")
     .split("\n")
-    .map((l) => l.replace(/\[[0-9;]*m/g, "").replace(/[│╭╮╰╯─]/g, " ").trim())
+    .map((l) => l.replace(/\u001B\[[0-9;]*m/g, "").replace(/[│╭╮╰╯─]/g, " ").trim())
 }
 
 describe("Picker", () => {
@@ -263,6 +263,122 @@ describe("Picker", () => {
     await sendKeys(instance, ["\r"])
     expect(selected).toEqual([])
     expect(cancelled).toBe(false)
+    instance.unmount()
+  })
+
+  it("asks before deleting, then removes the row on y", async () => {
+    const deleted: PickerItem[] = []
+    const instance = render(
+      <Picker
+        title="Switch to session"
+        items={items}
+        onSelect={() => {}}
+        onCancel={() => {}}
+        onDelete={(item) => deleted.push(item)}
+      />,
+    )
+    await sendKeys(instance, ["\u0004"])
+    let frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("Delete sess_a?")
+    expect(frame).toContain("[y] Delete")
+    expect(frame).toContain("[n] Cancel")
+
+    await sendKeys(instance, ["y"])
+    expect(deleted).toEqual([items[0]!])
+    frame = instance.lastFrame() ?? ""
+    expect(frame).not.toContain("sess_a")
+    expect(frame).toContain("sess_b")
+    instance.unmount()
+  })
+
+  it("keeps the item when the delete is declined", async () => {
+    const deleted: PickerItem[] = []
+    const instance = render(
+      <Picker
+        title="Pick"
+        items={items}
+        onSelect={() => {}}
+        onCancel={() => {}}
+        onDelete={(item) => deleted.push(item)}
+      />,
+    )
+    await sendKeys(instance, ["\u0004"])
+    await sendKeys(instance, ["n"])
+    expect(deleted).toEqual([])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("sess_a")
+    expect(frame).not.toContain("Delete sess_a?")
+    instance.unmount()
+  })
+
+  it("takes a new name on Ctrl+R and shows the label onRename returns", async () => {
+    const called: Array<[PickerItem, string]> = []
+    const instance = render(
+      <Picker
+        title="Pick"
+        items={items}
+        onSelect={() => {}}
+        onCancel={() => {}}
+        onRename={(item, name) => {
+          called.push([item, name])
+          return `${name} (renamed)`
+        }}
+      />,
+    )
+    await sendKeys(instance, ["\u0012"])
+    expect(instance.lastFrame() ?? "").toContain("New name for sess_a")
+    await sendKeys(instance, ["D", "e", "e", "p"])
+    await sendKeys(instance, ["\r"])
+    expect(called).toEqual([[items[0]!, "Deep"]])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("Deep (renamed)")
+    instance.unmount()
+  })
+
+  it("cancels a rename on Escape and leaves the label alone", async () => {
+    const called: Array<[PickerItem, string]> = []
+    const instance = render(
+      <Picker
+        title="Pick"
+        items={items}
+        onSelect={() => {}}
+        onCancel={() => {}}
+        onRename={(item, name) => {
+          called.push([item, name])
+        }}
+      />,
+    )
+    await sendKeys(instance, ["\u0012", "x", "y", "\u001B"])
+    expect(called).toEqual([])
+    expect(instance.lastFrame() ?? "").toContain("sess_a")
+    instance.unmount()
+  })
+
+  it("selects the row that shifted up after a delete", async () => {
+    const selected: number[] = []
+    const instance = render(
+      <Picker
+        title="Pick"
+        items={items}
+        onSelect={(i) => selected.push(i)}
+        onCancel={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+    await sendKeys(instance, ["\u0004", "y", "\r"])
+    expect(selected).toEqual([0])
+    instance.unmount()
+  })
+
+  it("leaves Ctrl+D alone when the picker has no delete handler", async () => {
+    const instance = render(
+      <Picker title="Pick" items={items} onSelect={() => {}} onCancel={() => {}} />,
+    )
+    await sendKeys(instance, ["\u0004"])
+    const frame = instance.lastFrame() ?? ""
+    expect(frame).toContain("sess_a")
+    expect(frame).toContain("sess_b")
+    expect(frame).not.toContain("Delete")
     instance.unmount()
   })
 })

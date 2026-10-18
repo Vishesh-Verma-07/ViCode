@@ -998,11 +998,11 @@ describe("App /rename command", () => {
       await typeAndSubmit("/session")
       await until(() => (lastFrame() ?? "").includes("sess_tip"))
 
-      expect(lastFrame() ?? "").toContain("/rename <name>")
+      expect(lastFrame() ?? "").toContain("Ctrl+R")
 
       await pressKey("\u001B")
       await until(() => !(lastFrame() ?? "").includes("Switch to session"))
-      expect(lastFrame() ?? "").not.toContain("/rename <name>")
+      expect(lastFrame() ?? "").not.toContain("Ctrl+R")
     } finally {
       unmount()
       rmSync(sessionsDir, { recursive: true, force: true })

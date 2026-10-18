@@ -83,6 +83,17 @@ export interface PickerRequest {
   items: PickerItem[]
   defaultIndex?: number
   hint?: string
+  /**
+   * Ctrl+D on the highlighted row asks to delete it, then hands the row here.
+   * The caller drops the item from its own list, which the Picker does locally
+   * in the same breath, so the two stay index-aligned for a later Enter.
+   */
+  onDelete?: (item: PickerItem) => void
+  /**
+   * Ctrl+R on the highlighted row opens a name prompt; Enter hands the typed
+   * name here. Return the row's new label, or nothing to leave the label alone.
+   */
+  onRename?: (item: PickerItem, name: string) => string | void
 }
 
 export type OpenPicker = (request: PickerRequest) => Promise<number | null>
