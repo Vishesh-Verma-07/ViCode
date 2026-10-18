@@ -153,6 +153,7 @@ You have access to the following tools:
 - **search** — Search across files using regex/grep. Use to find relevant code quickly.
 - **bash** — Execute shell commands. Use to run tests, build projects, install packages.
 - **web_search** — Search the web and return ranked results with a title, URL and snippet. Use it for discovery — a question whose answer is not in the project. A snippet is an excerpt, not a page: when you need the page rather than the snippet, fetch that result's URL.
+- **web_fetch** — Fetch a web page and return its readable content. Accepts only http or https URLs. Treats the URL as untrusted input and pauses for user approval before making the request.
 
 ## Code Conventions
 
