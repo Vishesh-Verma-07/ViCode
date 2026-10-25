@@ -249,10 +249,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
         if (key.return) {
           const choice = options[Math.min(approvalSelection, options.length - 1)] ?? options[0]!
           session.resolveApproval(choice.decision)
-          return
         }
-        const shortcuted = options.find((option) => option.shortcut === input.toLowerCase())
-        if (shortcuted) session.resolveApproval(shortcuted.decision)
         return
       }
 

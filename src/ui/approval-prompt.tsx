@@ -14,7 +14,6 @@ export interface PendingApproval {
 export interface ApprovalOption {
   decision: ApprovalDecision
   label: string
-  shortcut: string
   color: string
 }
 
@@ -25,22 +24,21 @@ function isBash(toolName: string): boolean {
 /**
  * The choices for a Tool Call, in the order the menu shows them. "Approve
  * once" comes first so Enter is the do-the-minimal-thing answer; "Always
- * allow" is second and only exists for bash, because a file approval already
+ * approve" is second and only exists for bash, because a file approval already
  * lasts the Session and a grant would mean something different.
  */
 export function approvalOptions(toolName: string): ApprovalOption[] {
   const options: ApprovalOption[] = [
-    { decision: "once", label: "Approve once", shortcut: "y", color: COLORS.success },
+    { decision: "once", label: "Approve once", color: COLORS.success },
   ]
   if (isBash(toolName)) {
     options.push({
       decision: "always",
-      label: "Always allow this command",
-      shortcut: "a",
+      label: "Always approve this command",
       color: COLORS.primary,
     })
   }
-  options.push({ decision: "reject", label: "Reject", shortcut: "n", color: COLORS.error })
+  options.push({ decision: "reject", label: "Reject", color: COLORS.error })
   return options
 }
 
@@ -102,23 +100,20 @@ export function ApprovalPrompt({ toolName, args, selected = 0 }: ApprovalPromptP
         {options.map((option, index) => {
           const active = index === highlighted
           return (
-            <Text key={option.decision}>
+            <Text key={option.decision} bold={active}>
               <Text color={active ? COLORS.primary : COLORS.muted}>{active ? "❯ " : "  "}</Text>
-              <Text color={active ? option.color : COLORS.muted}>[{option.shortcut}]</Text>
-              <Text color={active ? COLORS.text : COLORS.muted}> {option.label}</Text>
+              <Text color={active ? option.color : COLORS.muted}>{option.label}</Text>
             </Text>
           )
         })}
       </Box>
       <Box marginTop={1}>
-        <Text color={COLORS.muted}>
-          ↑/↓ select · Enter confirm · {options.map((option) => option.shortcut).join("/")} shortcuts
-        </Text>
+        <Text color={COLORS.muted}>↑/↓ to choose · Enter to confirm</Text>
       </Box>
       {isBash(toolName) && (
         <Box marginTop={1}>
           <Text color={COLORS.muted}>
-            Always allow remembers this exact command for this project. Review with /permissions.
+            Always approve remembers this exact command for this project. Review with /permissions.
           </Text>
         </Box>
       )}

@@ -8,16 +8,20 @@ function plain(frame: string | undefined): string {
 }
 
 describe("approvalOptions", () => {
-  it("offers approve once, always allow, and reject for bash", () => {
+  it("offers approve once, always approve, and reject for bash", () => {
     expect(approvalOptions("bash").map((option) => option.decision)).toEqual([
       "once",
       "always",
       "reject",
     ])
-    expect(approvalOptions("bash").map((option) => option.shortcut)).toEqual(["y", "a", "n"])
+    expect(approvalOptions("bash").map((option) => option.label)).toEqual([
+      "Approve once",
+      "Always approve this command",
+      "Reject",
+    ])
   })
 
-  it("omits always allow for file tools, whose approval already lasts the Session", () => {
+  it("omits always approve for file tools, whose approval already lasts the Session", () => {
     expect(approvalOptions("write_file").map((option) => option.decision)).toEqual([
       "once",
       "reject",
@@ -33,7 +37,7 @@ describe("ApprovalPrompt", () => {
     const frame = plain(lastFrame())
     expect(frame).toContain("npm test")
     expect(frame).toContain("Approve once")
-    expect(frame).toContain("Always allow this command")
+    expect(frame).toContain("Always approve this command")
     expect(frame).toContain("Reject")
   })
 
@@ -41,15 +45,26 @@ describe("ApprovalPrompt", () => {
     const { lastFrame } = render(
       <ApprovalPrompt toolName="bash" args={{ command: "npm test" }} selected={1} />,
     )
-    expect(plain(lastFrame())).toMatch(/❯ \[a\] Always allow this command/)
+    expect(plain(lastFrame())).toMatch(/❯ Always approve this command/)
   })
 
-  it("shows no always-allow row for a file tool", () => {
+  it("offers no single-key shortcuts, only the menu", () => {
+    const { lastFrame } = render(
+      <ApprovalPrompt toolName="bash" args={{ command: "npm test" }} />,
+    )
+    const frame = plain(lastFrame())
+    expect(frame).not.toContain("[y]")
+    expect(frame).not.toContain("[a]")
+    expect(frame).not.toContain("[n]")
+    expect(frame).toContain("Enter to confirm")
+  })
+
+  it("shows no always-approve row for a file tool", () => {
     const { lastFrame } = render(
       <ApprovalPrompt toolName="write_file" args={{ path: ".env" }} />,
     )
     const frame = plain(lastFrame())
     expect(frame).toContain("Approve once")
-    expect(frame).not.toContain("Always allow")
+    expect(frame).not.toContain("Always approve")
   })
 })

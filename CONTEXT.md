@@ -41,7 +41,7 @@ A shell word that asks for approval regardless of the Bash Allowlist: `rm`, `rmd
 _Avoid_: dangerous command (the `dangerous` flag is about a Tool, not a shell word), blocked command
 
 **Approval Grant**:
-Consent attached to one exact, whitespace-normalized bash command in one Project — `docker compose up --build -d`, never the `docker compose` family. Created with `a` at the Approval Prompt, stored in `~/.vicode/trust.json` keyed by Project Root and never in the committed `.vicode.json`, and revoked through `/permissions`. It silences its exact command despite the Allowlist and the Destructive Verbs, but cannot authorise a working directory outside the Project Root or on a Sensitive Path. The reasoning is in ADR-0015.
+Consent attached to one exact, whitespace-normalized bash command in one Project — `docker compose up --build -d`, never the `docker compose` family. Created by choosing **Always approve this command** at the Approval Prompt, stored in `~/.vicode/trust.json` keyed by Project Root and never in the committed `.vicode.json`, and revoked through `/permissions`. It silences its exact command despite the Allowlist and the Destructive Verbs, but cannot authorise a working directory outside the Project Root or on a Sensitive Path. The reasoning is in ADR-0015.
 _Avoid_: persistent approval, always-allow rule, bash memory
 
 ### Model access
@@ -182,7 +182,7 @@ _Avoid_: loop, infinite loop
 Token-by-token delivery of the LLM response, rendered in real-time in the UI.
 
 **Approval Prompt**:
-The overlay shown while a Tool Call awaits user consent. It displays the Tool name — a `bash` call shows its command on one line rather than dumping arguments — and offers a highlighted list: approve once, always allow that exact command for this project (bash only), and reject. `↑`/`↓` move the highlight, `Enter` confirms, and `y`/`a`/`n` remain single-key shortcuts.
+The overlay shown while a Tool Call awaits user consent. It displays the Tool name — a `bash` call shows its command on one line rather than dumping arguments — and offers a highlighted list: Approve once, Always approve this command (bash only), and Reject. `↑`/`↓` move the highlight and `Enter` confirms; there are no single-key shortcuts.
 
 ### Filesystem
 

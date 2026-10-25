@@ -2078,6 +2078,23 @@ describe("App status bar indicator", () => {
     return { ...instance, frameText: normalizeFrame(instance.lastFrame), typeAndSubmit }
   }
 
+  /**
+   * Answers the Approval Prompt the way a user does now: arrows to the wanted
+   * row, then Enter. The loop tolerates the render that can land between the
+   * prompt appearing and its input being read.
+   */
+  async function chooseApproval(
+    stdin: { write: (data: string) => void },
+    frameText: () => string,
+    label: string,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 10 && !frameText().includes(`❯ ${label}`); attempt++) {
+      stdin.write("\u001B[B")
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    }
+    stdin.write("\r")
+  }
+
   it("shows Ready when idle", async () => {
     const { lastFrame, unmount } = setupWithProvider(createStubProvider([]))
     try {
@@ -2335,7 +2352,7 @@ describe("App status bar indicator", () => {
       await new Promise((resolve) => setTimeout(resolve, 200))
       expect(frameText()).toContain("Waiting for approval")
 
-      stdin.write("y")
+      await chooseApproval(stdin, frameText, "Approve once")
 
       await until(() => frameText().includes("Working: bash"))
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
@@ -2379,7 +2396,7 @@ describe("App status bar indicator", () => {
       await typeAndSubmit("run rm")
       await until(() => frameText().includes("Waiting for approval"))
 
-      stdin.write("n")
+      await chooseApproval(stdin, frameText, "Reject")
 
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
       expect(frameText()).not.toContain("Waiting for approval")
@@ -2422,7 +2439,7 @@ describe("App status bar indicator", () => {
       await typeAndSubmit("run ls then fail")
       await until(() => frameText().includes("Waiting for approval"))
 
-      stdin.write("y")
+      await chooseApproval(stdin, frameText, "Approve once")
 
       await until(() => frameText().includes("✗ Error"))
       expect(frameText()).not.toContain("Waiting for approval")
@@ -2494,7 +2511,7 @@ describe("App status bar indicator", () => {
 
       await typeAndSubmit("write twice")
       await until(() => frameText().includes("Waiting for approval"))
-      stdin.write("y")
+      await chooseApproval(stdin, frameText, "Approve once")
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()), 8000)
     } finally {
       unmount()
@@ -2516,7 +2533,7 @@ describe("App status bar indicator", () => {
 
       await typeAndSubmit("first write")
       await until(() => frameText().includes("Waiting for approval"))
-      stdin.write("y")
+      await chooseApproval(stdin, frameText, "Approve once")
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
 
       await typeAndSubmit("second write")
@@ -2542,12 +2559,12 @@ describe("App status bar indicator", () => {
 
       await typeAndSubmit("first write")
       await until(() => frameText().includes("Waiting for approval"))
-      stdin.write("n")
+      await chooseApproval(stdin, frameText, "Reject")
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
 
       await typeAndSubmit("second write")
       await until(() => frameText().includes("Waiting for approval"), 8000)
-      stdin.write("y")
+      await chooseApproval(stdin, frameText, "Approve once")
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
     } finally {
       unmount()
@@ -2569,12 +2586,12 @@ describe("App status bar indicator", () => {
 
       await typeAndSubmit("first run")
       await until(() => frameText().includes("Waiting for approval"))
-      stdin.write("y")
+      await chooseApproval(stdin, frameText, "Approve once")
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
 
       await typeAndSubmit("second run")
       await until(() => frameText().includes("Waiting for approval"), 8000)
-      stdin.write("y")
+      await chooseApproval(stdin, frameText, "Approve once")
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
     } finally {
       unmount()
@@ -2601,17 +2618,9 @@ describe("App status bar indicator", () => {
 
       await typeAndSubmit("run it")
       await until(() => frameText().includes("Waiting for approval"))
-      expect(frameText()).toMatch(/❯ \[y\] Approve once/)
+      expect(frameText()).toContain("❯ Approve once")
 
-      // A render can land between the prompt appearing and input being read,
-      // so nudge the arrow until the highlight visibly moves.
-      for (let attempt = 0; attempt < 10 && !/❯ \[a\] Always allow this command/.test(frameText()); attempt++) {
-        stdin.write("\u001B[B")
-        await new Promise((resolve) => setTimeout(resolve, 30))
-      }
-      await until(() => /❯ \[a\] Always allow this command/.test(frameText()))
-
-      stdin.write("\r")
+      await chooseApproval(stdin, frameText, "Always approve this command")
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
       expect(frameText()).toContain("ran")
       expect(readFileSync(trustFile, "utf-8")).toContain("echo hi")
