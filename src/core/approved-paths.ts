@@ -12,6 +12,16 @@ export function approvePath(resolvedPath: string): void {
   approvedPaths.add(normalize(resolvedPath))
 }
 
+export function revokePath(resolvedPath: string): void {
+  approvedPaths.delete(normalize(resolvedPath))
+}
+
+/** The paths approved during this Session, in the case they were approved
+ *  under, for the `/permissions` surface. */
+export function listApprovedPaths(): string[] {
+  return [...approvedPaths]
+}
+
 export function clearApprovedPaths(): void {
   approvedPaths.clear()
 }

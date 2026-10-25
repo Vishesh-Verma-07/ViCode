@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from "bun:test"
-import { isPathApproved, approvePath, clearApprovedPaths } from "@/core/approved-paths"
+import { isPathApproved, approvePath, clearApprovedPaths, listApprovedPaths, revokePath } from "@/core/approved-paths"
 
 describe("approved-paths", () => {
   beforeEach(() => {
     clearApprovedPaths()
   })
 
-  it("starts each turn with no approved paths", () => {
+  it("starts each Session with no approved paths", () => {
     expect(isPathApproved("/project/src/app.ts")).toBe(false)
     expect(isPathApproved("/project/.env")).toBe(false)
   })
@@ -21,12 +21,26 @@ describe("approved-paths", () => {
     expect(isPathApproved("/project/b.txt")).toBe(false)
   })
 
-  it("clears all approved paths at the start of a turn", () => {
+  it("clears all approved paths when the Session changes", () => {
     approvePath("/project/secret/.env")
     approvePath("/project/outside.txt")
     clearApprovedPaths()
     expect(isPathApproved("/project/secret/.env")).toBe(false)
     expect(isPathApproved("/project/outside.txt")).toBe(false)
+  })
+
+  it("lists the paths approved during the Session", () => {
+    approvePath("/project/.env")
+    approvePath("/project/outside.txt")
+    expect(listApprovedPaths().sort()).toEqual(["/project/.env", "/project/outside.txt"])
+  })
+
+  it("revokes one approved path and leaves the rest", () => {
+    approvePath("/project/.env")
+    approvePath("/project/outside.txt")
+    revokePath("/project/.env")
+    expect(isPathApproved("/project/.env")).toBe(false)
+    expect(isPathApproved("/project/outside.txt")).toBe(true)
   })
 
   it("matches on the exact resolved path string it was given", () => {

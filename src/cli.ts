@@ -18,6 +18,7 @@ import { formatModelId, parseModelId, resolveModelId, LEGACY_PROVIDER } from "./
 import { allTools } from "./tools"
 import { CommandRegistry } from "./core/command-registry"
 import { createBuiltinCommands } from "./commands"
+import { loadCommandGrants } from "./core/approval-grants"
 import { App } from "./ui/app"
 import { createBackspaceRewritingStdin } from "./ui/backspace-encoding"
 import {
@@ -140,6 +141,7 @@ render(
       projectPath,
       sensitivePatterns: config.sensitiveFiles,
       silentBashCommands: config.silentBashCommands,
+      approvalGrants: loadCommandGrants(projectPath),
     },
     initialSession: initialSession ?? undefined,
     sessionsDir,

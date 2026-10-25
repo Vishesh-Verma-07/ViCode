@@ -101,3 +101,160 @@ describe("bashRequiresApproval", () => {
     ).toBe(true)
   })
 })
+
+describe("bashRequiresApproval — shipped defaults", () => {
+  it("runs a read-only default with no configuration at all", () => {
+    expect(bashRequiresApproval({ command: "ls -la" }, { projectPath: proj })).toBe(false)
+    expect(bashRequiresApproval({ command: "git status --short" }, { projectPath: proj })).toBe(false)
+    expect(bashRequiresApproval({ command: "git diff HEAD~1" }, { projectPath: proj })).toBe(false)
+  })
+
+  it("still asks when an explicit empty allowlist opts out of the defaults", () => {
+    expect(
+      bashRequiresApproval({ command: "ls" }, { projectPath: proj, silentBashCommands: [] }),
+    ).toBe(true)
+  })
+
+  it("keeps the defaults when the user adds their own entries", () => {
+    expect(
+      bashRequiresApproval({ command: "ls" }, { projectPath: proj, silentBashCommands: ["npm"] }),
+    ).toBe(false)
+    expect(
+      bashRequiresApproval({ command: "npm test" }, { projectPath: proj, silentBashCommands: ["npm"] }),
+    ).toBe(false)
+  })
+
+  it("does not let a multi-word entry cover its siblings", () => {
+    expect(
+      bashRequiresApproval(
+        { command: "git status" },
+        { projectPath: proj, silentBashCommands: ["git status", "git push"] },
+      ),
+    ).toBe(false)
+    expect(
+      bashRequiresApproval(
+        { command: "git status --short" },
+        { projectPath: proj, silentBashCommands: ["git status"] },
+      ),
+    ).toBe(false)
+    expect(
+      bashRequiresApproval(
+        { command: "git stash" },
+        { projectPath: proj, silentBashCommands: ["git status"] },
+      ),
+    ).toBe(true)
+  })
+
+  it("checks every segment of a chain", () => {
+    expect(
+      bashRequiresApproval({ command: "git status | tail -5" }, { projectPath: proj }),
+    ).toBe(false)
+    expect(
+      bashRequiresApproval({ command: "git status && npm test" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "git status; rm -rf /" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "ls\nrm -rf /" }, { projectPath: proj }),
+    ).toBe(true)
+  })
+
+  it("asks when shell syntax cannot be split safely", () => {
+    expect(
+      bashRequiresApproval({ command: "ls $(rm -rf /)" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "ls `git push`" }, { projectPath: proj }),
+    ).toBe(true)
+  })
+
+  it("asks when an allowlisted command reaches a destructive verb", () => {
+    expect(
+      bashRequiresApproval({ command: "find . -exec rm {} \\;" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "find . -delete" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "git log --grep rm" }, { projectPath: proj }),
+    ).toBe(true)
+  })
+
+  it("keeps commands that can write out of the defaults", () => {
+    expect(
+      bashRequiresApproval({ command: "echo hi > src/app.ts" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "git branch -D feature" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "cat notes.md > src/app.ts" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "git log > notes.md" }, { projectPath: proj }),
+    ).toBe(true)
+    expect(
+      bashRequiresApproval({ command: "cat notes.md | tee copy.md" }, { projectPath: proj }),
+    ).toBe(true)
+  })
+
+  it("treats descriptor duplication as a read, since it writes no file", () => {
+    expect(
+      bashRequiresApproval({ command: "cat notes.md 2>&1" }, { projectPath: proj }),
+    ).toBe(false)
+  })
+
+  it("does not silence a default that touches a sensitive path", () => {
+    expect(bashRequiresApproval({ command: "cat .env" }, { projectPath: proj })).toBe(true)
+  })
+})
+
+describe("bashRequiresApproval — Command Grants", () => {
+  const projectPath = proj
+
+  it("runs the exact granted command without asking", () => {
+    expect(
+      bashRequiresApproval(
+        { command: "docker compose up --build -d" },
+        { projectPath, approvalGrants: new Set(["docker compose up --build -d"]) },
+      ),
+    ).toBe(false)
+  })
+
+  it("matches the grant across whitespace differences", () => {
+    expect(
+      bashRequiresApproval(
+        { command: "docker  compose up   --build -d" },
+        { projectPath, approvalGrants: new Set(["docker compose up --build -d"]) },
+      ),
+    ).toBe(false)
+  })
+
+  it("does not grant a sibling command", () => {
+    expect(
+      bashRequiresApproval(
+        { command: "docker compose down -v" },
+        { projectPath, approvalGrants: new Set(["docker compose up --build -d"]) },
+      ),
+    ).toBe(true)
+  })
+
+  it("outranks the Destructive Verbs, because it is per-command consent", () => {
+    expect(
+      bashRequiresApproval(
+        { command: "rm -rf build" },
+        { projectPath, approvalGrants: new Set(["rm -rf build"]) },
+      ),
+    ).toBe(false)
+  })
+
+  it("cannot authorise a working directory its user never saw", () => {
+    expect(
+      bashRequiresApproval(
+        { command: "cat notes.md", cwd: "../" },
+        { projectPath, approvalGrants: new Set(["cat notes.md"]) },
+      ),
+    ).toBe(true)
+  })
+})

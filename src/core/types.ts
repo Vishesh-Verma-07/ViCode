@@ -64,6 +64,8 @@ export interface ToolContext {
   projectPath: string
   sensitivePatterns?: string[]
   silentBashCommands?: string[]
+  /** Commands granted for this Project, consulted by the bash Tool. */
+  approvalGrants?: Set<string>
 }
 
 export interface Command {
@@ -97,6 +99,20 @@ export interface PickerRequest {
 }
 
 export type OpenPicker = (request: PickerRequest) => Promise<number | null>
+
+/**
+ * One saved approval shown by `/permissions`: a Command Grant persisted for
+ * this Project, or a path approved for this Session.
+ */
+export interface PermissionEntry {
+  kind: "command" | "path"
+  value: string
+}
+
+export interface PermissionsCapability {
+  list(): PermissionEntry[]
+  revoke(entry: PermissionEntry): void
+}
 
 export interface SessionsCapability {
   dir: string
@@ -189,6 +205,7 @@ export interface CommandContext {
   key?: KeyCapability
   compaction?: CompactionCapability
   onSkillActivate?: (content: string) => void
+  permissions?: PermissionsCapability
 }
 
 export interface Session {
