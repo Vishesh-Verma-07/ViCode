@@ -2580,6 +2580,48 @@ describe("App status bar indicator", () => {
       unmount()
     }
   }, 20000)
+
+  it("moves the approval highlight with the arrow keys and grants the selected command", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vicode-approval-"))
+    const trustFile = join(dir, "trust.json")
+    const previousTrustFile = process.env.VICODE_TRUST_FILE
+    process.env.VICODE_TRUST_FILE = trustFile
+
+    const bashTool: ToolDefinition = {
+      name: "bash",
+      description: "Run shell command",
+      parameters: z.object({ command: z.string() }),
+      execute: async () => "ran",
+      dangerous: true,
+    }
+    const provider = makeSequentialToolProvider("bash", { command: "echo hi" }, 1)
+    const { lastFrame, frameText, typeAndSubmit, stdin, unmount } = setupWithProvider(provider, [bashTool])
+    try {
+      await until(() => (lastFrame() ?? "").includes("Type your message"))
+
+      await typeAndSubmit("run it")
+      await until(() => frameText().includes("Waiting for approval"))
+      expect(frameText()).toMatch(/❯ \[y\] Approve once/)
+
+      // A render can land between the prompt appearing and input being read,
+      // so nudge the arrow until the highlight visibly moves.
+      for (let attempt = 0; attempt < 10 && !/❯ \[a\] Always allow this command/.test(frameText()); attempt++) {
+        stdin.write("\u001B[B")
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      }
+      await until(() => /❯ \[a\] Always allow this command/.test(frameText()))
+
+      stdin.write("\r")
+      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      expect(frameText()).toContain("ran")
+      expect(readFileSync(trustFile, "utf-8")).toContain("echo hi")
+    } finally {
+      unmount()
+      if (previousTrustFile === undefined) delete process.env.VICODE_TRUST_FILE
+      else process.env.VICODE_TRUST_FILE = previousTrustFile
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 20000)
 })
 
 describe("App chat scrolling", () => {

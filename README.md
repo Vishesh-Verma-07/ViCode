@@ -241,6 +241,7 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `Backspace` / `Delete` | Delete the grapheme before / at the cursor |
 | `Ctrl+W`, `Ctrl+U`, `Ctrl+Backspace`, `Alt+Backspace` | Delete the previous word (at a boundary, also consumes the following whitespace) |
 | `↑` / `↓` | Move the dropdown highlight, or recall Input History when no dropdown is open |
+| `↑` / `↓` / `Enter` | Move and confirm the highlighted Approval Prompt choice |
 | `y` / `a` / `n` | Approve once / always allow that exact command in this project / reject a pending tool call |
 | `Ctrl+C` | Show the session summary; the next keypress exits |
 | `PageUp` / `PageDown` | Scroll chat history by a screen |
@@ -265,7 +266,7 @@ Approval attaches to individual **Tool Calls**, not to whole tools. In practice 
 
 A command carrying backticks, `$(`, or `<(` cannot be split safely, so it always asks. The read-only defaults — `ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `find`, `git status`, `git diff`, `git log`, `git show` — run without a prompt on a fresh install; your `silentBashCommands` entries are added to them. An explicit `"silentBashCommands": []` means ask everything.
 
-**Anything else asks once, and can be remembered.** Press `a` at the prompt to create an **Approval Grant** for that exact command in that project — `docker compose up --build -d`, never the `docker compose` family. Grants are stored in `~/.vicode/trust.json`, keyed by project and deliberately **outside** your repository: `.vicode.json` is committed, and a grant written there would travel to everyone who clones it. Grants never authorise a working directory outside the Project Root or on a Sensitive Path. Run `/permissions` to see them — along with the session's approved paths — and `Ctrl+D` to revoke one.
+**Anything else asks once, and can be remembered.** The prompt is a highlighted menu: `↑`/`↓` to move, `Enter` to confirm, or press `y`/`a`/`n` directly. Choose **Always allow** to create an **Approval Grant** for that exact command in that project — `docker compose up --build -d`, never the `docker compose` family. Grants are stored in `~/.vicode/trust.json`, keyed by project and deliberately **outside** your repository: `.vicode.json` is committed, and a grant written there would travel to everyone who clones it. Grants never authorise a working directory outside the Project Root or on a Sensitive Path. Run `/permissions` to see them — along with the session's approved paths — and `Ctrl+D` to revoke one.
 
 A rejected call feeds `User rejected this tool call.` back to the model, so it can react to the refusal instead of retrying blindly.
 

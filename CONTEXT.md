@@ -182,7 +182,7 @@ _Avoid_: loop, infinite loop
 Token-by-token delivery of the LLM response, rendered in real-time in the UI.
 
 **Approval Prompt**:
-The overlay shown while a Tool Call awaits user consent. It displays the Tool name — a `bash` call shows its command on one line rather than dumping arguments — and accepts `y` to approve once, `a` to allow that exact command for this project (bash only), and `n` to reject.
+The overlay shown while a Tool Call awaits user consent. It displays the Tool name — a `bash` call shows its command on one line rather than dumping arguments — and offers a highlighted list: approve once, always allow that exact command for this project (bash only), and reject. `↑`/`↓` move the highlight, `Enter` confirms, and `y`/`a`/`n` remain single-key shortcuts.
 
 ### Filesystem
 

@@ -15,7 +15,7 @@ import { WelcomeScreen } from "./welcome"
 import { ChatPanel, CHAT_CHROME_LINES } from "./chat-panel"
 import { UsagePanel } from "./usage-panel"
 import { StatusBar } from "./status-bar"
-import { ApprovalPrompt } from "./approval-prompt"
+import { ApprovalPrompt, approvalOptions } from "./approval-prompt"
 import { ConfirmPrompt, type PendingConfirmation } from "./confirm-prompt"
 import { ExitSummary } from "./exit-summary"
 import { KeyEntryScreen } from "./key-entry-screen"
@@ -148,6 +148,13 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
     confirmContextSwitch: confirmAction,
   })
 
+  // The highlighted Approval Prompt choice. It resets for every new question,
+  // so Enter always answers the question on screen rather than a stale index.
+  const [approvalSelection, setApprovalSelection] = useState(0)
+  useEffect(() => {
+    setApprovalSelection(0)
+  }, [session.pendingApproval])
+
   const submitKey = useCallback(
     (apiKey: string) => {
       if (!keyEntry) return
@@ -233,14 +240,19 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
       }
 
       if (session.pendingApproval) {
-        const lower = input.toLowerCase()
-        if (lower === "y") {
-          session.resolveApproval("once")
-        } else if (lower === "n") {
-          session.resolveApproval("reject")
-        } else if (lower === "a" && session.pendingApproval.toolName === "bash") {
-          session.resolveApproval("always")
+        const options = approvalOptions(session.pendingApproval.toolName)
+        if (key.upArrow || key.downArrow) {
+          const step = key.upArrow ? -1 : 1
+          setApprovalSelection((prev) => (prev + step + options.length) % options.length)
+          return
         }
+        if (key.return) {
+          const choice = options[Math.min(approvalSelection, options.length - 1)] ?? options[0]!
+          session.resolveApproval(choice.decision)
+          return
+        }
+        const shortcuted = options.find((option) => option.shortcut === input.toLowerCase())
+        if (shortcuted) session.resolveApproval(shortcuted.decision)
         return
       }
 
@@ -418,6 +430,7 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
         <ApprovalPrompt
           toolName={session.pendingApproval.toolName}
           args={session.pendingApproval.args}
+          selected={approvalSelection}
         />
       )}
       {session.showExitSummary && (
