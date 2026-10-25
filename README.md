@@ -151,7 +151,7 @@ The catalog comes from [models.dev](https://models.dev), cached in `~/.vicode/mo
 
 ## Configuration
 
-ViCode reads a layered configuration. Project config wins over global config for scalar keys; the two array keys (`sensitiveFiles`, `silentBashCommands`) are **concatenated** global-then-project, so you can define extras globally and add more per project.
+ViCode reads a layered configuration. Project config wins over global config for scalar keys; the two array keys (`sensitiveFiles`, `silentBashCommands`) are **concatenated** global-then-project on top of the shipped read-only Bash Allowlist, so you can define extras globally and add more per project.
 
 1. **Project:** `.vicode.json` in your project root
 2. **Global:** `~/.vicode/config.json`
@@ -179,7 +179,7 @@ An API key is a credential rather than a configuration choice, so **only the glo
   "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
   "systemPrompt": "Optional extra system prompt text, or a path to a .md file",
   "sensitiveFiles": ["secrets/**.custom"],
-  "silentBashCommands": ["ls", "cat", "git", "bun", "npm"]
+  "silentBashCommands": ["npm", "bun", "docker"]
 }
 ```
 
@@ -192,7 +192,7 @@ An API key is a credential rather than a configuration choice, so **only the glo
 | `model` | `string` | either layer | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | Provider-qualified model id. Switch mid-session with `/model`. |
 | `systemPrompt` | `string` | either layer | — | Extra System Prompt text, or a path to a Markdown file. Overridden by `.vicode/system.md` if that file exists. |
 | `sensitiveFiles` | `string[]` | either layer | seven built-in patterns | Extra glob patterns treated as Sensitive Paths, merged across config layers. |
-| `silentBashCommands` | `string[]` | either layer | `[]` | Bash Allowlist: first command tokens that may run without approval. Merged across config layers. **Empty means every `bash` call asks.** |
+| `silentBashCommands` | `string[]` | either layer | read-only defaults | Bash Allowlist: command prefixes that may run without approval, added to the shipped read-only defaults. Merged across config layers. **An explicit `[]` means ask everything.** |
 
 A `model` written before multi-provider support was a bare id, and those files are migrated to `openrouter/<id>` on read. Config written by a current version is read literally. See [ADR-0006](docs/adr/0006-provider-qualified-model-ids.md).
 
@@ -227,6 +227,7 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `/provider` | Jump straight to a provider's recommended model |
 | `/key` | Set, change, or remove an API key — `/key`, `/key anthropic`, or `/key anthropic remove` |
 | `/compact` | Fold older messages into a summary and keep the context window lean |
+| `/permissions` | Review and revoke saved approvals — command grants and this session's approved paths |
 
 ## Key shortcuts
 
@@ -240,7 +241,7 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `Backspace` / `Delete` | Delete the grapheme before / at the cursor |
 | `Ctrl+W`, `Ctrl+U`, `Ctrl+Backspace`, `Alt+Backspace` | Delete the previous word (at a boundary, also consumes the following whitespace) |
 | `↑` / `↓` | Move the dropdown highlight, or recall Input History when no dropdown is open |
-| `y` / `n` | Approve / reject a pending tool call |
+| `y` / `a` / `n` | Approve once / always allow that exact command in this project / reject a pending tool call |
 | `Ctrl+C` | Show the session summary; the next keypress exits |
 | `PageUp` / `PageDown` | Scroll chat history by a screen |
 | Mouse wheel | Scroll chat history by three lines |
@@ -251,19 +252,20 @@ Picky surfaces (model, skill, and session pickers) take `↑`/`↓` to move, `En
 
 Approval attaches to individual **Tool Calls**, not to whole tools. In practice most of the agent's work is silent.
 
-**File operations** (`read_file`, `write_file`, `edit_file`) pause for approval only when the target is a **Sensitive Path** or resolves **outside the Project Root**. Ordinary in-project files run without a prompt. Approving a resolved path also auto-approves later calls to that same path for the rest of the turn, so each distinct path surfaces at most one explicit approval per turn. (This memory resets at the start of every turn, on session switch, and on a new session.)
+**File operations** (`read_file`, `write_file`, `edit_file`) pause for approval only when the target is a **Sensitive Path** or resolves **outside the Project Root**. Ordinary in-project files run without a prompt. Approving a resolved path also auto-approves later calls to that same path for the rest of the **session**, so each distinct path surfaces at most one explicit approval per session. This memory resets on session switch and on a new session; it is never written to disk.
 
-**File Mentions** (`@path`) read the named file and carry its content on your message. A mention of a Sensitive Path or a path outside the Project Root pauses for the same approval a `read_file` of that path would, under the same per-turn path memory — so approving `@.env` also spares the model's own read of `.env` the second prompt. The File Suggestion never offers a Sensitive Path, but one typed out in full still asks.
+**File Mentions** (`@path`) read the named file and carry its content on your message. A mention of a Sensitive Path or a path outside the Project Root pauses for the same approval a `read_file` of that path would, under the same session-scoped path memory — so approving `@.env` also spares the model's own read of `.env` the second prompt. The File Suggestion never offers a Sensitive Path, but one typed out in full still asks.
 
-**`bash` calls** run as **Silent Bash Calls** only when all three of these hold:
+**`bash` calls** run as **Silent Bash Calls** when all of these hold:
 
-1. the command's first token is on the Bash Allowlist (`silentBashCommands`);
-2. no command token resolves to a Sensitive Path;
-3. the resolved working directory stays inside the Project Root and is not a Sensitive Path.
+1. every segment of the command — split on `;`, `&&`, `||`, `|`, and newlines — independently begins with a **Bash Allowlist** prefix;
+2. no segment contains a **Destructive Verb** (`rm`, `dd`, `chmod`, `sudo`, `find -exec`, `git push`, a package `publish`, and the like), and the command does not write through a redirection (`>`, `>>`, `&>`) or a `tee`;
+3. no command token resolves to a Sensitive Path;
+4. the resolved working directory stays inside the Project Root and is not a Sensitive Path.
 
-The allowlist is re-checked on **every** call, and there is no turn-memory for bash approvals. An empty allowlist means every `bash` call asks, which is the default.
+A command carrying backticks, `$(`, or `<(` cannot be split safely, so it always asks. The read-only defaults — `ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `find`, `git status`, `git diff`, `git log`, `git show` — run without a prompt on a fresh install; your `silentBashCommands` entries are added to them. An explicit `"silentBashCommands": []` means ask everything.
 
-> **Trade-off to be aware of:** the allowlist guard is one token wide. An allowlisted `npm run <x>` or `git config --global …` executes without consent even in a destructive context. Allowlist read-only commands (`ls`, `cat`, `rg`, `git status`, `bun test`) and leave the rest asking.
+**Anything else asks once, and can be remembered.** Press `a` at the prompt to create an **Approval Grant** for that exact command in that project — `docker compose up --build -d`, never the `docker compose` family. Grants are stored in `~/.vicode/trust.json`, keyed by project and deliberately **outside** your repository: `.vicode.json` is committed, and a grant written there would travel to everyone who clones it. Grants never authorise a working directory outside the Project Root or on a Sensitive Path. Run `/permissions` to see them — along with the session's approved paths — and `Ctrl+D` to revoke one.
 
 A rejected call feeds `User rejected this tool call.` back to the model, so it can react to the refusal instead of retrying blindly.
 
@@ -349,7 +351,7 @@ vicode/
 │   ├── config/               # Layered config loading + CLI arg parsing
 │   ├── providers/            # Provider adapters + the registry-driven factory
 │   ├── tools/                # read_file, list_files, search, web_search, write_file, edit_file, bash
-│   ├── commands/             # /help, /session, /rename, /new, /exit, /model, /skill, /home, /key, /compact
+│   ├── commands/             # /help, /session, /rename, /new, /exit, /model, /skill, /home, /key, /compact, /permissions
 │   └── ui/                   # Ink React components (app, panels, input, picker, theme, mouse)
 ├── tests/                    # Mirrors src/ (core, config, commands, tools, ui, providers; uses @/ alias)
 ├── docs/

@@ -22,19 +22,27 @@ _Avoid_: tool use, function call
 A function the LLM can invoke: to interact with the filesystem or the shell, or to ask a network service a question. Each Tool has a name, description, Zod parameter schema, and execute function. Read-only means nothing changes on disk — `web_search` leaves the machine and is read-only all the same, which is why every Mode offers it.
 
 **Approval Rule**:
-The rule deciding whether a Tool Call pauses for user approval: a call pauses iff it is a `bash` call that is not a Silent Bash Call, a file operation whose target is a Sensitive Path or lies outside the Project Root, or a `web_fetch` call whose URL has not been approved during the current Turn — that third case is the Outbound Fetch Approval Rule, and it is not a path rule under another name. Approval attaches to individual Tool Calls, not whole Tools. Approving a resolved path also auto-approves later calls to that same path for the rest of the Turn, so each distinct path surfaces at most one explicit approval per Turn, and an approved URL carries for the rest of the Turn the same way; `bash` has no memory at all. A File Mention reads a named path, so it owes the same consent a `read_file` of that path would and pauses under the two path cases rather than a rule of its own.
+The rule deciding whether a Tool Call pauses for user approval: a call pauses iff it is a `bash` call that is neither a Silent Bash Call nor covered by an Approval Grant, a file operation whose target is a Sensitive Path or lies outside the Project Root, or a `web_fetch` call whose URL has not been approved during the current Turn — that third case is the Outbound Fetch Approval Rule, and it is not a path rule under another name. Approval attaches to individual Tool Calls, not whole Tools. Approving a resolved path also auto-approves later calls to that same path for the rest of the Session, so each distinct path surfaces at most one explicit approval per Session, and an approved URL carries for the rest of the Turn; a `bash` call is remembered only when the user grants that exact command. A File Mention reads a named path, so it owes the same consent a `read_file` of that path would and pauses under the two path cases rather than a rule of its own.
 
 **Outbound Fetch Approval Rule**:
 The case of the Approval Rule that governs an outbound fetch: a `web_fetch` Tool Call pauses for the user, showing the URL, before any request is issued, unless that exact URL has already been approved during the current Turn. It sits alongside the Sensitive Path and outside-the-Project-Root rules and is not one of them — those two ask because a read or a write reaches material already on disk, this one asks because a request to an arbitrary host leaves the machine on the model's say-so, and a local read inside the Project Root and a request to a host the user never named are not the same kind of act. Approval attaches to the exact URL, never to the host, so approving one URL on a site approves nothing else on it, and a multi-page investigation asks once per URL rather than once per call. The Tool is not `dangerous` — it writes nothing — so the pause is carried by this Approval Rule rather than by the dangerous mark; a URL that is not `http` or `https` is refused without a request being issued, so it is refused rather than approved. The decision, and the two credential decisions beside it, are written down in ADR-0013.
 _Avoid_: host approval (approval is per URL, never per host), URL allowlist (it is a per-Turn memory, not a configured list), fetch permission
 
 **Bash Allowlist**:
-The user-configured set of first command tokens (configured via the `silentBashCommands` setting, merged across config layers) whose bash Tool Calls may run as Silent Bash Calls.
+The set of command prefixes whose bash Tool Calls may run as Silent Bash Calls. It is the shipped read-only defaults (`ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `find`, `git status`, `git diff`, `git log`, `git show`) plus the user's own entries from the `silentBashCommands` setting, merged across config layers. An absent setting leaves the defaults in force; an explicit empty list means ask everything; a one-token entry matches any command leading with that token, and a multi-token entry matches a leading token sequence, so `git status` says nothing about `git push`.
 _Avoid_: whitelist, allow list
 
 **Silent Bash Call**:
-A bash Tool Call that executes without pausing for user approval because its first command token is on the Bash Allowlist, no command token resolves to a Sensitive Path, and its resolved working directory stays inside the Project Root and is not a Sensitive Path.
+A bash Tool Call that executes without pausing for user approval because every segment of the command — split on `;`, `&&`, `||`, `|`, and newlines — independently begins with a Bash Allowlist prefix, no segment contains a Destructive Verb, the command does not redirect into a file or pipe through `tee`, none of its command tokens resolves to a Sensitive Path, and its resolved working directory stays inside the Project Root and is not a Sensitive Path. A command carrying backticks, `$(`, or `<(`, which cannot be split safely, is never silent.
 _Avoid_: silent command, approval-free bash
+
+**Destructive Verb**:
+A shell word that asks for approval regardless of the Bash Allowlist: `rm`, `rmdir`, `dd`, `mkfs`, `shutdown`, `reboot`, `kill`, `pkill`, `killall`, `chmod`, `chown`, `sudo`, `su`, a `find` execution flag (`-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`), a `git push`/`git reset --hard`/`git clean`, or a package `publish`. It exists so prefix matching cannot widen the old first-token hole — `find . -exec rm {} \;` leads with an allowlisted token and still asks. An Approval Grant outranks it, because a grant is explicit consent for that exact command.
+_Avoid_: dangerous command (the `dangerous` flag is about a Tool, not a shell word), blocked command
+
+**Approval Grant**:
+Consent attached to one exact, whitespace-normalized bash command in one Project — `docker compose up --build -d`, never the `docker compose` family. Created with `a` at the Approval Prompt, stored in `~/.vicode/trust.json` keyed by Project Root and never in the committed `.vicode.json`, and revoked through `/permissions`. It silences its exact command despite the Allowlist and the Destructive Verbs, but cannot authorise a working directory outside the Project Root or on a Sensitive Path. The reasoning is in ADR-0015.
+_Avoid_: persistent approval, always-allow rule, bash memory
 
 ### Model access
 
@@ -163,7 +171,7 @@ The dropdown rendered above the Input Box listing the project files whose paths 
 _Avoid_: file autocomplete, file picker (a Picker is a different surface)
 
 **File Attachment**:
-The content of a mentioned file, carried on the user message beside the user's own words so the model reads it without a Tool Call. Stored on the message as a `file-attachment` content block and persisted with the Session, so a resumed Session still carries it. Capped like any other large payload — binary-safe head and tail around a truncation marker — and composed to the model verbatim inside a tag naming its path, with no line numbers, so an exact-string edit copied out of it is an exact-string edit against the real file. A mention of a Sensitive Path or a path outside the Project Root is a read of that path, so it pauses for the same approval a `read_file` would and the approval is remembered for the rest of the Turn; a declined or unreadable mention attaches nothing and reports why. The reasoning is in ADR-0014.
+The content of a mentioned file, carried on the user message beside the user's own words so the model reads it without a Tool Call. Stored on the message as a `file-attachment` content block and persisted with the Session, so a resumed Session still carries it. Capped like any other large payload — binary-safe head and tail around a truncation marker — and composed to the model verbatim inside a tag naming its path, with no line numbers, so an exact-string edit copied out of it is an exact-string edit against the real file. A mention of a Sensitive Path or a path outside the Project Root is a read of that path, so it pauses for the same approval a `read_file` would and the approval is remembered for the rest of the Session; a declined or unreadable mention attaches nothing and reports why. The reasoning is in ADR-0014.
 _Avoid_: context file, include (the domain term is File Attachment)
 
 **Doom Loop**:
@@ -174,7 +182,7 @@ _Avoid_: loop, infinite loop
 Token-by-token delivery of the LLM response, rendered in real-time in the UI.
 
 **Approval Prompt**:
-The overlay shown while a Tool Call awaits user consent, displaying the Tool name and arguments and accepting `y`/`n`.
+The overlay shown while a Tool Call awaits user consent. It displays the Tool name — a `bash` call shows its command on one line rather than dumping arguments — and accepts `y` to approve once, `a` to allow that exact command for this project (bash only), and `n` to reject.
 
 ### Filesystem
 

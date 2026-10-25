@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-0015](docs/adr/0015-fewer-approval-prompts-without-losing-consent.md), which replaces the empty-by-default allowlist and first-token matching. Kept as the record of the original reasoning.
 
 ## Context
 

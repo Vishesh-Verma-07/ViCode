@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted, amended by [ADR-0015](docs/adr/0015-fewer-approval-prompts-without-losing-consent.md): the approved-path memory is Session-scoped rather than Turn-scoped. The rest of this decision stands.
 
 ## Context
 
