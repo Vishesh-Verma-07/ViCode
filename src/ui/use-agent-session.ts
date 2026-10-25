@@ -21,10 +21,11 @@ import { createSession, renameSession, saveSession } from "../core/session"
 import { discoverSkills } from "../core/skills"
 import { log } from "../utils/logger"
 import { extractDiff } from "./format"
-import { isPathApproved, approvePath, clearApprovedPaths } from "../core/approved-paths"
+import { isPathApproved, approvePath, clearApprovedPaths, listApprovedPaths, revokePath } from "../core/approved-paths"
 import { fileToolApprovalKey } from "../core/sensitive-files"
+import { grantCommand, revokeCommand } from "../core/approval-grants"
 import type { FeedbackEntry, FeedbackTone } from "./feedback-line"
-import type { PendingApproval } from "./approval-prompt"
+import type { ApprovalDecision, PendingApproval } from "./approval-prompt"
 import type { TurnStatus } from "./status-bar"
 
 export const STREAMING_COMMAND_NOTICE = "Still responding - press Esc to stop it, or /exit to quit."
@@ -129,7 +130,7 @@ export interface AgentSession {
   handleSend: (input: string) => Promise<void>
   startNewSession: () => void
   performExit: () => Promise<void>
-  resolveApproval: (approved: boolean) => void
+  resolveApproval: (decision: ApprovalDecision) => void
   requestExitSummary: () => void
   abortCurrent: () => void
   /** Records a newly-entered key for a Provider and rebuilds it. */
@@ -275,6 +276,12 @@ export function useAgentSession({
     providerRef.current = providerState
   }, [providerState])
 
+  // A Session begins with no approved paths: the memory is Session-scoped
+  // (ADR-0015), and mounting the app is the start of one.
+  useEffect(() => {
+    clearApprovedPaths()
+  }, [])
+
   const applyApiKey = useCallback(
     (provider: ProviderId, nextApiKey: string) => {
       if (nextApiKey) {
@@ -328,8 +335,8 @@ export function useAgentSession({
     exit()
   }, [exit])
 
-  const resolveApproval = useCallback((approved: boolean) => {
-    pendingApproval?.resolve(approved)
+  const resolveApproval = useCallback((decision: ApprovalDecision) => {
+    pendingApproval?.resolve(decision)
     setPendingApproval(null)
   }, [pendingApproval])
 
@@ -345,20 +352,20 @@ export function useAgentSession({
    * Puts a File Mention's read on screen for consent, reusing the Approval
    * Prompt the Agent Loop already uses for file operations: a mention that
    * names a Sensitive Path or reaches outside the Project Root asks in the
-   * same words, and an approval is remembered for that path for the Turn.
+   * same words, and an approval is remembered for that path for the Session.
    */
   const requestMentionReadApproval = useCallback(
     (declaredPath: string): Promise<boolean> => {
       const approvalKey = resolve(context.projectPath, declaredPath)
       if (isPathApproved(approvalKey)) return Promise.resolve(true)
-      return new Promise<boolean>((resolveApproval) => {
+      return new Promise<boolean>((settle) => {
         setTurnStatus({ kind: "waiting-approval" })
         setPendingApproval({
           toolName: "read_file",
           args: { path: declaredPath },
-          resolve: (approved) => {
-            if (approved) approvePath(approvalKey)
-            resolveApproval(approved)
+          resolve: (decision) => {
+            if (decision !== "reject") approvePath(approvalKey)
+            settle(decision !== "reject")
           },
         })
       })
@@ -474,6 +481,22 @@ export function useAgentSession({
         skills: {
           list: async () => discoverSkills(context.projectPath),
         },
+        permissions: {
+          list: () => [
+            ...Array.from(context.approvalGrants ?? [])
+              .sort()
+              .map((value) => ({ kind: "command" as const, value })),
+            ...listApprovedPaths().map((value) => ({ kind: "path" as const, value })),
+          ],
+          revoke: (entry) => {
+            if (entry.kind === "command") {
+              context.approvalGrants ??= new Set()
+              revokeCommand(context.projectPath, entry.value, context.approvalGrants)
+            } else {
+              revokePath(entry.value)
+            }
+          },
+        },
         compaction: sessionsDir
           ? {
               compact: async () => {
@@ -557,11 +580,9 @@ export function useAgentSession({
         if (!ok) return
       }
 
-      // The Turn's approval memory starts with the message that begins the
-      // Turn, so a File Mention's read is remembered under the same per-Path
-      // rule the Agent Loop's own file calls use: approving `@.env` here
-      // spares the model's later read of it a second prompt.
-      clearApprovedPaths()
+      // Path approvals are Session-scoped (ADR-0015), so a File Mention's read
+      // and the Agent Loop's own file calls share one memory until the Session
+      // changes: approving `@.env` here spares the model's later read of it.
       const { attachments, notes } = await attachMentionedFiles(input, context, {
         requestApproval: requestMentionReadApproval,
       })
@@ -672,17 +693,31 @@ export function useAgentSession({
                 if (approvalKey && isPathApproved(approvalKey)) {
                   return Promise.resolve(true)
                 }
-                return new Promise<boolean>((resolveApproval) => {
+                return new Promise<boolean>((settle) => {
                   setTurnStatus({ kind: "waiting-approval" })
                   setPendingApproval({
                     toolName,
                     args,
-                    resolve: (approved) => {
+                    resolve: (decision) => {
+                      const approved = decision !== "reject"
                       if (approved && approvalKey) {
                         approvePath(approvalKey)
                       }
+                      if (decision === "always" && toolName === "bash") {
+                        const command = typeof args.command === "string" ? args.command : ""
+                        if (command.trim().length > 0) {
+                          context.approvalGrants ??= new Set()
+                          const saved = grantCommand(context.projectPath, command, context.approvalGrants)
+                          if (!saved) {
+                            appendFeedback(
+                              "Approval granted for this Session, but it could not be saved for later runs.",
+                              "error",
+                            )
+                          }
+                        }
+                      }
                       advanceToolStatus()
-                      resolveApproval(approved)
+                      settle(approved)
                     },
                   })
                 })

@@ -2501,7 +2501,7 @@ describe("App status bar indicator", () => {
     }
   }, 20000)
 
-  it("asks again for the same path in a fresh turn after an approval", async () => {
+  it("does not ask again for the same path in a later turn of the Session", async () => {
     const writeFileTool: ToolDefinition = {
       name: "write_file",
       description: "Write file",
@@ -2520,9 +2520,8 @@ describe("App status bar indicator", () => {
       await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
 
       await typeAndSubmit("second write")
-      await until(() => frameText().includes("Waiting for approval"), 8000)
-      stdin.write("y")
-      await until(() => /Done in [0-9]+\.[0-9]s/.test(frameText()))
+      await until(() => frameText().includes("Turns: 2"), 8000)
+      expect(frameText()).not.toContain("Waiting for approval")
     } finally {
       unmount()
     }

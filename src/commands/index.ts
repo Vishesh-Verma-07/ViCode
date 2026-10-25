@@ -10,6 +10,7 @@ import { createSkillCommand } from "./skill"
 import { createHomeCommand } from "./home"
 import { createKeyCommand } from "./key"
 import { createCompactCommand } from "./compact"
+import { createPermissionsCommand } from "./permissions"
 
 export { createHelpCommand, formatCommandList } from "./help"
 export { createSessionCommand, formatSessionName, formatSessionMeta } from "./session"
@@ -20,6 +21,7 @@ export { createModelCommand, createProviderCommand, formatModelPricing } from ".
 export { createHomeCommand } from "./home"
 export { createKeyCommand } from "./key"
 export { createCompactCommand } from "./compact"
+export { createPermissionsCommand } from "./permissions"
 
 export function createBuiltinCommands(registry: CommandRegistry): Command[] {
   return [
@@ -34,5 +36,6 @@ export function createBuiltinCommands(registry: CommandRegistry): Command[] {
     createHomeCommand(),
     createKeyCommand(),
     createCompactCommand(),
+    createPermissionsCommand(),
   ]
 }

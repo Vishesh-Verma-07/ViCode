@@ -234,8 +234,12 @@ export function App({ provider, createProvider, tools, projectPrompt, cliPrompt,
 
       if (session.pendingApproval) {
         const lower = input.toLowerCase()
-        if (lower === "y" || lower === "n") {
-          session.resolveApproval(lower === "y")
+        if (lower === "y") {
+          session.resolveApproval("once")
+        } else if (lower === "n") {
+          session.resolveApproval("reject")
+        } else if (lower === "a" && session.pendingApproval.toolName === "bash") {
+          session.resolveApproval("always")
         }
         return
       }
