@@ -51,6 +51,65 @@ describe("Tab Bar", () => {
     }
   })
 
+  it("puts × on the active Tab and on no other", () => {
+    const instance = render(
+      <TabBar
+        width={80}
+        tabs={[
+          { id: "tab-1", title: "alpha", active: false },
+          { id: "tab-2", title: "beta", active: true },
+        ]}
+      />,
+    )
+    try {
+      const line = frameText(instance.lastFrame)
+      expect((line.match(/×/g) ?? []).length).toBe(1)
+      expect(line).toContain("beta ×")
+      expect(line.slice(0, line.indexOf("beta"))).not.toContain("×")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("keeps × when the active title is cut to fit", () => {
+    const instance = render(
+      <TabBar width={20} tabs={[{ id: "tab-1", title: "a title far too long", active: true }]} />,
+    )
+    try {
+      const lines = frameLines(instance.lastFrame)
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain("…")
+      expect(lines[0]).toContain("×")
+      expect(lines[0]).toContain("+")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("does not shift the Bar when focus moves between Tabs", () => {
+    const renderWith = (activeId: string) => {
+      const instance = render(
+        <TabBar
+          width={60}
+          tabs={[
+            { id: "tab-1", title: "alpha", active: activeId === "tab-1" },
+            { id: "tab-2", title: "beta", active: activeId === "tab-2" },
+          ]}
+        />,
+      )
+      try {
+        return frameText(instance.lastFrame)
+      } finally {
+        instance.unmount()
+      }
+    }
+
+    const first = renderWith("tab-1")
+    const second = renderWith("tab-2")
+    expect(first.indexOf("beta")).toBe(second.indexOf("beta"))
+    expect(first.indexOf("+")).toBe(second.indexOf("+"))
+  })
+
   it("truncates a long title rather than wrapping", () => {
     const long = "a title far too long to fit in one Tab"
     const instance = render(

@@ -72,6 +72,8 @@ export interface TabHostProps extends TabHostDeps {
   onPrevTab?: () => void
   onNextTab?: () => void
   onJumpTab?: (position: number) => void
+  /** Closes this conversation's Tab. The window removes it from the set. */
+  onCloseTab?: () => void
 }
 
 /**
@@ -105,6 +107,7 @@ export function TabHost({
   onPrevTab,
   onNextTab,
   onJumpTab,
+  onCloseTab,
 }: TabHostProps) {
   const { exit } = useApp()
   const commandRegistry = useMemo(() => {
@@ -124,9 +127,9 @@ export function TabHost({
    * it — the same way the key prompt is not the session's to own.
    */
   const confirmAction = useCallback(
-    (message: string) =>
+    (message: string, confirmLabel: string) =>
       new Promise<boolean>((resolve) => {
-        setConfirmation({ message, resolve })
+        setConfirmation({ message, confirmLabel, resolve })
       }),
     [],
   )
@@ -138,6 +141,12 @@ export function TabHost({
       setConfirmation(null)
     },
     [confirmation],
+  )
+
+  /** The confirmation a Model switch that would shrink the context asks. */
+  const confirmSwitch = useCallback(
+    (warning: string) => confirmAction(warning, "Switch"),
+    [confirmAction],
   )
 
   /**
@@ -182,8 +191,28 @@ export function TabHost({
       keyFor(target) ? Promise.resolve(true) : promptForKey(target, true),
     openKeyEntryFor: (target) => promptForKey(target, false),
     removeApiKeyFor: removeKey,
-    confirmContextSwitch: confirmAction,
+    confirmContextSwitch: confirmSwitch,
   })
+
+  /**
+   * Closes this Tab. A Turn still in flight is stopped first, but only after
+   * the user agrees: closing a Tab is a window gesture, not a quiet way to lose
+   * a minute of work. Closing never deletes a Session — completed Turns,
+   * renames and switches have already written it, and a Tab that never got that
+   * far has no Session to lose.
+   */
+  const requestCloseTab = useCallback(async () => {
+    if (!onCloseTab) return
+    if (session.isStreaming) {
+      const confirmed = await confirmAction(
+        "This Tab is still working. Close it and stop its Turn?",
+        "Close",
+      )
+      if (!confirmed) return
+      session.abortCurrent()
+    }
+    onCloseTab()
+  }, [session, confirmAction, onCloseTab])
 
   // The report goes up through a ref so a caller that passes a fresh callback
   // each render cannot make the effect fire again and again; only a change in
@@ -375,6 +404,13 @@ export function TabHost({
         onJumpTab?.(Number(input))
         return
       }
+      if (key.ctrl && input === "x" && onCloseTab && view === "chat") {
+        // A close gesture belongs to the Tab Bar, so it only works where that
+        // Bar is on screen. `/home` parks Tabs behind the Welcome Screen, and a
+        // Tab nobody can see must not disappear under the user.
+        void requestCloseTab()
+        return
+      }
 
       if (suggestionArrows) {
         if (key.upArrow) {
@@ -462,7 +498,9 @@ export function TabHost({
         />
       )}
       {keyEntry && renderKeyEntry(keyEntry)}
-      {confirmation && <ConfirmPrompt message={confirmation.message} confirmLabel="Switch" />}
+      {confirmation && (
+        <ConfirmPrompt message={confirmation.message} confirmLabel={confirmation.confirmLabel} />
+      )}
     </>
   )
 

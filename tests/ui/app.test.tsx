@@ -5427,6 +5427,7 @@ describe("App Tabs", () => {
   }
 
   const CTRL_T = "\u0014"
+  const CTRL_X = "\u0018"
   const CTRL_LEFT = "\u001b[1;5D"
   const CTRL_RIGHT = "\u001b[1;5C"
   // Kitty CSI-u: codepoint of the digit with the ctrl modifier.
@@ -5741,6 +5742,365 @@ describe("App Tabs", () => {
       await until(() => frameText().includes("Session Summary"), 10000)
     } finally {
       unmount()
+    }
+  }, 30000)
+
+  it("closes the active Tab on Ctrl+X and focuses the one on its right", async () => {
+    const { frameText, tabBar, inputValue, pressKey, typeText, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeText("one")
+      await pressKey(CTRL_T)
+      await typeText("two")
+      await pressKey(CTRL_T)
+      await typeText("three")
+      await until(() => inputValue() === "three")
+      expect(tabBar()).toContain("×")
+
+      await pressKey(ctrlDigit(2))
+      await until(() => inputValue() === "two")
+      await pressKey(CTRL_X)
+
+      await until(() => inputValue() === "three")
+      expect((tabBar().match(/New chat/g) ?? []).length).toBe(2)
+      expect(tabBar()).toContain("×")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("closes the last Tab to its left neighbour", async () => {
+    const { frameText, tabBar, inputValue, pressKey, typeText, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeText("one")
+      await pressKey(CTRL_T)
+      await typeText("two")
+      await until(() => inputValue() === "two")
+
+      await pressKey(CTRL_X)
+      await until(() => inputValue() === "one")
+      expect((tabBar().match(/New chat/g) ?? []).length).toBe(1)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("returns to the Welcome Screen when the last Tab closes, and opens a fresh one after", async () => {
+    const { frameText, tabBar, inputValue, pressKey, typeText, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeText("abandoned draft")
+      await until(() => inputValue() === "abandoned draft")
+
+      await pressKey(CTRL_X)
+      await until(() => frameText().includes("Ask anything or select an option..."))
+      expect(frameText()).not.toContain("New chat")
+
+      await pressKey(CTRL_T)
+      await until(() => frameText().includes("Type your message"))
+      await until(() => tabBar().includes("New chat"))
+      expect(inputValue()).toBe("Type your message...")
+      expect(frameText()).not.toContain("abandoned draft")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("does not carry a closed Session into the Welcome Screen", async () => {
+    const seed: Session = {
+      id: "sess_closed_seed",
+      model: "stub-model",
+      messages: [
+        {
+          id: "msg_closed_seed",
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "old question" }],
+          timestamp: 0,
+        },
+      ],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:30:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    const { frameText, tabBar, inputValue, pressKey, unmount } = setup({ initialSession: seed })
+    try {
+      await until(() => frameText().includes("old question"))
+
+      await pressKey(CTRL_X)
+      await until(() => frameText().includes("Ask anything or select an option..."))
+      expect(frameText()).not.toContain("Continue where you left off")
+
+      await pressKey(CTRL_T)
+      await until(() => frameText().includes("Type your message"))
+      await until(() => tabBar().includes("New chat"))
+      expect(inputValue()).toBe("Type your message...")
+      expect(frameText()).not.toContain("old question")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("closes a Tab without deleting its Session, which /session still lists", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-tabs-close-session-"))
+    const seed: Session = {
+      id: "sess_close",
+      model: "stub-model",
+      messages: [
+        {
+          id: "msg_seed",
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "seed heading" }],
+          timestamp: 0,
+        },
+      ],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:30:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    saveSession(seed, sessionsDir)
+    const { frameText, pressKey, typeText, unmount } = setup({
+      initialSession: seed,
+      sessionsDir,
+      commands: [createSessionCommand()],
+    })
+    try {
+      await until(() => frameText().includes("seed heading"))
+      expect(existsSync(join(sessionsDir, "sess_close.json"))).toBe(true)
+
+      await pressKey(CTRL_X)
+      await until(() => frameText().includes("Ask anything or select an option..."))
+      expect(existsSync(join(sessionsDir, "sess_close.json"))).toBe(true)
+
+      await pressKey(CTRL_T)
+      await until(() => frameText().includes("Type your message"))
+      await typeText("/session")
+      await pressKey("\r")
+      await until(() => frameText().includes("Switch to session"))
+      expect(frameText()).toContain("sess_close")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("closes a Tab that never bound a Session without writing one", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-tabs-close-empty-"))
+    const { frameText, tabBar, pressKey, typeText, unmount } = setup({ sessionsDir })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await pressKey(CTRL_T)
+      await typeText("never sent")
+      await until(() => (tabBar().match(/New chat/g) ?? []).length === 2)
+
+      await pressKey(CTRL_X)
+      await until(() => (tabBar().match(/New chat/g) ?? []).length === 1)
+      expect(readdirSync(sessionsDir)).toEqual([])
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("asks before closing a Tab whose Turn is running, and declining leaves it working", async () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let signal: AbortSignal | undefined
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, _tools, _systemPrompt, abortSignal) {
+        signal = abortSignal
+        yield { type: "text-delta" as const, text: "slow partial" }
+        await gate
+        yield {
+          type: "finish" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+        }
+      },
+    }
+    const { frameText, tabBar, pressKey, typeAndSubmit, unmount } = setup({ provider })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeAndSubmit("slow request")
+      await until(() => frameText().includes("slow partial"), 10000)
+
+      await pressKey(CTRL_X)
+      await until(() => frameText().includes("still working"))
+      expect(frameText()).toContain("Confirm")
+
+      await pressKey("n")
+      await until(() => !frameText().includes("still working"))
+      expect(tabBar()).toContain("slow request")
+      expect(tabBar()).toContain("×")
+
+      release()
+      await until(() => frameText().includes("Done in"), 10000)
+      expect(signal?.aborted).toBe(false)
+    } finally {
+      release()
+      unmount()
+    }
+  }, 30000)
+
+  it("aborts a running Turn before the confirmed close removes its Tab", async () => {
+    let signal: AbortSignal | undefined
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, _tools, _systemPrompt, abortSignal) {
+        signal = abortSignal
+        yield { type: "text-delta" as const, text: "closing partial" }
+        await new Promise<void>((resolve) => {
+          if (abortSignal?.aborted) {
+            resolve()
+            return
+          }
+          abortSignal?.addEventListener("abort", () => resolve(), { once: true })
+        })
+        yield {
+          type: "finish" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+        }
+      },
+    }
+    const { frameText, pressKey, typeAndSubmit, unmount } = setup({ provider })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeAndSubmit("closing request")
+      await until(() => frameText().includes("closing partial"), 10000)
+
+      await pressKey(CTRL_X)
+      await until(() => frameText().includes("still working"))
+      expect(frameText()).toContain("[y] Close")
+
+      await pressKey("y")
+      await until(() => frameText().includes("Ask anything or select an option..."))
+      expect(signal?.aborted).toBe(true)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("keeps × on the Tab that becomes active after a close", async () => {
+    const { frameText, tabBar, pressKey, typeAndSubmit, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeAndSubmit("first tab")
+      await until(() => frameText().includes("reply to first tab"), 10000)
+      await until(() => tabBar().includes("first tab"))
+      await pressKey(CTRL_T)
+      await typeAndSubmit("second tab")
+      await until(() => frameText().includes("reply to second tab"), 10000)
+      await until(() => tabBar().includes("second tab ×"))
+
+      await pressKey(CTRL_X)
+      await until(() => tabBar().includes("first tab ×"))
+      expect(tabBar()).not.toContain("second tab")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("ignores Ctrl+X on the Welcome Screen, where there is no Tab Bar", async () => {
+    const { frameText, tabBar, pressKey, typeAndSubmit, unmount } = setup({
+      commands: [createHomeCommand()],
+    })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeAndSubmit("kept message")
+      await until(() => frameText().includes("reply to kept message"), 10000)
+
+      await typeAndSubmit("/home")
+      await until(() => frameText().includes("Ask anything or select an option..."))
+
+      await pressKey(CTRL_X)
+      await pressKey(CTRL_T)
+      await until(() => frameText().includes("Type your message"))
+      await until(() => tabBar().includes("kept message"))
+      expect((tabBar().match(/New chat/g) ?? []).length).toBe(1)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("keeps a Turn that finished while the close prompt was open", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-tabs-close-race-"))
+    const seed: Session = {
+      id: "sess_race",
+      model: "stub-model",
+      messages: [
+        {
+          id: "msg_race_seed",
+          role: "user" as const,
+          content: [{ type: "text" as const, text: "seed heading" }],
+          timestamp: 0,
+        },
+      ],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:30:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    saveSession(seed, sessionsDir)
+
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, _tools, _systemPrompt) {
+        yield { type: "text-delta" as const, text: "quick partial" }
+        await gate
+        yield { type: "text-delta" as const, text: "late answer" }
+        yield {
+          type: "finish" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+        }
+      },
+    }
+    const savedReply = () =>
+      JSON.stringify(loadSession("sess_race", sessionsDir)).includes("late answer")
+
+    const { frameText, pressKey, typeAndSubmit, unmount } = setup({
+      initialSession: seed,
+      sessionsDir,
+      provider,
+    })
+    try {
+      await until(() => frameText().includes("seed heading"))
+
+      await typeAndSubmit("race request")
+      await until(() => frameText().includes("quick partial"), 10000)
+
+      await pressKey(CTRL_X)
+      await until(() => frameText().includes("still working"))
+
+      // The Turn finishes while the question is still on screen.
+      release()
+      await until(savedReply, 10000)
+      expect(frameText()).toContain("still working")
+
+      await pressKey("y")
+      await until(() => frameText().includes("Ask anything or select an option..."))
+      expect(savedReply()).toBe(true)
+    } finally {
+      release()
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
     }
   }, 30000)
 })

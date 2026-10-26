@@ -6,6 +6,7 @@ import { TabHost, type TabHostDeps } from "./tab-host"
 import { TAB_BAR_HEIGHT, TabBar } from "./tab-bar"
 import {
   NEW_CHAT_TITLE,
+  closeTab,
   createTabSet,
   firstUserMessage,
   jumpToTab,
@@ -23,13 +24,6 @@ export type { FeedbackTone, FeedbackEntry } from "./feedback-line"
 export { FeedbackLine } from "./feedback-line"
 export { StatusIndicator } from "./status-bar"
 export { extractDiff } from "./format"
-
-/**
- * The host the window starts with while the Welcome Screen is up. It is not a
- * Tab yet: the first message, or a new-Tab key, turns it into the first one, so
- * the Tab Bar never names a Tab that does not exist.
- */
-const PRE_TAB_HOST_ID = "tab-pre"
 
 interface AppProps extends TabHostDeps {
   initialView?: View
@@ -57,12 +51,25 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
   const [tabs, setTabs] = useState<TabSet>(() =>
     view === "chat" ? openTab(createTabSet(), { title: initialTitle }) : createTabSet(),
   )
+  // The pre-Tab host the window starts with while the Welcome Screen is up is
+  // not a Tab yet: the first message, or a new-Tab key, turns it into the first
+  // one, so the Tab Bar never names a Tab that does not exist. Its id carries a
+  // generation because a closed conversation's host must not be reused for the
+  // next Welcome Screen.
+  const [preTabGeneration, setPreTabGeneration] = useState(0)
+  const preTabHostId = `tab-pre-${preTabGeneration}`
   // The resumed Session belongs to the host the window started with, wherever
   // it is: a Tab already, or still the pre-Tab draft on the Welcome Screen.
-  const initialHostId = useRef<string>(tabs.activeId ?? PRE_TAB_HOST_ID)
+  // Cleared when the last Tab closes, so a later Welcome Screen starts blank.
+  const initialHostId = useRef<string | null>(tabs.activeId ?? preTabHostId)
   // The pre-Tab host is not in the set yet, so its title is kept here until it
   // becomes a Tab; otherwise a resumed Session's name would be lost on entry.
   const preTabTitle = useRef<string>(initialTitle ?? NEW_CHAT_TITLE)
+  // The close path can resume after more than one render (a running Turn asks
+  // first), so it reads the set as it stands then rather than the one captured
+  // when Ctrl+X was pressed.
+  const tabsRef = useRef(tabs)
+  tabsRef.current = tabs
   const { columns, rows } = useWindowSize()
   const { stdout } = useStdout()
   const [, mouseSetupTick] = useState(0)
@@ -77,8 +84,8 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
 
   /** Opens a Tab under an id the pre-Tab host is already rendered with. */
   const adoptPreTab = useCallback(
-    (state: TabSet) => openTab(state, { id: PRE_TAB_HOST_ID, title: preTabTitle.current }),
-    [],
+    (state: TabSet) => openTab(state, { id: preTabHostId, title: preTabTitle.current }),
+    [preTabHostId],
   )
   const openFirstTab = useCallback(() => {
     setTabs((previous) => (previous.tabs.length === 0 ? adoptPreTab(previous) : previous))
@@ -102,14 +109,32 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     [],
   )
   const setTitle = useCallback((id: string, title: string) => {
-    if (id === PRE_TAB_HOST_ID) preTabTitle.current = title
+    if (id === preTabHostId) preTabTitle.current = title
     setTabs((previous) => setTabTitle(previous, id, title))
+  }, [preTabHostId])
+
+  /**
+   * Closes a Tab and, when it was the last one, returns to the Welcome Screen.
+   * The fresh pre-Tab host and the cleared Session seed are what make that
+   * screen a new beginning rather than the closed conversation under another
+   * name.
+   */
+  const closeTabById = useCallback((id: string) => {
+    const closed = closeTab(tabsRef.current, id)
+    if (closed === tabsRef.current) return
+    tabsRef.current = closed
+    setTabs(closed)
+    if (closed.tabs.length > 0) return
+    initialHostId.current = null
+    preTabTitle.current = NEW_CHAT_TITLE
+    setPreTabGeneration((generation) => generation + 1)
+    setView("home")
   }, [])
 
   // Before the first message there is no Tab, only the host that is about to
   // become one.
-  const hosts = tabs.tabs.length > 0 ? tabs.tabs : [{ id: PRE_TAB_HOST_ID }]
-  const activeId = tabs.activeId ?? PRE_TAB_HOST_ID
+  const hosts = tabs.tabs.length > 0 ? tabs.tabs : [{ id: preTabHostId }]
+  const activeId = tabs.activeId ?? preTabHostId
   // The Tab Bar is absent on the Welcome Screen, and takes exactly its row
   // from the panels when it is there.
   const showingBar = view === "chat" && tabs.tabs.length > 0
@@ -143,6 +168,7 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
           onPrevTab={goToPreviousTab}
           onNextTab={goToNextTab}
           onJumpTab={jumpTab}
+          onCloseTab={() => closeTabById(tab.id)}
         />
       ))}
     </Box>

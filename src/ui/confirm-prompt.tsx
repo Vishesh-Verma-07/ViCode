@@ -3,6 +3,8 @@ import { COLORS, ICONS } from "./theme"
 
 export interface PendingConfirmation {
   message: string
+  /** What `y` agrees to, spelled out so the keys are not the only clue. */
+  confirmLabel: string
   resolve: (confirmed: boolean) => void
 }
 
@@ -16,7 +18,8 @@ interface ConfirmPromptProps {
  * A yes/no the user has to answer before something proceeds.
  *
  * The warning is in full here rather than trimmed to fit: a switch that will
- * drop history is only safe to accept if the user can read how much.
+ * drop history, or a close that will stop a Turn, is only safe to accept if the
+ * user can read what it costs.
  */
 export function ConfirmPrompt({ message, confirmLabel }: ConfirmPromptProps) {
   return (

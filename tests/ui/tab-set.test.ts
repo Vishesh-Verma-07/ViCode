@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test"
 import {
   NEW_CHAT_TITLE,
   activeTab,
+  closeTab,
   createTabSet,
   firstUserMessage,
   focusTab,
@@ -80,6 +81,46 @@ describe("Tab set", () => {
     expect(jumpToTab(set, 0)).toBe(set)
     expect(jumpToTab(set, 4)).toBe(set)
     expect(jumpToTab(set, 9)).toBe(set)
+  })
+
+  it("closes the active Tab and focuses the one on its right", () => {
+    const set = focusTab(openTab(openTab(openTab(createTabSet()))), "tab-2")
+    const closed = closeTab(set, "tab-2")
+
+    expect(closed.tabs.map((tab) => tab.id)).toEqual(["tab-1", "tab-3"])
+    expect(closed.activeId).toBe("tab-3")
+  })
+
+  it("focuses the left neighbour when the closed Tab has none on its right", () => {
+    const set = openTab(openTab(createTabSet()))
+    expect(closeTab(set, "tab-2").activeId).toBe("tab-1")
+  })
+
+  it("closes the only Tab and leaves the set empty", () => {
+    const set = openTab(createTabSet())
+    const closed = closeTab(set, "tab-1")
+
+    expect(closed.tabs).toEqual([])
+    expect(closed.activeId).toBeNull()
+    expect(activeTab(closed)).toBeNull()
+  })
+
+  it("closes a Tab that is not active without moving focus", () => {
+    const set = focusTab(openTab(openTab(createTabSet())), "tab-1")
+    const closed = closeTab(set, "tab-2")
+
+    expect(closed.tabs.map((tab) => tab.id)).toEqual(["tab-1"])
+    expect(closed.activeId).toBe("tab-1")
+  })
+
+  it("leaves the set alone when the Tab does not exist", () => {
+    const set = openTab(createTabSet())
+    expect(closeTab(set, "nope")).toBe(set)
+  })
+
+  it("does not reuse the id of a closed Tab", () => {
+    const set = openTab(openTab(createTabSet()))
+    expect(openTab(closeTab(set, "tab-2")).tabs.map((tab) => tab.id)).toEqual(["tab-1", "tab-3"])
   })
 
   it("retitles a Tab once and returns the same set for a no-op", () => {

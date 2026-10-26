@@ -84,6 +84,21 @@ export function jumpToTab(state: TabSet, position: number): TabSet {
   return tab ? focusTab(state, tab.id) : state
 }
 
+/**
+ * Removes a Tab. When the closed Tab was the active one, the Tab on its right
+ * takes over — or the one on its left when it was last, so focus lands where
+ * the eye already is rather than jumping to the other end. Closing the final
+ * Tab leaves the set empty, which the window shows as the Welcome Screen.
+ */
+export function closeTab(state: TabSet, id: string): TabSet {
+  const index = state.tabs.findIndex((tab) => tab.id === id)
+  if (index < 0) return state
+  const tabs = state.tabs.filter((tab) => tab.id !== id)
+  if (state.activeId !== id) return { ...state, tabs }
+  const next = tabs[index] ?? tabs[index - 1] ?? null
+  return { ...state, tabs, activeId: next?.id ?? null }
+}
+
 /** Sets a Tab's title; an unknown id or the same title returns the same set. */
 export function setTabTitle(state: TabSet, id: string, title: string): TabSet {
   const tab = state.tabs.find((candidate) => candidate.id === id)
