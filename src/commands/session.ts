@@ -106,6 +106,9 @@ export function createSessionCommand(): Command {
       if (!summary) return ""
 
       const active = sessions.getActiveSession()
+      if (ctx.tabs?.focusSession(summary.id)) {
+        return `Switched to ${formatSessionName(summary)}`
+      }
       if (active) {
         saveSession({ ...active, updatedAt: new Date().toISOString() }, sessions.dir)
       }

@@ -10,6 +10,7 @@ import {
   closeTab,
   createTabSet,
   firstUserMessage,
+  focusTab,
   jumpToTab,
   nextTab,
   openTab,
@@ -20,6 +21,7 @@ import {
 } from "./tab-set"
 import type { TabSummary } from "./tab-host"
 import type { View } from "./view"
+import type { TokenUsage } from "../core/provider"
 
 export { STREAMING_COMMAND_NOTICE } from "./use-agent-session"
 export type { FeedbackTone, FeedbackEntry } from "./feedback-line"
@@ -54,6 +56,8 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     view === "chat" ? openTab(createTabSet(), { title: initialTitle }) : createTabSet(),
   )
   const [summaries, setSummaries] = useState<Record<string, TabSummary>>({})
+  const sessionTabsRef = useRef(new Map<string, string>())
+  const [tabUsage, setTabUsage] = useState<Record<string, TokenUsage>>({})
   // The pre-Tab host the window starts with while the Welcome Screen is up is
   // not a Tab yet: the first message, or a new-Tab key, turns it into the first
   // one, so the Tab Bar never names a Tab that does not exist. Its id carries a
@@ -128,6 +132,22 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
       return { ...previous, [id]: summary }
     })
   }, [])
+  const setSessionId = useCallback((tabId: string, sessionId: string | null) => {
+    for (const [knownSessionId, knownTabId] of sessionTabsRef.current) {
+      if (knownTabId === tabId) sessionTabsRef.current.delete(knownSessionId)
+    }
+    if (sessionId) sessionTabsRef.current.set(sessionId, tabId)
+  }, [])
+  const setUsage = useCallback((id: string, usage: TokenUsage) => {
+    setTabUsage((previous) => ({ ...previous, [id]: usage }))
+  }, [])
+  const focusSession = useCallback((sessionId: string) => {
+    const tabId = sessionTabsRef.current.get(sessionId)
+    if (!tabId) return false
+    setTabs((previous) => focusTab(previous, tabId))
+    setView("chat")
+    return true
+  }, [])
 
   /**
    * Closes a Tab and, when it was the last one, returns to the Welcome Screen.
@@ -146,6 +166,13 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
       delete next[id]
       return next
     })
+    setTabUsage((previous) => {
+      if (!(id in previous)) return previous
+      const next = { ...previous }
+      delete next[id]
+      return next
+    })
+    setSessionId(id, null)
     if (closed.tabs.length > 0) return
     initialHostId.current = null
     preTabTitle.current = NEW_CHAT_TITLE
@@ -165,6 +192,18 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     (tab) => tab.id !== activeId && summaries[tab.id]?.needsApproval,
   )
   const feedbackHeight = backgroundApproval ? 1 : 0
+  const summaryUsage = Object.values(tabUsage).reduce<TokenUsage>(
+    (total, usage) => ({
+      inputTokens: total.inputTokens + usage.inputTokens,
+      outputTokens: total.outputTokens + usage.outputTokens,
+      totalTokens: total.totalTokens + usage.totalTokens,
+      cost:
+        total.cost === null || usage.cost === null
+          ? null
+          : total.cost + usage.cost,
+    }),
+    { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+  )
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
@@ -204,6 +243,10 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
           onEnterHome={enterHome}
           onTitleChange={(title) => setTitle(tab.id, title)}
           onSummaryChange={(summary) => setSummary(tab.id, summary)}
+          onSessionChange={(sessionId) => setSessionId(tab.id, sessionId)}
+          onUsageChange={(usage) => setUsage(tab.id, usage)}
+          summaryUsage={summaryUsage}
+          focusSession={focusSession}
           onOpenTab={openNewTab}
           onPrevTab={goToPreviousTab}
           onNextTab={goToNextTab}

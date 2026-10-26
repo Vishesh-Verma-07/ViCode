@@ -294,6 +294,29 @@ describe("createSessionCommand", () => {
     expect(readFileSync(join(dir, "target.json"), "utf-8")).toBe(targetRawBefore)
   })
 
+  it("focuses an already-open Session Tab instead of switching the active host", async () => {
+    const session = makeSession({ id: "sess_open" })
+    saveSession(session, tempDir)
+    const { context, switchedTo } = createContext({
+      dir: tempDir,
+      pickerResult: 0,
+    })
+    let focused = ""
+    context.tabs = {
+      openNew: () => {},
+      focusSession: (sessionId) => {
+        focused = sessionId
+        return true
+      },
+    }
+
+    const output = await createSessionCommand().execute([], context)
+
+    expect(focused).toBe("sess_open")
+    expect(switchedTo).toHaveLength(0)
+    expect(output).toContain("Switched to")
+  })
+
   it("throws a helpful error when session capabilities are missing", async () => {
     const command = createSessionCommand()
     await expect(command.execute([], { projectPath: "/tmp/project" })).rejects.toThrow(/interactive/)

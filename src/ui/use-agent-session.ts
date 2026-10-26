@@ -93,6 +93,8 @@ export interface UseAgentSessionArgs {
   view: "home" | "chat"
   enterChat: () => void
   enterHome: () => void
+  openNewTab?: () => void
+  focusSession?: (sessionId: string) => boolean
   /**
    * Resolves a Provider's key, consulting the environment as a fallback.
    * Injected so the session never reads config or `process.env` itself.
@@ -158,6 +160,8 @@ export function useAgentSession({
   view,
   enterChat,
   enterHome,
+  openNewTab,
+  focusSession,
   keyFor,
   ensureKeyFor,
   openKeyEntryFor,
@@ -424,6 +428,12 @@ export function useAgentSession({
       const commandContext: CommandContext = {
         projectPath: context.projectPath,
         openPicker,
+        tabs: openNewTab
+          ? {
+              openNew: openNewTab,
+              focusSession: (sessionId) => focusSession?.(sessionId) ?? false,
+            }
+          : undefined,
         sessions: sessionsDir
           ? {
               dir: sessionsDir,

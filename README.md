@@ -67,6 +67,7 @@ vicode
 - **Context budgeting** — the conversation is projected down to fit the model's context window, dropping the largest tool results first and marking what was omitted
 - **Automatic compaction** — once the history grows past a threshold, older messages are folded into a running summary; `/compact` forces it on demand
 - **Session persistence** — conversations auto-save as JSON inside the project and resume automatically on the next start
+- **Tabbed conversations** — the Tab Bar keeps multiple conversations open at once; each Tab owns its draft, Mode, approval memory and Turn, and background Turns continue while you work in another Tab
 - **Skills** — activate Markdown files that are injected as extra System Prompt layers
 - **Layered configuration** — project config overrides global config; API keys from config, `/key`, or environment variables — the provider's own name, or a `VICODE_`-namespaced name that overrides it for ViCode alone
 
@@ -210,6 +211,14 @@ The Mode governs each Turn. Press `Tab` to cycle `build → discuss → plan`; *
 
 Mode scoping is enforced twice: the model is only *shown* the in-scope tools, and any out-of-scope call it attempts anyway comes back as `denied by mode: <tool> is not available in <Mode> mode` rather than running.
 
+## Tabs
+
+The Tab Bar appears above the Chat and Usage panels once a conversation is open. A Tab is a live seat for one conversation: it owns that conversation's draft, input history, Mode, scroll position, approval memory, Turn and usage. Tabs are kept in memory for the current run rather than persisted as a separate window layout.
+
+Open a Tab with `Ctrl+T`, move between Tabs with `Ctrl+←` and `Ctrl+→`, or jump directly with `Ctrl+1` through `Ctrl+9`. Each Tab can continue a background Turn while another Tab is active; a Tab waiting for approval shows a warning without stealing focus. `Tab` still cycles the active Tab's Mode (`build → discuss → plan`).
+
+Closing the active Tab with `Ctrl+X` removes it from the Tab Bar but does **not** delete its Session. Sessions remain on disk and can be resumed with `/session`; deleting a Session is a separate action in the session picker.
+
 ## Slash commands
 
 Only the **first word** of an input is treated as a command attempt, so `/help me` runs `/help` and a mid-sentence `see /new` is just text. While a response is streaming, every input except `/exit` is ignored. Typing `/` opens the Command Suggestion; once a command that takes arguments is named in full, a muted line under the dropdown shows its syntax.
@@ -219,7 +228,7 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `/help` | List available commands |
 | `/session` | Switch to a saved session |
 | `/rename` | Name the current session so it is easy to find later (`/rename clear` to drop the name; `remove` and `delete` work too) — type `/rename` to see this hint in the dropdown |
-| `/new` | Save the current session and start a new one |
+| `/new` | Save the current session and open a new Tab |
 | `/exit` | Stop any response in progress, save the session and quit |
 | `/model` | Switch the LLM model mid-session, grouped by provider, priced from the Model Catalog |
 | `/skill` | Load a skill Markdown file as a System Prompt layer |
@@ -235,6 +244,10 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 |---|---|
 | `Enter` | Submit — or accept the highlighted Command Suggestion or File Mention |
 | `Tab` | Cycle the Mode (build → discuss → plan) |
+| `Ctrl+T` | Open a new Tab |
+| `Ctrl+←` / `Ctrl+→` | Move to the previous / next Tab |
+| `Ctrl+1` … `Ctrl+9` | Jump to Tab 1 through Tab 9 |
+| `Ctrl+X` | Close the active Tab without deleting its Session |
 | `Esc` | Cancel the in-progress response, or dismiss the suggestion dropdown |
 | `←` / `→` | Move the cursor one grapheme cluster |
 | `Home` / `End` | Jump the cursor to the start / end of the input (`End` also scrolls the chat to the bottom) |

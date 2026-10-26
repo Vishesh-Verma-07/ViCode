@@ -125,6 +125,11 @@ export interface SessionsCapability {
   rename(name: string | null): void
 }
 
+export interface TabsCapability {
+  openNew(): void
+  focusSession(sessionId: string): boolean
+}
+
 export interface ExitCapability {
   requestExit(): Promise<void>
 }
@@ -200,6 +205,7 @@ export interface CommandContext {
   projectPath: string
   openPicker?: OpenPicker
   sessions?: SessionsCapability
+  tabs?: TabsCapability
   exit?: ExitCapability
   navigation?: NavigationCapability
   models?: ModelsCapability

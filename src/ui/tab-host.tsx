@@ -4,6 +4,7 @@ import type { View } from "./view"
 import type { Command, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider } from "../core/provider"
+import type { TokenUsage } from "../core/provider"
 import type { ProviderId } from "../core/providers"
 import { CommandRegistry } from "../core/command-registry"
 import { filterCommands, findUsageHint, moveHighlight } from "./command-suggestion"
@@ -65,10 +66,14 @@ export interface TabHostProps extends TabHostDeps {
   onEnterHome: () => void
   /** Called when this conversation's badge-relevant state changes. */
   onSummaryChange?: (summary: TabSummary) => void
+  onSessionChange?: (sessionId: string | null) => void
+  onUsageChange?: (usage: TokenUsage) => void
+  summaryUsage?: TokenUsage
   /** Called with the title the Tab Bar should show for this conversation. */
   onTitleChange?: (title: string) => void
   /** Tab keybindings. The window owns the set; the active host owns the keys. */
   onOpenTab?: () => void
+  focusSession?: (sessionId: string) => boolean
   onPrevTab?: () => void
   onNextTab?: () => void
   onJumpTab?: (position: number) => void
@@ -102,8 +107,12 @@ export function TabHost({
   onEnterChat,
   onEnterHome,
   onSummaryChange,
+  onSessionChange,
+  onUsageChange,
+  summaryUsage,
   onTitleChange,
   onOpenTab,
+  focusSession,
   onPrevTab,
   onNextTab,
   onJumpTab,
@@ -186,6 +195,8 @@ export function TabHost({
     view,
     enterChat: onEnterChat,
     enterHome: onEnterHome,
+    openNewTab: onOpenTab,
+    focusSession,
     keyFor,
     ensureKeyFor: (target) =>
       keyFor(target) ? Promise.resolve(true) : promptForKey(target, true),
@@ -228,6 +239,22 @@ export function TabHost({
   useEffect(() => {
     onSummaryChangeRef.current?.({ streaming, needsApproval, errored })
   }, [streaming, needsApproval, errored])
+
+  const onSessionChangeRef = useRef(onSessionChange)
+  useEffect(() => {
+    onSessionChangeRef.current = onSessionChange
+  }, [onSessionChange])
+  useEffect(() => {
+    onSessionChangeRef.current?.(session.session?.id ?? null)
+  }, [session.session?.id])
+
+  const onUsageChangeRef = useRef(onUsageChange)
+  useEffect(() => {
+    onUsageChangeRef.current = onUsageChange
+  }, [onUsageChange])
+  useEffect(() => {
+    onUsageChangeRef.current?.(session.usage)
+  }, [session.usage])
 
   // Same ref pattern for the title: renaming a Session or sending a first
   // message must retitle the Tab Bar, and only those changes should. The title
@@ -511,7 +538,7 @@ export function TabHost({
       <>
         <WelcomeScreen
           provider={session.providerState}
-          onNewChat={session.startNewSession}
+          onNewChat={onOpenTab ?? session.startNewSession}
           onResumeSession={onEnterChat}
           hasResumableSession={!!initialSession}
           onTab={session.cycleMode}
@@ -589,7 +616,7 @@ export function TabHost({
         />
       )}
       {session.showExitSummary && (
-        <ExitSummary usage={session.usage} route={route} />
+        <ExitSummary usage={summaryUsage ?? session.usage} route={route} />
       )}
     </>
   )

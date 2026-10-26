@@ -15,6 +15,11 @@ export function createNewCommand(): Command {
         saveSession({ ...active, updatedAt: new Date().toISOString() }, ctx.sessions.dir)
       }
 
+      if (ctx.tabs) {
+        ctx.tabs.openNew()
+        return "Opened a new Tab."
+      }
+
       ctx.sessions.startFresh()
 
       const suffix = active ? ` Saved ${active.id}.` : ""
