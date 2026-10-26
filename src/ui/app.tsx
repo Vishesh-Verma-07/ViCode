@@ -4,6 +4,7 @@ import { MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
 import { COLORS } from "./theme"
 import { TabHost, type TabHostDeps } from "./tab-host"
 import { TAB_BAR_HEIGHT, TabBar } from "./tab-bar"
+import { FeedbackLine } from "./feedback-line"
 import {
   NEW_CHAT_TITLE,
   closeTab,
@@ -17,6 +18,7 @@ import {
   tabTitle,
   type TabSet,
 } from "./tab-set"
+import type { TabSummary } from "./tab-host"
 import type { View } from "./view"
 
 export { STREAMING_COMMAND_NOTICE } from "./use-agent-session"
@@ -51,6 +53,7 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
   const [tabs, setTabs] = useState<TabSet>(() =>
     view === "chat" ? openTab(createTabSet(), { title: initialTitle }) : createTabSet(),
   )
+  const [summaries, setSummaries] = useState<Record<string, TabSummary>>({})
   // The pre-Tab host the window starts with while the Welcome Screen is up is
   // not a Tab yet: the first message, or a new-Tab key, turns it into the first
   // one, so the Tab Bar never names a Tab that does not exist. Its id carries a
@@ -112,6 +115,19 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     if (id === preTabHostId) preTabTitle.current = title
     setTabs((previous) => setTabTitle(previous, id, title))
   }, [preTabHostId])
+  const setSummary = useCallback((id: string, summary: TabSummary) => {
+    setSummaries((previous) => {
+      const current = previous[id]
+      if (
+        current?.streaming === summary.streaming &&
+        current.needsApproval === summary.needsApproval &&
+        current.errored === summary.errored
+      ) {
+        return previous
+      }
+      return { ...previous, [id]: summary }
+    })
+  }, [])
 
   /**
    * Closes a Tab and, when it was the last one, returns to the Welcome Screen.
@@ -124,6 +140,12 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     if (closed === tabsRef.current) return
     tabsRef.current = closed
     setTabs(closed)
+    setSummaries((previous) => {
+      if (!(id in previous)) return previous
+      const next = { ...previous }
+      delete next[id]
+      return next
+    })
     if (closed.tabs.length > 0) return
     initialHostId.current = null
     preTabTitle.current = NEW_CHAT_TITLE
@@ -139,6 +161,10 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
   // from the panels when it is there.
   const showingBar = view === "chat" && tabs.tabs.length > 0
   const panelHeight = rows - (showingBar ? TAB_BAR_HEIGHT : 0)
+  const backgroundApproval = tabs.tabs.find(
+    (tab) => tab.id !== activeId && summaries[tab.id]?.needsApproval,
+  )
+  const feedbackHeight = backgroundApproval ? 1 : 0
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
@@ -149,7 +175,20 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
             id: tab.id,
             title: tab.title,
             active: tab.id === activeId,
+            status: summaries[tab.id]?.needsApproval
+              ? "approval"
+              : summaries[tab.id]?.errored
+                ? "error"
+                : summaries[tab.id]?.streaming
+                  ? "streaming"
+                  : undefined,
           }))}
+        />
+      )}
+      {backgroundApproval && (
+        <FeedbackLine
+          text={`Tab "${backgroundApproval.title}" is waiting for approval`}
+          tone="warning"
         />
       )}
       {hosts.map((tab) => (
@@ -160,10 +199,11 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
           active={tab.id === activeId}
           view={view}
           width={columns}
-          height={panelHeight}
+          height={panelHeight - feedbackHeight}
           onEnterChat={enterChat}
           onEnterHome={enterHome}
           onTitleChange={(title) => setTitle(tab.id, title)}
+          onSummaryChange={(summary) => setSummary(tab.id, summary)}
           onOpenTab={openNewTab}
           onPrevTab={goToPreviousTab}
           onNextTab={goToNextTab}

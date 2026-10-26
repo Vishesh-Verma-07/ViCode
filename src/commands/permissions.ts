@@ -6,13 +6,13 @@ export const PERMISSIONS_PICKER_HINT =
 function formatEntry(kind: "command" | "path", value: string): PickerItem {
   return {
     label: kind === "command" ? value : value,
-    metadata: kind === "command" ? "command · this project" : "path · this session",
+    metadata: kind === "command" ? "command · this project" : "path · this Tab",
   }
 }
 
 /**
  * Reviews the two kinds of remembered consent: a Command Grant persisted for
- * this Project, and a path approved for this Session. Both are removed with
+ * this Project, and a path approved for this Tab. Both are removed with
  * Ctrl+D, because a stored grant that cannot be revoked is a trap (ADR-0015).
  */
 export function createPermissionsCommand(): Command {

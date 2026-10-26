@@ -10,6 +10,7 @@ const PLUS_WIDTH = 1 // the bare "+"
 export interface TabBarTab {
   title: string
   active: boolean
+  status?: "streaming" | "approval" | "error"
 }
 
 /** One Tab in the Bar, with the columns it occupies there. */
@@ -35,7 +36,7 @@ export function layoutTabBar(tabs: readonly TabBarTab[], width: number): TabBarS
   const available = Math.max(1, Math.floor(width))
   if (tabs.length === 0) return []
 
-  const widths = tabs.map((tab) => naturalSlotWidth(tab.title))
+  const widths = tabs.map((tab) => naturalSlotWidth(tab.title) + (tab.status ? 2 : 0))
   const total = widths.reduce((sum, value) => sum + value, 0) + PLUS_WIDTH
   if (total <= available) {
     return widths.map((tabWidth, index) => ({ index, width: tabWidth }))

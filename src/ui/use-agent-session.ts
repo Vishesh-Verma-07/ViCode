@@ -21,7 +21,7 @@ import { createSession, renameSession, saveSession } from "../core/session"
 import { discoverSkills } from "../core/skills"
 import { log } from "../utils/logger"
 import { extractDiff } from "./format"
-import { isPathApproved, approvePath, clearApprovedPaths, listApprovedPaths, revokePath } from "../core/approved-paths"
+import { createApprovedPaths } from "../core/approved-paths"
 import { fileToolApprovalKey } from "../core/sensitive-files"
 import { grantCommand, revokeCommand } from "../core/approval-grants"
 import type { FeedbackEntry, FeedbackTone } from "./feedback-line"
@@ -184,6 +184,12 @@ export function useAgentSession({
   }, [])
   const abortRef = useRef<AbortController | null>(null)
   const activeTurnRef = useRef<Promise<void> | null>(null)
+  const approvedPathsRef = useRef(createApprovedPaths())
+  const approvedPaths = approvedPathsRef.current
+  const toolContext = useMemo(
+    () => ({ ...context, approvedPaths }),
+    [context, approvedPaths],
+  )
   const providerRef = useRef<Provider>(provider)
   /**
    * Keys as they stand at runtime. Seeded from `keyFor` (config plus
@@ -276,10 +282,9 @@ export function useAgentSession({
     providerRef.current = providerState
   }, [providerState])
 
-  // A Session begins with no approved paths: the memory is Session-scoped
-  // (ADR-0015), and mounting the app is the start of one.
+  // Approval memory belongs to this Tab. It must not survive the host closing.
   useEffect(() => {
-    clearApprovedPaths()
+    return () => approvedPaths.clear()
   }, [])
 
   const applyApiKey = useCallback(
@@ -357,24 +362,24 @@ export function useAgentSession({
   const requestMentionReadApproval = useCallback(
     (declaredPath: string): Promise<boolean> => {
       const approvalKey = resolve(context.projectPath, declaredPath)
-      if (isPathApproved(approvalKey)) return Promise.resolve(true)
+      if (approvedPaths.isApproved(approvalKey)) return Promise.resolve(true)
       return new Promise<boolean>((settle) => {
         setTurnStatus({ kind: "waiting-approval" })
         setPendingApproval({
           toolName: "read_file",
           args: { path: declaredPath },
           resolve: (decision) => {
-            if (decision !== "reject") approvePath(approvalKey)
+            if (decision !== "reject") approvedPaths.approve(approvalKey)
             settle(decision !== "reject")
           },
         })
       })
     },
-    [context.projectPath],
+    [approvedPaths, context.projectPath],
   )
 
   const clearSessionState = useCallback(() => {
-    clearApprovedPaths()
+    approvedPaths.clear()
     resetHistory()
     setSession(null)
     setMessages([])
@@ -424,7 +429,7 @@ export function useAgentSession({
               dir: sessionsDir,
               getActiveSession: () => session,
               switchTo: (loaded) => {
-                clearApprovedPaths()
+                approvedPaths.clear()
                 setSession(loaded)
                 setMessages(loaded.messages)
                 setActiveMode(loaded.mode ?? DEFAULT_MODE)
@@ -486,14 +491,14 @@ export function useAgentSession({
             ...Array.from(context.approvalGrants ?? [])
               .sort()
               .map((value) => ({ kind: "command" as const, value })),
-            ...listApprovedPaths().map((value) => ({ kind: "path" as const, value })),
+            ...approvedPaths.list().map((value) => ({ kind: "path" as const, value })),
           ],
           revoke: (entry) => {
             if (entry.kind === "command") {
               context.approvalGrants ??= new Set()
               revokeCommand(context.projectPath, entry.value, context.approvalGrants)
             } else {
-              revokePath(entry.value)
+              approvedPaths.revoke(entry.value)
             }
           },
         },
@@ -580,10 +585,9 @@ export function useAgentSession({
         if (!ok) return
       }
 
-      // Path approvals are Session-scoped (ADR-0015), so a File Mention's read
-      // and the Agent Loop's own file calls share one memory until the Session
-      // changes: approving `@.env` here spares the model's later read of it.
-      const { attachments, notes } = await attachMentionedFiles(input, context, {
+      // Path approvals are Tab-scoped, so a File Mention's read and the Agent
+      // Loop's own file calls share one memory until this Tab changes Sessions.
+      const { attachments, notes } = await attachMentionedFiles(input, toolContext, {
         requestApproval: requestMentionReadApproval,
       })
       for (const note of notes) appendFeedback(note, "info")
@@ -631,7 +635,7 @@ export function useAgentSession({
             providerRef.current,
             tools,
             effectiveSystemPrompt,
-            context,
+            toolContext,
             {
               onTextDelta: (text) => {
                 setCurrentText((prev) => prev + text)
@@ -690,7 +694,7 @@ export function useAgentSession({
               },
               requestApproval: (toolName, args) => {
                 const approvalKey = fileToolApprovalKey(toolName, args, context.projectPath)
-                if (approvalKey && isPathApproved(approvalKey)) {
+                if (approvalKey && approvedPaths.isApproved(approvalKey)) {
                   return Promise.resolve(true)
                 }
                 return new Promise<boolean>((settle) => {
@@ -701,7 +705,7 @@ export function useAgentSession({
                     resolve: (decision) => {
                       const approved = decision !== "reject"
                       if (approved && approvalKey) {
-                        approvePath(approvalKey)
+                        approvedPaths.approve(approvalKey)
                       }
                       if (decision === "always" && toolName === "bash") {
                         const command = typeof args.command === "string" ? args.command : ""

@@ -5,7 +5,7 @@ import type { Message, ToolDefinition, ToolContext } from "@/core/types"
 import { z } from "zod"
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
-import { isPathApproved, approvePath, clearApprovedPaths } from "@/core/approved-paths"
+import { createApprovedPaths } from "@/core/approved-paths"
 import { fileToolApprovalKey } from "@/core/sensitive-files"
 import { writeFileTool } from "@/tools/write-file"
 import { readFileTool } from "@/tools/read-file"
@@ -1038,17 +1038,19 @@ describe("agent-loop", () => {
   })
 
   describe("turn-scoped approved-path memory", () => {
+    const approvals = createApprovedPaths()
+
     beforeEach(() => {
-      clearApprovedPaths()
+      approvals.clear()
     })
 
     function pathApprovalMiddleware(root: string) {
       let prompts = 0
       const requestApproval: AgentLoopCallbacks["requestApproval"] = async (toolName, args) => {
         const key = fileToolApprovalKey(toolName, args, root)
-        if (key && isPathApproved(key)) return true
+        if (key && approvals.isApproved(key)) return true
         prompts++
-        if (key) approvePath(key)
+        if (key) approvals.approve(key)
         return true
       }
       return { prompts: () => prompts, requestApproval }
@@ -1151,7 +1153,7 @@ describe("agent-loop", () => {
       let cumulativePrompts = 0
 
       for (let turn = 0; turn < 2; turn++) {
-        clearApprovedPaths()
+        approvals.clear()
         const approval = pathApprovalMiddleware(realToolsDir)
         const provider = createMockProvider([
           ...toolCalls([

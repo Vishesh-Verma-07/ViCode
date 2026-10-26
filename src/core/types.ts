@@ -3,6 +3,7 @@ import type { ModelListing } from "./provider"
 import type { ProviderId, ProviderKind } from "./providers"
 import type { Skill } from "./skills"
 import type { ModeId } from "./modes"
+import type { ApprovedPaths } from "./approved-paths"
 
 export type Role = "user" | "assistant" | "system" | "tool"
 
@@ -62,6 +63,8 @@ export interface ToolDefinition {
 
 export interface ToolContext {
   projectPath: string
+  /** Path approvals held by this Tab; never shared across conversations. */
+  approvedPaths?: ApprovedPaths
   sensitivePatterns?: string[]
   silentBashCommands?: string[]
   /** Commands granted for this Project, consulted by the bash Tool. */

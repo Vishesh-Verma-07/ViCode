@@ -227,7 +227,7 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `/provider` | Jump straight to a provider's recommended model |
 | `/key` | Set, change, or remove an API key — `/key`, `/key anthropic`, or `/key anthropic remove` |
 | `/compact` | Fold older messages into a summary and keep the context window lean |
-| `/permissions` | Review and revoke saved approvals — command grants and this session's approved paths |
+| `/permissions` | Review and revoke saved approvals — command grants and this Tab's approved paths |
 
 ## Key shortcuts
 
