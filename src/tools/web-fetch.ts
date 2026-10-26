@@ -190,7 +190,7 @@ export const webFetchTool: ToolDefinition = {
       })
 
       let content = result.text
-      const contentType = result.headers?.get("content-type") ?? null
+      const contentType = result.headers.get("content-type") ?? null
 
       if (isPlainTextOrJson(contentType)) {
         // Pass through unmodified

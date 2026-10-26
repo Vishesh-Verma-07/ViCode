@@ -27,14 +27,15 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 describe("http boundary: success", () => {
-  it("returns the body text, its byte count, and whether it was cut", async () => {
+  it("returns the body text, its byte count, whether it was cut, and the headers", async () => {
     const result = await httpRequestText("https://example.test/page", {
-      fetchImpl: respondWith(new Response("hello world")),
+      fetchImpl: respondWith(new Response("hello world", { headers: { "content-type": "text/plain" } })),
     })
     expect(result.text).toBe("hello world")
     expect(result.bytes).toBe(11)
     expect(result.truncated).toBe(false)
     expect(result.status).toBe(200)
+    expect(result.headers.get("content-type")).toBe("text/plain")
   })
 
   it("parses a JSON body and reports the same byte accounting", async () => {

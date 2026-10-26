@@ -57,6 +57,8 @@ export interface HttpTextResult {
   /** True when the ceiling cut the body short. */
   truncated: boolean
   status: number
+  /** The response headers, for callers that branch on the content type. */
+  headers: Headers
 }
 
 export interface HttpJsonResult<T> extends HttpTextResult {
@@ -242,7 +244,13 @@ export async function httpRequestText(
     }
 
     const text = new TextDecoder().decode(trimPartialCharacter(read.bytes))
-    return { text, bytes: read.bytes.length, truncated: read.truncated, status: response.status }
+    return {
+      text,
+      bytes: read.bytes.length,
+      truncated: read.truncated,
+      status: response.status,
+      headers: response.headers,
+    }
   } finally {
     clearTimeout(timer)
   }
