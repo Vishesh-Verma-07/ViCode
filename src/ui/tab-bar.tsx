@@ -1,17 +1,14 @@
 import { Box, Text } from "ink"
 import { COLORS } from "./theme"
+import { TAB_CHROME_WIDTH, layoutTabBar, type TabBarTab } from "./tab-bar-layout"
 
 /** The Tab Bar is chrome: one row, never two, with no shade of its own. */
 export const TAB_BAR_HEIGHT = 1
 
 const ELLIPSIS = "…"
-const TAB_PADDING = 2 // one space on each side of a title
-const CLOSE_WIDTH = 2 // " ×" on the active Tab, blank on the others
 
-export interface TabBarItem {
+export interface TabBarItem extends TabBarTab {
   id: string
-  title: string
-  active: boolean
 }
 
 export interface TabBarProps {
@@ -28,34 +25,41 @@ export function truncateTabTitle(title: string, maxWidth: number): string {
 }
 
 /**
- * The Tab Bar: every Tab in order, then the `+` control immediately after the
- * last one. Display only — it holds no state and binds no keys, so it can be
- * asserted on directly. `+` is a keyboard affordance (Ctrl+T): the terminal has
- * no pointer, and mouse input stays noise. The active Tab carries `×` (Ctrl+X),
- * the keyboard surface's way of saying the close control is on the Tab you are
- * looking at; no other Tab shows one.
+ * The Tab Bar: every Tab in view in order, then the `+` control immediately
+ * after the last one. Display only — it holds no state and binds no keys, so it
+ * can be asserted on directly. `+` is a keyboard affordance (Ctrl+T): the
+ * terminal has no pointer, and mouse input stays noise. The active Tab carries
+ * `×` (Ctrl+X), the keyboard surface's way of saying the close control is on the
+ * Tab you are looking at; no other Tab shows one.
  *
- * Equal slots with a title cut to fit keep it one row high. Shrinking to a
- * readable floor and then scrolling is the crowded-Bar work, later.
+ * Where the slots go is {@link layoutTabBar}'s job: titles keep their full width
+ * while every Tab fits, then equal slots shrink to the readable floor, and past
+ * that the Bar shows a window of Tabs and scrolls to keep the active one in
+ * view, so it never wraps and never takes a second row.
  */
 export function TabBar({ tabs, width }: TabBarProps) {
-  const slots = tabs.length + 1
-  const perSlot = Math.max(1, Math.floor(Math.max(1, width) / Math.max(1, slots)))
+  const slots = layoutTabBar(tabs, width)
 
   return (
     <Box height={TAB_BAR_HEIGHT} flexShrink={0} overflow="hidden">
       <Text wrap="truncate-end">
-        {tabs.map((tab) => {
+        {slots.map((slot) => {
+          const tab = tabs[slot.index]
+          if (!tab) return null
           // Every Tab reserves the cells the close control uses, so moving focus
-          // marks a Tab without shifting the ones after it. A title that fits
-          // is not padded to the slot; only the close columns are fixed.
-          const titleWidth = Math.max(1, perSlot - TAB_PADDING - CLOSE_WIDTH)
+          // marks a Tab without shifting the ones after it. A short title is
+          // padded out to its slot, with the pad trailing the close control so
+          // `×` stays next to the title it closes.
+          const titleWidth = Math.max(1, slot.width - TAB_CHROME_WIDTH)
+          const title = truncateTabTitle(tab.title, titleWidth)
+          const gap = " ".repeat(Math.max(0, titleWidth - title.length) + 1)
           return (
             <Text key={tab.id} color={tab.active ? COLORS.primary : COLORS.muted} bold={tab.active}>
-              {` ${truncateTabTitle(tab.title, titleWidth)}${tab.active ? " ×" : "  "} `}
+              {` ${title}${tab.active ? " ×" : "  "}${gap}`}
             </Text>
           )
         })}
+        {/* `+` follows the last Tab in view, never pinned to the far edge. */}
         <Text color={COLORS.muted}>+</Text>
       </Text>
     </Box>

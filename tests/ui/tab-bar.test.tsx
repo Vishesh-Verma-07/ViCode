@@ -125,6 +125,67 @@ describe("Tab Bar", () => {
       instance.unmount()
     }
   })
+
+  it("scrolls a crowded strip to the active Tab and keeps + beside the last one", () => {
+    const tabs = Array.from({ length: 8 }, (_, index) => ({
+      id: `tab-${index}`,
+      title: `tab ${index + 1}`,
+      active: index === 7,
+    }))
+    const instance = render(<TabBar width={60} tabs={tabs} />)
+    try {
+      const lines = frameLines(instance.lastFrame)
+      expect(lines).toHaveLength(1)
+      const line = lines[0] ?? ""
+      expect(line).not.toContain("tab 1")
+      expect(line).not.toContain("tab 4")
+      expect(line).toContain("tab 5")
+      expect(line).toContain("tab 8 ×")
+      expect(line.indexOf("+")).toBeGreaterThan(line.indexOf("tab 8"))
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("keeps usable Tabs in a narrow strip rather than a row of ellipses", () => {
+    const instance = render(
+      <TabBar
+        width={20}
+        tabs={[
+          { id: "tab-1", title: "alpha", active: false },
+          { id: "tab-2", title: "beta", active: false },
+          { id: "tab-3", title: "gamma", active: true },
+        ]}
+      />,
+    )
+    try {
+      const lines = frameLines(instance.lastFrame)
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain("gamma ×")
+      expect(lines[0]).toContain("+")
+      expect(lines[0]).not.toContain("…")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("stays one row with more Tabs than the window can hold", () => {
+    const tabs = Array.from({ length: 20 }, (_, index) => ({
+      id: `tab-${index}`,
+      title: `chat ${index + 1}`,
+      active: index === 12,
+    }))
+    const instance = render(<TabBar width={60} tabs={tabs} />)
+    try {
+      const lines = frameLines(instance.lastFrame)
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain("chat 13 ×")
+      expect(lines[0]).toContain("+")
+      expect(lines[0]).not.toContain("chat 1 ")
+    } finally {
+      instance.unmount()
+    }
+  })
 })
 
 describe("truncateTabTitle", () => {
