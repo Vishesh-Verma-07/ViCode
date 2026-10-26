@@ -22,7 +22,7 @@ _Avoid_: tool use, function call
 A function the LLM can invoke: to interact with the filesystem or the shell, or to ask a network service a question. Each Tool has a name, description, Zod parameter schema, and execute function. Read-only means nothing changes on disk — `web_search` leaves the machine and is read-only all the same, which is why every Mode offers it.
 
 **Approval Rule**:
-The rule deciding whether a Tool Call pauses for user approval: a call pauses iff it is a `bash` call that is neither a Silent Bash Call nor covered by an Approval Grant, a file operation whose target is a Sensitive Path or lies outside the Project Root, or a `web_fetch` call whose URL has not been approved during the current Turn — that third case is the Outbound Fetch Approval Rule, and it is not a path rule under another name. Approval attaches to individual Tool Calls, not whole Tools. Approving a resolved path also auto-approves later calls to that same path for the rest of the Session, so each distinct path surfaces at most one explicit approval per Session, and an approved URL carries for the rest of the Turn; a `bash` call is remembered only when the user grants that exact command. A File Mention reads a named path, so it owes the same consent a `read_file` of that path would and pauses under the two path cases rather than a rule of its own.
+The rule deciding whether a Tool Call pauses for user approval: a call pauses iff it is a `bash` call that is neither a Silent Bash Call nor covered by an Approval Grant, a file operation whose target is a Sensitive Path or lies outside the Project Root, or a `web_fetch` call whose URL has not been approved during the current Turn — that third case is the Outbound Fetch Approval Rule, and it is not a path rule under another name. Approval attaches to individual Tool Calls, not whole Tools. Approving a resolved path also auto-approves later calls to that same path for the rest of the Session, so each distinct path surfaces at most one explicit approval per Session — and for that Tab alone, since a Tab holds one Session at a time and an approval given in one Tab says nothing about another (ADR-0016) — and an approved URL carries for the rest of the Turn; a `bash` call is remembered only when the user grants that exact command. A File Mention reads a named path, so it owes the same consent a `read_file` of that path would and pauses under the two path cases rather than a rule of its own.
 
 **Outbound Fetch Approval Rule**:
 The case of the Approval Rule that governs an outbound fetch: a `web_fetch` Tool Call pauses for the user, showing the URL, before any request is issued, unless that exact URL has already been approved during the current Turn. It sits alongside the Sensitive Path and outside-the-Project-Root rules and is not one of them — those two ask because a read or a write reaches material already on disk, this one asks because a request to an arbitrary host leaves the machine on the model's say-so, and a local read inside the Project Root and a request to a host the user never named are not the same kind of act. Approval attaches to the exact URL, never to the host, so approving one URL on a site approves nothing else on it, and a multi-page investigation asks once per URL rather than once per call. The Tool is not `dangerous` — it writes nothing — so the pause is carried by this Approval Rule rather than by the dangerous mark; a URL that is not `http` or `https` is refused without a request being issued, so it is refused rather than approved. The decision, and the two credential decisions beside it, are written down in ADR-0013.
@@ -113,12 +113,12 @@ The optional human name on a Session, set with `/rename <name>` and cleared with
 _Avoid_: title (a name is not a heading). "label" stays correct for a picker *row* — `PickerItem.label` is the rendering concern, the Session name is the stored fact.
 
 **New Chat**:
-The Welcome Screen action that begins a fresh conversation. Identical in behaviour to the `/new` command: the current Session (if any) is saved, then messages, usage, unit counters and active Skills are cleared and the chat view opens empty.
-_Avoid_: new session, clear chat
+The Welcome Screen action that begins a fresh conversation, identical in behaviour to the `/new` command: a new empty Tab opens and the chat view shows it. The Tab it leaves behind is untouched — its Session is already saved and its Turn, if one is running, keeps running.
+_Avoid_: new session, clear chat, new tab (the Tab is the consequence, not the act)
 
 **Input History**:
-The in-memory, session-scoped list of every Input the user submits (Messages and Commands alike), recalled into the Input Box draft by Up/Down arrows. Cleared by New Chat. Recalling is drafting, not replaying: a recalled Input is a fresh message on submit, not a re-run of the old turn.
-_Avoid_: message history (implies the transcript), command history
+The in-memory, Tab-scoped list of every Input the user submits (Messages and Commands alike), recalled into the Input Box draft by Up/Down arrows. A new Tab starts with an empty list, and closing a Tab discards its own. Recalling is drafting, not replaying: a recalled Input is a fresh message on submit, not a re-run of the old turn.
+_Avoid_: message history (implies the transcript), command history, global history
 
 **Compaction**:
 Replacing the older part of the conversation history with a model-generated summary once the window grows too large, so the agent keeps working instead of hitting the context limit. Distinct from Truncation, which silently drops or trims messages that exceed the budget.
@@ -233,6 +233,14 @@ A named value in the central palette (`COLORS`, `ICONS`) that all UI styling ref
 The on-screen name of the live route — the canonical `provider/model` id, verbatim — shown wherever the TUI says which Model is live: the Status Bar, the Usage Panel's Model row, the exit summary, the Welcome Screen and the Chat Panel's empty state. One Model is reachable through more than one Provider, so a Model name alone names no bill; the Provider half is what makes a Turn's cost attributable. A Model whose id records no Provider is qualified by the Provider that served it; one with neither shows its id alone rather than a guessed one, and one carrying no id at all reads by its name — a surface with no route to name reads `unknown`. On the Status Bar — a single row of chrome that must not grow to fit a long route — it is cut at the end rather than wrapped, so the Provider stays readable.
 _Avoid_: model name, model label (both read as the Model alone), route name
 
+**Tab**:
+A seat for a conversation in the window, not a conversation in its own right. It opens empty and unnamed, binds to a Session on the first message sent in it, and a Session outlives the Tab that held it — closing a Tab is never deleting a Session. Several Tabs are live at once, each with its own Turn, draft and approval memory.
+_Avoid_: session (a Tab holds one, it is not one), window, pane
+
+**Tab Bar**:
+The single-row strip along the top edge of the window, above both the Chat Panel and the Usage Panel, holding the Tabs and the New Tab control. Absent on the Welcome Screen, which is the pre-Tab place. It is chrome, not a Surface: no background shade of its own beyond the App Background.
+_Avoid_: session bar, tab strip, tab row
+
 **Code Block**:
 A framed region — border plus a dark background shade lighter than the App Background — used to render fenced model output and executed command output.
 
@@ -243,14 +251,15 @@ A short code snippet inside prose (single-backtick `` `cmd` ``) rendered with a 
 The first line inside a Tool-Result Code Block — `$ npm run dev` — painted in the primary color to show which command was executed.
 
 **Status Bar**:
-Bottom bar showing the Route Label, token count, and cost — `—` when the Model's price is Unknown.
+Bottom bar showing the Route Label, token count, and cost — `—` when the Model's price is Unknown — for the active Tab alone. A background Tab's spend is real but unshown.
+_Avoid_: window footer, totals bar
 
 **Turn Status**:
 The Status Bar's live indication of agent activity: idle, thinking, running a Tool, waiting for approval, done (with elapsed time), or errored.
 _Avoid_: status, activity state
 
 **Usage Panel**:
-The right-hand TUI panel showing the live route, context-window usage, running token totals, cost, and turn count. The Context row is always present: an Unknown window reads `—` rather than being hidden or defaulted. Its reading of the Project Root Path is pinned to the panel's bottom edge rather than trailing the rows above it, so the panel keeps a fixed look as the terminal grows; the exit hint sits beneath it.
+The right-hand TUI panel showing the live route, context-window usage, running token totals, cost, and turn count of the active Tab — never a window total, which would make per-Tab spend unreadable. The Context row is always present: an Unknown window reads `—` rather than being hidden or defaulted. Its reading of the Project Root Path is pinned to the panel's bottom edge rather than trailing the rows above it, so the panel keeps a fixed look as the terminal grows; the exit hint sits beneath it.
 
 **Welcome Screen**:
-The "home" view shown at startup (and returned to via `/home`): banner, the live route, the New Chat / Resume Session menu, and the first-message input. Keyboard-first — mouse clicks are treated as input noise, never as selections. Banner, menu, and input sit centred; the keyboard hint and the Project Root Path share a single footer pinned to the bottom left, so the view has one bottom edge rather than a hint adrift mid-screen.
+The "home" view shown at startup (and returned to via `/home`): banner, the live route, the New Chat / Resume Session menu, and the first-message input. The first message sent here opens the first Tab, which is why the Tab Bar is absent from it — a Tab Bar over an empty window would name a Tab that does not exist yet. Keyboard-first — mouse clicks are treated as input noise, never as selections. Banner, menu, and input sit centred; the keyboard hint and the Project Root Path share a single footer pinned to the bottom left, so the view has one bottom edge rather than a hint adrift mid-screen.
