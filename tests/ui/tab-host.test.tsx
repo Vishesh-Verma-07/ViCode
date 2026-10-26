@@ -153,7 +153,12 @@ describe("TabHost", () => {
       expect(summaries.at(-1)).toMatchObject({ needsApproval: false, errored: false })
 
       await until(() => summaries.length > 0 && !summaries.at(-1)!.streaming)
-      expect(summaries.at(-1)).toEqual({ streaming: false, needsApproval: false, errored: false })
+      expect(summaries.at(-1)).toEqual({
+        streaming: false,
+        needsApproval: false,
+        errored: false,
+        blocking: false,
+      })
     } finally {
       instance.unmount()
     }

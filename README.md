@@ -215,7 +215,7 @@ Mode scoping is enforced twice: the model is only *shown* the in-scope tools, an
 
 The Tab Bar appears above the Chat and Usage panels once a conversation is open. A Tab is a live seat for one conversation: it owns that conversation's draft, input history, Mode, scroll position, approval memory, Turn and usage. Tabs are kept in memory for the current run rather than persisted as a separate window layout.
 
-Open a Tab with `Ctrl+T`, move between Tabs with `Ctrl+←` and `Ctrl+→`, or jump directly with `Ctrl+1` through `Ctrl+9`. Each Tab can continue a background Turn while another Tab is active; a Tab waiting for approval shows a warning without stealing focus. `Tab` still cycles the active Tab's Mode (`build → discuss → plan`).
+Open a Tab with `Ctrl+T`, move between Tabs with `Ctrl+←` and `Ctrl+→`, or jump directly with `Ctrl+1` through `Ctrl+9`. Each Tab can continue a background Turn while another Tab is active; a Tab waiting for approval shows a warning without stealing focus. `Tab` still cycles the active Tab's Mode (`build → discuss → plan`). On the Bar itself, click a Tab to focus it, its `×` to close it, or `+` to open a new one; a click on `×` still asks first when that Tab's Turn is running.
 
 Closing the active Tab with `Ctrl+X` removes it from the Tab Bar but does **not** delete its Session. Sessions remain on disk and can be resumed with `/session`; deleting a Session is a separate action in the session picker.
 

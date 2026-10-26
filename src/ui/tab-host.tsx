@@ -38,6 +38,11 @@ export interface TabSummary {
   streaming: boolean
   needsApproval: boolean
   errored: boolean
+  /**
+   * A Surface is waiting on an answer — a picker, a key prompt, a yes/no, an
+   * approval, the exit summary — so the window must not route clicks away.
+   */
+  blocking: boolean
 }
 
 /** The conversation-scoped dependencies every host needs, shared with the App. */
@@ -79,6 +84,11 @@ export interface TabHostProps extends TabHostDeps {
   onJumpTab?: (position: number) => void
   /** Closes this conversation's Tab. The window removes it from the set. */
   onCloseTab?: () => void
+  /**
+   * A click on the Bar's `×`. Each new count asks this Tab to close through the
+   * same path as Ctrl+X, so a running Turn still gets its confirmation.
+   */
+  closeRequest?: number
 }
 
 /**
@@ -117,6 +127,7 @@ export function TabHost({
   onNextTab,
   onJumpTab,
   onCloseTab,
+  closeRequest,
 }: TabHostProps) {
   const { exit } = useApp()
   const commandRegistry = useMemo(() => {
@@ -225,6 +236,18 @@ export function TabHost({
     onCloseTab()
   }, [session, confirmAction, onCloseTab])
 
+  // A click on the Bar's × is a request, not a command: it takes the same path
+  // as Ctrl+X, including the question a running Turn raises. The count is
+  // compared rather than a flag so declining one request does not swallow the
+  // next. `requestCloseTab` changes identity with props, which is why the
+  // comparison, not the effect, decides whether there is anything to answer.
+  const answeredCloseRequest = useRef(0)
+  useEffect(() => {
+    if (!closeRequest || closeRequest === answeredCloseRequest.current) return
+    answeredCloseRequest.current = closeRequest
+    void requestCloseTab()
+  }, [closeRequest, requestCloseTab])
+
   // The report goes up through a ref so a caller that passes a fresh callback
   // each render cannot make the effect fire again and again; only a change in
   // the conversation's state is news to the window.
@@ -236,9 +259,16 @@ export function TabHost({
   const streaming = session.isStreaming
   const needsApproval = session.pendingApproval !== null
   const errored = session.turnStatus.kind === "error"
+  // A Surface that owns the keyboard also owns the Tab Bar's click targets.
+  const blocking =
+    drafting.pickerRequest !== null ||
+    keyEntry !== null ||
+    confirmation !== null ||
+    session.pendingApproval !== null ||
+    session.showExitSummary
   useEffect(() => {
-    onSummaryChangeRef.current?.({ streaming, needsApproval, errored })
-  }, [streaming, needsApproval, errored])
+    onSummaryChangeRef.current?.({ streaming, needsApproval, errored, blocking })
+  }, [streaming, needsApproval, errored, blocking])
 
   const onSessionChangeRef = useRef(onSessionChange)
   useEffect(() => {

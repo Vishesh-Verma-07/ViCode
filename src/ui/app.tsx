@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Box, useStdout, useWindowSize } from "ink"
-import { MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
+import { Box, useInput, useStdout, useWindowSize } from "ink"
+import { MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, parseMouseClick } from "./mouse"
 import { COLORS } from "./theme"
 import { TabHost, type TabHostDeps } from "./tab-host"
-import { TAB_BAR_HEIGHT, TabBar } from "./tab-bar"
+import { TAB_BAR_HEIGHT, TabBar, type TabBarItem } from "./tab-bar"
+import { hitTestTabBar } from "./tab-bar-layout"
 import { FeedbackLine } from "./feedback-line"
 import {
   NEW_CHAT_TITLE,
@@ -34,6 +35,13 @@ interface AppProps extends TabHostDeps {
 }
 
 /**
+ * The Bar is the first row of the frame. The window is as tall as the terminal,
+ * so its frame starts at the terminal's top row and the absolute row a click
+ * reports is the row on the Bar.
+ */
+const TAB_BAR_ROW = 1
+
+/**
  * The window. It owns the view (home or chat), the Tab set and the
  * mouse-tracking lifecycle; each conversation lives in its own
  * {@link TabHost}, which owns the draft, transcript, Mode, Turn and overlays
@@ -58,6 +66,10 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
   const [summaries, setSummaries] = useState<Record<string, TabSummary>>({})
   const sessionTabsRef = useRef(new Map<string, string>())
   const [tabUsage, setTabUsage] = useState<Record<string, TokenUsage>>({})
+  // A click on the Bar's × cannot close a Tab directly: a running Turn asks
+  // first, and that question belongs to the Tab's own host. The window counts
+  // requests per Tab; each host answers the ones it has not seen yet.
+  const [closeRequests, setCloseRequests] = useState<Record<string, number>>({})
   // The pre-Tab host the window starts with while the Welcome Screen is up is
   // not a Tab yet: the first message, or a new-Tab key, turns it into the first
   // one, so the Tab Bar never names a Tab that does not exist. Its id carries a
@@ -125,7 +137,8 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
       if (
         current?.streaming === summary.streaming &&
         current.needsApproval === summary.needsApproval &&
-        current.errored === summary.errored
+        current.errored === summary.errored &&
+        current.blocking === summary.blocking
       ) {
         return previous
       }
@@ -150,6 +163,14 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
   }, [])
 
   /**
+   * Asks the Tab's own host to close it, so a running Turn is stopped only
+   * after the question that host owns. Used by a click on the Bar's `×`.
+   */
+  const requestCloseTab = useCallback((id: string) => {
+    setCloseRequests((previous) => ({ ...previous, [id]: (previous[id] ?? 0) + 1 }))
+  }, [])
+
+  /**
    * Closes a Tab and, when it was the last one, returns to the Welcome Screen.
    * The fresh pre-Tab host and the cleared Session seed are what make that
    * screen a new beginning rather than the closed conversation under another
@@ -167,6 +188,12 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
       return next
     })
     setTabUsage((previous) => {
+      if (!(id in previous)) return previous
+      const next = { ...previous }
+      delete next[id]
+      return next
+    })
+    setCloseRequests((previous) => {
       if (!(id in previous)) return previous
       const next = { ...previous }
       delete next[id]
@@ -205,25 +232,48 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
   )
 
+  // The Bar and its mouse targets are laid out from the same data, so a click
+  // can name the Tab the user actually saw. `+` is the last cell after the
+  // visible slots.
+  const barTabs: TabBarItem[] = tabs.tabs.map((tab) => ({
+    id: tab.id,
+    title: tab.title,
+    active: tab.id === activeId,
+    status: summaries[tab.id]?.needsApproval
+      ? "approval"
+      : summaries[tab.id]?.errored
+        ? "error"
+        : summaries[tab.id]?.streaming
+          ? "streaming"
+          : undefined,
+  }))
+  // A host that is waiting on an answer owns the keyboard; it owns the Bar too,
+  // so a click cannot hide the question it is waiting on.
+  const barBlocked = summaries[activeId]?.blocking === true
+
+  useInput((input) => {
+    if (!showingBar || barBlocked) return
+    const click = parseMouseClick(input)
+    if (!click || click.row !== TAB_BAR_ROW) return
+    const hit = hitTestTabBar(barTabs, columns, click.column - 1)
+    if (!hit) return
+    if (hit.kind === "plus") {
+      openNewTab()
+      return
+    }
+    const target = tabs.tabs[hit.index]
+    if (!target) return
+    if (hit.close) {
+      // The host answers this one, so a running Turn still gets its question.
+      requestCloseTab(target.id)
+      return
+    }
+    setTabs((previous) => focusTab(previous, target.id))
+  })
+
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
-      {showingBar && (
-        <TabBar
-          width={columns}
-          tabs={tabs.tabs.map((tab) => ({
-            id: tab.id,
-            title: tab.title,
-            active: tab.id === activeId,
-            status: summaries[tab.id]?.needsApproval
-              ? "approval"
-              : summaries[tab.id]?.errored
-                ? "error"
-                : summaries[tab.id]?.streaming
-                  ? "streaming"
-                  : undefined,
-          }))}
-        />
-      )}
+      {showingBar && <TabBar width={columns} tabs={barTabs} />}
       {backgroundApproval && (
         <FeedbackLine
           text={`Tab "${backgroundApproval.title}" is waiting for approval`}
@@ -252,6 +302,7 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
           onNextTab={goToNextTab}
           onJumpTab={jumpTab}
           onCloseTab={() => closeTabById(tab.id)}
+          closeRequest={closeRequests[tab.id] ?? 0}
         />
       ))}
     </Box>

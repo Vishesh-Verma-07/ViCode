@@ -26,11 +26,11 @@ export function truncateTabTitle(title: string, maxWidth: number): string {
 
 /**
  * The Tab Bar: every Tab in view in order, then the `+` control immediately
- * after the last one. Display only — it holds no state and binds no keys, so it
- * can be asserted on directly. `+` is a keyboard affordance (Ctrl+T): the
- * terminal has no pointer, and mouse input stays noise. The active Tab carries
- * `×` (Ctrl+X), the keyboard surface's way of saying the close control is on the
- * Tab you are looking at; no other Tab shows one.
+ * after the last one. Display only — it holds no state and binds no keys; the
+ * window above turns a click on a Tab, its `×` or the `+` into the same actions
+ * the keyboard offers. The active Tab carries `×` (Ctrl+X), the keyboard
+ * surface's way of saying the close control is on the Tab you are looking at;
+ * no other Tab shows one.
  *
  * Where the slots go is {@link layoutTabBar}'s job: titles keep their full width
  * while every Tab fits, then equal slots shrink to the readable floor, and past

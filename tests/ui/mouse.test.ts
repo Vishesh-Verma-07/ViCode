@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { parseWheelEvent, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL } from "@/ui/mouse"
+import { parseWheelEvent, parseMouseClick, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL } from "@/ui/mouse"
 
 describe("parseWheelEvent", () => {
   it("detects wheel-up (button 64 press)", () => {
@@ -38,6 +38,44 @@ describe("mouse tracking sequences", () => {
     expect(MOUSE_TRACKING_ENABLE).toContain("\u001B[?1006h")
     expect(MOUSE_TRACKING_DISABLE).toContain("\u001B[?1000l")
     expect(MOUSE_TRACKING_DISABLE).toContain("\u001B[?1006l")
+  })
+})
+
+describe("parseMouseClick", () => {
+  it("reads a left-button press in terminal cells", () => {
+    expect(parseMouseClick("<0;12;3M")).toEqual({ column: 12, row: 3 })
+  })
+
+  it("tolerates a leading escape/CSI prefix", () => {
+    expect(parseMouseClick("\x1B[<0;1;1M")).toEqual({ column: 1, row: 1 })
+    expect(parseMouseClick("[<0;1;1M")).toEqual({ column: 1, row: 1 })
+  })
+
+  it("reads the first click out of a coalesced chunk", () => {
+    expect(parseMouseClick("[<0;4;1M\x1B[<0;9;1M")).toEqual({ column: 4, row: 1 })
+  })
+
+  it("treats modifier-clicks as clicks on the cell", () => {
+    expect(parseMouseClick("<4;2;1M")).toEqual({ column: 2, row: 1 })
+  })
+
+  it("ignores releases, the wheel, motion, and other buttons", () => {
+    for (const sequence of [
+      "<0;1;1m", // left release
+      "<64;1;1M", // wheel up
+      "<65;1;1M", // wheel down
+      "<32;1;1M", // left drag
+      "<1;1;1M", // middle
+      "<2;1;1M", // right
+    ]) {
+      expect(parseMouseClick(sequence)).toBeNull()
+    }
+  })
+
+  it("ignores ordinary input", () => {
+    expect(parseMouseClick("hello")).toBeNull()
+    expect(parseMouseClick("")).toBeNull()
+    expect(parseMouseClick("\r")).toBeNull()
   })
 })
 
