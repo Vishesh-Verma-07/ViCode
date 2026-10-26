@@ -21,6 +21,7 @@ import { KeyEntryScreen } from "./key-entry-screen"
 import { CenteredOverlay } from "./centered-overlay"
 import { useChatDrafting } from "./use-chat-drafting"
 import { useAgentSession } from "./use-agent-session"
+import { firstUserMessage, tabTitle } from "./tab-set"
 
 interface KeyEntryRequest {
   resolve: (ok: boolean) => void
@@ -64,6 +65,13 @@ export interface TabHostProps extends TabHostDeps {
   onEnterHome: () => void
   /** Called when this conversation's badge-relevant state changes. */
   onSummaryChange?: (summary: TabSummary) => void
+  /** Called with the title the Tab Bar should show for this conversation. */
+  onTitleChange?: (title: string) => void
+  /** Tab keybindings. The window owns the set; the active host owns the keys. */
+  onOpenTab?: () => void
+  onPrevTab?: () => void
+  onNextTab?: () => void
+  onJumpTab?: (position: number) => void
 }
 
 /**
@@ -92,6 +100,11 @@ export function TabHost({
   onEnterChat,
   onEnterHome,
   onSummaryChange,
+  onTitleChange,
+  onOpenTab,
+  onPrevTab,
+  onNextTab,
+  onJumpTab,
 }: TabHostProps) {
   const { exit } = useApp()
   const commandRegistry = useMemo(() => {
@@ -186,6 +199,51 @@ export function TabHost({
   useEffect(() => {
     onSummaryChangeRef.current?.({ streaming, needsApproval, errored })
   }, [streaming, needsApproval, errored])
+
+  // Same ref pattern for the title: renaming a Session or sending a first
+  // message must retitle the Tab Bar, and only those changes should. The title
+  // is memoized because a streaming Tab re-renders on every delta, and
+  // tokenizing the first message per token would be wasted work.
+  const onTitleChangeRef = useRef(onTitleChange)
+  useEffect(() => {
+    onTitleChangeRef.current = onTitleChange
+  }, [onTitleChange])
+
+  const title = useMemo(
+    () =>
+      tabTitle({
+        name: session.session?.name,
+        firstUserMessage: firstUserMessage(session.messages),
+      }),
+    [session.session?.name, session.messages],
+  )
+  useEffect(() => {
+    onTitleChangeRef.current?.(title)
+  }, [title])
+
+  // Scroll is conversation state, so it lives here rather than in ChatPanel:
+  // a hidden host renders null, which would otherwise take the offset with it.
+  // It is kept unclamped — ChatPanel clamps it to the transcript it has, so a
+  // reply that shrinks below the offset and then grows again keeps the place.
+  const [scrollOffset, setScrollOffset] = useState(0)
+
+  // A different conversation starts at the bottom. Carrying the old offset
+  // over would open a short, fresh transcript somewhere in its middle. A first
+  // save is not a switch: a Tab that is scrolled up while its very first reply
+  // finishes must keep its place.
+  const conversationId = session.session?.id
+  const conversationEmpty = session.messages.length === 0
+  const previousConversation = useRef({ id: conversationId, empty: conversationEmpty })
+  useEffect(() => {
+    const previous = previousConversation.current
+    previousConversation.current = { id: conversationId, empty: conversationEmpty }
+    const switched =
+      previous.id !== undefined &&
+      conversationId !== undefined &&
+      previous.id !== conversationId
+    const cleared = !previous.empty && conversationEmpty
+    if (switched || cleared) setScrollOffset(0)
+  }, [conversationId, conversationEmpty])
 
   // The highlighted Approval Prompt choice. It resets for every new question,
   // so Enter always answers the question on screen rather than a stale index.
@@ -295,6 +353,26 @@ export function TabHost({
 
       if (session.showExitSummary) {
         exit()
+        return
+      }
+
+      // Tab keys come after every surface that owns the keyboard, so a prompt
+      // or a picker can never have its keys stolen by a switch. Only the
+      // active host is listening, so a hidden Tab cannot answer them either.
+      if (key.ctrl && key.leftArrow) {
+        onPrevTab?.()
+        return
+      }
+      if (key.ctrl && key.rightArrow) {
+        onNextTab?.()
+        return
+      }
+      if (key.ctrl && input === "t") {
+        onOpenTab?.()
+        return
+      }
+      if (key.ctrl && /^[1-9]$/.test(input)) {
+        onJumpTab?.(Number(input))
         return
       }
 
@@ -442,8 +520,11 @@ export function TabHost({
           feedbackEntries={session.feedbackEntries}
           inputKey={drafting.inputKey}
           inputValue={drafting.inputValue}
+          initialCursor={drafting.inputCursor}
           inputDisabled={drafting.pickerRequest !== null || keyEntry !== null || confirmation !== null}
           onInputChange={drafting.handleInputChange}
+          scrollOffset={scrollOffset}
+          onScrollOffsetChange={setScrollOffset}
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight, hint: suggestionHint } : undefined}
           fileSuggestion={fileSuggestionVisible ? { items: mentionFiles, highlightIndex: clampedFileHighlight } : undefined}
           route={route}

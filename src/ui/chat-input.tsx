@@ -15,11 +15,13 @@ import {
   type CursorState,
 } from "./cursor-edit"
 
-export function ChatInput({ value, placeholder, isDisabled, onChange, onTab }: { value: string; placeholder: string; isDisabled?: boolean; onChange: (value: string, cursor: number) => void; onTab?: () => void }) {
+export function ChatInput({ value, initialCursor, placeholder, isDisabled, onChange, onTab }: { value: string; initialCursor?: number; placeholder: string; isDisabled?: boolean; onChange: (value: string, cursor: number) => void; onTab?: () => void }) {
   const filterStateRef = useRef<MouseInputFilterState>(MOUSE_INPUT_FILTER_INITIAL)
   const valueRef = useRef(value)
   const ownValueRef = useRef(value)
-  const [cursor, setCursor] = useState(value.length)
+  const [cursor, setCursor] = useState(() =>
+    Math.max(0, Math.min(initialCursor ?? value.length, value.length)),
+  )
   const cursorRef = useRef(cursor)
 
   useEffect(() => {
@@ -57,11 +59,12 @@ export function ChatInput({ value, placeholder, isDisabled, onChange, onTab }: {
     ) {
       return
     }
-    if (key.leftArrow) {
+    // Ctrl+←/→ belong to the Tab Bar, not the draft.
+    if (key.leftArrow && !key.ctrl) {
       commit(moveLeft(valueRef.current, cursorRef.current))
       return
     }
-    if (key.rightArrow) {
+    if (key.rightArrow && !key.ctrl) {
       commit(moveRight(valueRef.current, cursorRef.current))
       return
     }

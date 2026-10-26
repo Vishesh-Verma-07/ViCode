@@ -156,5 +156,11 @@ render(
       removeApiKeyFromGlobalConfig(providerId)
     },
   }),
-  { stdin: createBackspaceRewritingStdin(process.stdin) },
+  {
+    stdin: createBackspaceRewritingStdin(process.stdin),
+    // Ctrl+1…Ctrl+9 are indistinguishable from other control keys in the
+    // legacy encoding, so ask the terminal for the kitty keyboard protocol
+    // when it supports it. `auto` queries and falls back silently.
+    kittyKeyboard: { mode: "auto" },
+  },
 )

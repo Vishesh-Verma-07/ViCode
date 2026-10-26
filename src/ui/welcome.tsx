@@ -72,11 +72,12 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
       setSelectedIndex((prev) => Math.min(menuItems.length - 1, prev + 1))
       return
     }
-    if (key.leftArrow) {
+    // Ctrl+←/→ belong to the Tab Bar, not the welcome draft.
+    if (key.leftArrow && !key.ctrl) {
       apply(moveLeft(valueRef.current, cursorRef.current))
       return
     }
-    if (key.rightArrow) {
+    if (key.rightArrow && !key.ctrl) {
       apply(moveRight(valueRef.current, cursorRef.current))
       return
     }

@@ -5352,3 +5352,395 @@ describe("Mode persistence across sessions", () => {
     }
   }, 30000)
 })
+
+describe("App Tabs", () => {
+  function setup(options?: {
+    initialView?: "home" | "chat"
+    initialSession?: Session
+    sessionsDir?: string
+    provider?: Provider
+    commands?: Command[]
+  }) {
+    const provider: Provider = options?.provider ?? {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(messages) {
+        const last = [...messages].reverse().find((message) => message.role === "user")
+        const text =
+          last?.content
+            .filter((content) => content.type === "text")
+            .map((content) => (content.type === "text" ? content.text : ""))
+            .join("") ?? ""
+        yield { type: "text-delta" as const, text: `reply to ${text}` }
+        yield {
+          type: "finish" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+        }
+      },
+    }
+
+    const instance = render(
+      <App
+        provider={provider}
+        tools={[]}
+        context={{ projectPath: "/tmp/tabs-test" }}
+        keyFor={() => "test-key"}
+        initialView={options?.initialView ?? "chat"}
+        initialSession={options?.initialSession}
+        sessionsDir={options?.sessionsDir}
+        commands={options?.commands}
+      />,
+    )
+
+    const frameText = normalizeFrame(instance.lastFrame)
+    const lines = () => frameLines(instance.lastFrame)
+    const tabBar = () => lines()[0] ?? ""
+    const inputValue = () => {
+      const all = lines()
+      const width = Math.max(0, ...all.map((line) => line.length))
+      const usagePanelWidth = Math.max(30, Math.floor(width * 0.3))
+      const chatWidth = width - usagePanelWidth - 1
+      const line = all
+        .map((candidate) => candidate.slice(0, Math.max(0, chatWidth)))
+        .find((candidate) => candidate.trimStart().startsWith("→ "))
+      return line ? line.replace(/^.*?→\s*/, "").trimEnd() : ""
+    }
+
+    async function typeText(text: string) {
+      for (const char of text) {
+        instance.stdin.write(char)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+      }
+    }
+    async function pressKey(key: string) {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    async function typeAndSubmit(text: string) {
+      await typeText(text)
+      await pressKey("\r")
+    }
+
+    return { ...instance, frameText, lines, tabBar, inputValue, typeText, pressKey, typeAndSubmit }
+  }
+
+  const CTRL_T = "\u0014"
+  const CTRL_LEFT = "\u001b[1;5D"
+  const CTRL_RIGHT = "\u001b[1;5C"
+  // Kitty CSI-u: codepoint of the digit with the ctrl modifier.
+  const ctrlDigit = (digit: number) => `\u001b[${48 + digit};5u`
+
+  it("opens a focused Tab on Ctrl+T and takes typing there", async () => {
+    const { frameText, tabBar, pressKey, typeAndSubmit, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      expect(tabBar()).toContain("New chat")
+      expect(tabBar()).toContain("+")
+
+      await pressKey(CTRL_T)
+      await until(() => (tabBar().match(/New chat/g) ?? []).length === 2)
+
+      await typeAndSubmit("second tab")
+      await until(() => frameText().includes("reply to second tab"))
+      await until(() => tabBar().includes("second tab"))
+      expect((tabBar().match(/New chat/g) ?? []).length).toBe(1)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("keeps each Tab's draft, transcript and Mode to itself", async () => {
+    const { frameText, inputValue, pressKey, typeText, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeText("alpha draft")
+      await pressKey("\t")
+      await until(() => frameText().includes("[Discuss]"))
+
+      await pressKey(CTRL_T)
+      await typeText("beta draft")
+      await until(() => inputValue() === "beta draft")
+      expect(frameText()).toContain("[Build]")
+      expect(frameText()).not.toContain("[Discuss]")
+
+      await pressKey(CTRL_LEFT)
+      await until(() => inputValue() === "alpha draft")
+      expect(frameText()).toContain("[Discuss]")
+
+      await pressKey(CTRL_RIGHT)
+      await until(() => inputValue() === "beta draft")
+
+      await typeText(" and more")
+      await until(() => inputValue() === "beta draft and more")
+      await pressKey("\r")
+      await until(() => frameText().includes("reply to beta draft and more"), 10000)
+
+      await pressKey(ctrlDigit(1))
+      await until(() => inputValue() === "alpha draft")
+      expect(frameText()).not.toContain("reply to beta draft and more")
+      expect(frameText()).toContain("[Discuss]")
+
+      await pressKey(ctrlDigit(2))
+      await until(() => frameText().includes("reply to beta draft and more"))
+      expect(inputValue()).toBe("Type your message...")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("keeps each Tab's Input History and Cursor to itself", async () => {
+    const { frameText, inputValue, pressKey, typeText, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeText("history one")
+      await pressKey("\r")
+      await until(() => frameText().includes("reply to history one"), 10000)
+
+      await pressKey("\u001b[A")
+      await until(() => inputValue() === "history one")
+      for (let index = 0; index < 4; index++) {
+        await pressKey("\u001b[D")
+      }
+
+      await pressKey(CTRL_T)
+      await pressKey("\u001b[A")
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(inputValue()).toBe("Type your message...")
+
+      await pressKey(ctrlDigit(1))
+      await until(() => inputValue() === "history  one")
+      await typeText("X")
+      await until(() => inputValue() === "historyX  one")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("moves with Ctrl+←/→, jumps with Ctrl+1…9, and ignores positions that do not exist", async () => {
+    const { frameText, inputValue, pressKey, typeText, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeText("one")
+      await pressKey(CTRL_T)
+      await typeText("two")
+      await pressKey(CTRL_T)
+      await typeText("three")
+      await until(() => inputValue() === "three")
+
+      await pressKey(ctrlDigit(1))
+      await until(() => inputValue() === "one")
+      await pressKey(ctrlDigit(3))
+      await until(() => inputValue() === "three")
+
+      await pressKey(ctrlDigit(9))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(inputValue()).toBe("three")
+
+      await pressKey(CTRL_RIGHT)
+      await until(() => inputValue() === "one")
+      await pressKey(CTRL_LEFT)
+      await until(() => inputValue() === "three")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("titles a Tab by the Session name, else the start of its first message", async () => {
+    const named: Session = {
+      id: "sess_named",
+      model: "stub-model",
+      name: "release prep",
+      messages: [],
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:30:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    const namedRun = setup({ initialSession: named })
+    try {
+      await until(() => namedRun.frameText().includes("Type your message"))
+      await until(() => namedRun.tabBar().includes("release prep"))
+    } finally {
+      namedRun.unmount()
+    }
+
+    const unnamedRun = setup()
+    try {
+      await until(() => unnamedRun.frameText().includes("Type your message"))
+      await unnamedRun.typeAndSubmit("how does approval work")
+      await until(() => unnamedRun.frameText().includes("reply to how does approval work"), 10000)
+      await until(() => unnamedRun.tabBar().includes("how does approval work"))
+    } finally {
+      unnamedRun.unmount()
+    }
+  }, 30000)
+
+  it("binds a new Tab to a Session only once it says something", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-tabs-disk-"))
+    const { frameText, pressKey, typeText, unmount } = setup({ sessionsDir })
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await pressKey(CTRL_T)
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      expect(existsSync(sessionsDir) ? readdirSync(sessionsDir) : []).toEqual([])
+
+      await typeText("first words")
+      await pressKey("\r")
+      await until(() => frameText().includes("reply to first words"), 10000)
+      await until(() => readdirSync(sessionsDir).length === 1)
+      expect(readdirSync(sessionsDir)).toHaveLength(1)
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("hides the tabBar on the Welcome Screen and opens the first Tab from its first message", async () => {
+    const { frameText, tabBar, typeText, pressKey, unmount } = setup({ initialView: "home" })
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+      expect(frameText()).not.toContain("New chat")
+
+      await typeText("hello from home")
+      await pressKey("\r")
+      await until(() => frameText().includes("reply to hello from home"), 10000)
+      await until(() => tabBar().includes("hello from home"))
+      expect(tabBar()).toContain("+")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("opens exactly one Tab from Ctrl+T on the Welcome Screen", async () => {
+    const { frameText, tabBar, pressKey, unmount } = setup({ initialView: "home" })
+    try {
+      await until(() => frameText().includes("AI-Powered Coding Assistant"))
+      await pressKey(CTRL_T)
+      await until(() => frameText().includes("Type your message"))
+      await until(() => tabBar().includes("New chat"))
+      expect((tabBar().match(/New chat/g) ?? []).length).toBe(1)
+      expect(tabBar()).toContain("+")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("keeps each Tab's scroll position", async () => {
+    const messages: Message[] = Array.from({ length: 30 }, (_, index) => ({
+      id: `msg_scroll_${index}`,
+      role: "user" as const,
+      content: [
+        { type: "text" as const, text: index === 0 ? "seed heading" : `line-${String(index).padStart(2, "0")}` },
+      ],
+      timestamp: index,
+    }))
+    const seed: Session = {
+      id: "sess_scroll",
+      model: "stub-model",
+      messages,
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:30:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    const { frameText, pressKey, unmount } = setup({ initialSession: seed })
+    try {
+      await until(() => frameText().includes("line-29"))
+
+      await pressKey("\u001b[5~")
+      await pressKey("\u001b[5~")
+      await until(() => frameText().includes("line-05"))
+      expect(frameText()).not.toContain("line-29")
+
+      await pressKey(CTRL_T)
+      await until(() => frameText().includes("Type your message"))
+      await pressKey(ctrlDigit(1))
+      await until(() => frameText().includes("line-05"))
+      expect(frameText()).not.toContain("line-29")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("starts a replaced conversation at the bottom, not at the old offset", async () => {
+    const messages: Message[] = Array.from({ length: 30 }, (_, index) => ({
+      id: `msg_replace_${index}`,
+      role: "user" as const,
+      content: [
+        {
+          type: "text" as const,
+          text: index === 0 ? "seed heading" : `line-${String(index).padStart(2, "0")}`,
+        },
+      ],
+      timestamp: index,
+    }))
+    const seed: Session = {
+      id: "sess_replace",
+      model: "stub-model",
+      messages,
+      createdAt: "2025-01-15T10:30:00.000Z",
+      updatedAt: "2025-01-15T10:30:00.000Z",
+      totalTokens: 0,
+      totalCost: 0,
+    }
+    const sessionsDir = mkdtempSync(join(tmpdir(), "vicode-tabs-replace-"))
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        for (let index = 0; index < 60; index++) {
+          yield { type: "text-delta" as const, text: `fresh-${String(index).padStart(2, "0")}\n` }
+        }
+        yield {
+          type: "finish" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+        }
+      },
+    }
+    const { frameText, pressKey, typeAndSubmit, unmount } = setup({
+      initialSession: seed,
+      provider,
+      sessionsDir,
+      commands: [createNewCommand()],
+    })
+    try {
+      await until(() => frameText().includes("line-29"))
+      await pressKey("\u001b[5~")
+      await pressKey("\u001b[5~")
+      await until(() => frameText().includes("line-06"))
+      expect(frameText()).not.toContain("line-29")
+
+      await typeAndSubmit("/new")
+      await until(() => frameText().includes("Started a new session"))
+      await typeAndSubmit("go")
+      await until(() => frameText().includes("fresh-59"), 10000)
+
+      // The fresh conversation opens at its own bottom, so the old offset did
+      // not carry over.
+      expect(frameText()).not.toContain("fresh-00")
+    } finally {
+      unmount()
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  it("still raises the exit summary on Ctrl+C with more than one Tab open", async () => {
+    const { frameText, pressKey, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await pressKey(CTRL_T)
+      await pressKey("\u0003")
+      await until(() => frameText().includes("Session Summary"), 10000)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+})

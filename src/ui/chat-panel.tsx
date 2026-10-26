@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { type Dispatch, type ReactNode, type SetStateAction } from "react"
 import { Box, Text, useInput } from "ink"
 import { parseWheelEvent } from "./mouse"
 import { COLORS, ICONS } from "./theme"
@@ -28,8 +28,12 @@ interface ChatPanelProps {
   feedbackEntries: FeedbackEntry[]
   inputKey: number
   inputValue: string
+  initialCursor?: number
   inputDisabled?: boolean
   onInputChange?: (value: string, cursor: number) => void
+  /** Lines scrolled up from the bottom; owned by the conversation, not the panel. */
+  scrollOffset: number
+  onScrollOffsetChange: Dispatch<SetStateAction<number>>
   suggestion?: CommandSuggestionProps
   fileSuggestion?: FileSuggestionProps
   route?: RouteLabel
@@ -73,22 +77,20 @@ function commandFromArgs(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, inputDisabled, onInputChange, suggestion, fileSuggestion, route, mode, onTab }: ChatPanelProps) {
-  const [bottomOffset, setBottomOffset] = useState(0)
-
+export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, initialCursor, inputDisabled, onInputChange, scrollOffset, onScrollOffsetChange, suggestion, fileSuggestion, route, mode, onTab }: ChatPanelProps) {
   useInput((_input, key) => {
     if (scrollDisabled) return
     const wheel = parseWheelEvent(_input)
     if (wheel === "up") {
-      setBottomOffset((prev) => prev + WHEEL_STEP_LINES)
+      onScrollOffsetChange((offset) => offset + WHEEL_STEP_LINES)
     } else if (wheel === "down") {
-      setBottomOffset((prev) => Math.max(0, prev - WHEEL_STEP_LINES))
+      onScrollOffsetChange((offset) => Math.max(0, offset - WHEEL_STEP_LINES))
     } else if (key.pageUp) {
-      setBottomOffset((prev) => prev + viewportHeight)
+      onScrollOffsetChange((offset) => offset + viewportHeight)
     } else if (key.pageDown) {
-      setBottomOffset((prev) => Math.max(0, prev - viewportHeight))
+      onScrollOffsetChange((offset) => Math.max(0, offset - viewportHeight))
     } else if (key.end) {
-      setBottomOffset(0)
+      onScrollOffsetChange(0)
     }
   })
 
@@ -304,7 +306,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
 
   const totalLines = blocks.reduce((n, b) => n + b.lines, 0)
   const maxScroll = Math.max(0, totalLines - viewportHeight + 1)
-  const offset = Math.min(bottomOffset, maxScroll)
+  const offset = Math.min(scrollOffset, maxScroll)
   const hintLines = offset > 0 ? 1 : 0
 
   const sliceBlockText = (block: Block, count: number, mode: "head" | "tail"): ReactNode => {
@@ -387,6 +389,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
       <ModeInputBox mode={mode} marginTop={1}>
         <ChatInput
           value={inputValue}
+          initialCursor={initialCursor}
           placeholder={isStreaming ? "Responding..." : "Type your message..."}
           isDisabled={inputDisabled}
           onChange={onInputChange ?? (() => {})}
