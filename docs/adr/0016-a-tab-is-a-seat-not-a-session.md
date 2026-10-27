@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Amends the Session rule in [ADR-0002](0002-session-storage-in-project-directory.md) and the Session-scoped approval memory in [ADR-0015](0015-fewer-approval-prompts-without-losing-consent.md). Amends the New Chat definition in `CONTEXT.md`.
+Accepted. Amends the Session rule in [ADR-0002](0002-session-storage-in-project-directory.md) and the Session-scoped approval memory in [ADR-0015](0015-fewer-approval-prompts-without-losing-consent.md). Amends the New Chat definition in `CONTEXT.md`. Extended by [ADR-0017](0017-a-drag-selects-messages-not-text.md), which reports motion while a button is held but still refuses hover.
 
 ## Context
 

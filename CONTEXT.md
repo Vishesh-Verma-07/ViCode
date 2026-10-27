@@ -121,7 +121,7 @@ The in-memory, Tab-scoped list of every Input the user submits (Messages and Com
 _Avoid_: message history (implies the transcript), command history, global history
 
 **Select Mode**:
-The Tab-scoped keyboard state opened with `Ctrl+S`, in which `↑`/`↓` move a highlight through the transcript's copyable messages, `Space` marks or unmarks one, and `Enter` (or `Ctrl+C`) copies the marked messages — or the highlight when none are marked — to the system clipboard before leaving. `Esc` leaves without copying. It selects whole messages, not arbitrary text: a Tool Result and a Compaction summary are machinery and are never offered, and an Assistant reply contributes only its prose and fenced code, never its Tool Calls. The clipboard is reached through a native command where one exists and the terminal's OSC 52 sequence otherwise.
+The Tab-scoped keyboard state opened with `Ctrl+S` — or by clicking a message — in which `↑`/`↓` move a highlight through the transcript's copyable messages, `Space` marks or unmarks one, and `Enter` (or `Ctrl+C`) copies the marked messages — or the highlight when none are marked — to the system clipboard before leaving. `Esc` leaves without copying. A drag across the transcript marks every message it crosses; release keeps that range marked rather than copying it. The wheel moves the highlight while selecting. It selects whole messages, not arbitrary characters within one: a Tool Result and a Compaction summary are machinery and are never offered, and an Assistant reply contributes only its prose and fenced code, never its Tool Calls. The clipboard is reached through a native command where one exists and the terminal's OSC 52 sequence otherwise.
 _Avoid_: text selection, copy mode, clipboard history
 
 **Compaction**:

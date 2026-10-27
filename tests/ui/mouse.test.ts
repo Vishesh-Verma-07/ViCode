@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { parseWheelEvent, parseMouseClick, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL } from "@/ui/mouse"
+import { parseWheelEvent, parseMouseClick, parseMouseEvents, MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, filterMouseInput, MOUSE_INPUT_FILTER_INITIAL } from "@/ui/mouse"
 
 describe("parseWheelEvent", () => {
   it("detects wheel-up (button 64 press)", () => {
@@ -33,11 +33,51 @@ describe("parseWheelEvent", () => {
 })
 
 describe("mouse tracking sequences", () => {
-  it("enable enables SGR + button tracking; disable undoes it", () => {
-    expect(MOUSE_TRACKING_ENABLE).toContain("\u001B[?1000h")
+  it("enable enables SGR + drag tracking; disable undoes it", () => {
+    expect(MOUSE_TRACKING_ENABLE).toContain("\u001B[?1002h")
     expect(MOUSE_TRACKING_ENABLE).toContain("\u001B[?1006h")
-    expect(MOUSE_TRACKING_DISABLE).toContain("\u001B[?1000l")
+    expect(MOUSE_TRACKING_DISABLE).toContain("\u001B[?1002l")
     expect(MOUSE_TRACKING_DISABLE).toContain("\u001B[?1006l")
+  })
+
+  it("never asks for hover tracking", () => {
+    expect(MOUSE_TRACKING_ENABLE).not.toContain("\u001B[?1003h")
+  })
+})
+
+describe("parseMouseEvents", () => {
+  it("reads a left press, its drag, and its release in order", () => {
+    expect(parseMouseEvents("<0;4;7M<32;5;8M<0;5;8m")).toEqual([
+      { kind: "press", button: "left", column: 4, row: 7 },
+      { kind: "move", button: "left", column: 5, row: 8 },
+      { kind: "release", button: "left", column: 5, row: 8 },
+    ])
+  })
+
+  it("decodes the wheel as a press and ignores horizontal wheel events", () => {
+    expect(parseMouseEvents("<64;1;2M")).toEqual([
+      { kind: "press", button: "wheel-up", column: 1, row: 2 },
+    ])
+    expect(parseMouseEvents("<65;3;4M")).toEqual([
+      { kind: "press", button: "wheel-down", column: 3, row: 4 },
+    ])
+    expect(parseMouseEvents("<66;3;4M")).toEqual([])
+    expect(parseMouseEvents("<67;3;4M")).toEqual([])
+  })
+
+  it("names the other buttons and keeps their motion", () => {
+    expect(parseMouseEvents("<1;1;1M")).toEqual([
+      { kind: "press", button: "middle", column: 1, row: 1 },
+    ])
+    expect(parseMouseEvents("<34;2;3M")).toEqual([
+      { kind: "move", button: "right", column: 2, row: 3 },
+    ])
+  })
+
+  it("ignores no-button reports and non-mouse input", () => {
+    expect(parseMouseEvents("<3;1;1M")).toEqual([])
+    expect(parseMouseEvents("hello")).toEqual([])
+    expect(parseMouseEvents("[Mab")).toEqual([])
   })
 })
 

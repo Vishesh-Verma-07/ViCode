@@ -1,6 +1,7 @@
-import { type Dispatch, type ReactNode, type SetStateAction, useEffect } from "react"
+import { type Dispatch, type ReactNode, type SetStateAction, useEffect, useRef } from "react"
 import { Box, Text, useInput } from "ink"
-import { parseWheelEvent } from "./mouse"
+import { parseMouseEvents, parseWheelEvent } from "./mouse"
+import { messageIdAtLine } from "./transcript-geometry"
 import { COLORS, ICONS } from "./theme"
 import type { Message, ContextSummaryContent } from "../core/types"
 import { tokenizeCodeText, type CodeSegment } from "../core/code-tokenizer"
@@ -41,6 +42,19 @@ interface ChatPanelProps {
   onTab?: () => void
   /** Set while Select Mode is picking messages to put on the clipboard. */
   selection?: MessageSelectionView
+  /** Present in the chat view so a click or drag can name the message under it. */
+  mouseSelection?: MouseSelectionHandlers
+}
+
+/** How the transcript reports pointer gestures to the conversation that owns Select Mode. */
+export interface MouseSelectionHandlers {
+  /** The panel's first screen row, 1-based, including the Tab Bar above it. */
+  screenTop: number
+  onPress: (messageId: string) => void
+  onDrag: (messageId: string) => void
+  onRelease: () => void
+  /** One wheel notch while selecting: -1 is toward older messages. */
+  onNudge: (delta: -1 | 1) => void
 }
 
 /** What ChatPanel needs to highlight the messages Select Mode is choosing between. */
@@ -54,6 +68,8 @@ export interface MessageSelectionView {
 }
 
 export const CHAT_CHROME_LINES = 6
+/** The Select Mode hint bar: one line of text plus its bottom padding. */
+export const SELECTION_FOOTER_LINES = 2
 const WHEEL_STEP_LINES = 3
 
 function textContentOf(msg: Message): string {
@@ -89,10 +105,13 @@ function commandFromArgs(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, initialCursor, inputDisabled, onInputChange, scrollOffset, onScrollOffsetChange, suggestion, fileSuggestion, route, mode, onTab, selection }: ChatPanelProps) {
+export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, initialCursor, inputDisabled, onInputChange, scrollOffset, onScrollOffsetChange, suggestion, fileSuggestion, route, mode, onTab, selection, mouseSelection }: ChatPanelProps) {
   useInput((_input, key) => {
     if (scrollDisabled) return
     const wheel = parseWheelEvent(_input)
+    // While Select Mode is open the wheel walks the highlight instead of the
+    // transcript, so the message being chosen cannot scroll out from under it.
+    if (wheel && selection) return
     if (wheel === "up") {
       onScrollOffsetChange((offset) => offset + WHEEL_STEP_LINES)
     } else if (wheel === "down") {
@@ -344,6 +363,58 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
     runningLines += block.lines
   }
 
+  // Pointer state is not rendered, so a ref keeps a drag from re-rendering the
+  // transcript on every cell the pointer crosses.
+  const pointer = useRef<{ dragging: boolean; lastMessageId: string | null }>({
+    dragging: false,
+    lastMessageId: null,
+  })
+
+  useInput((input) => {
+    if (!mouseSelection || scrollDisabled) return
+    const events = parseMouseEvents(input)
+    if (events.length === 0) return
+
+    const hintRows = offset > 0 ? 1 : 0
+    const budget = viewportHeight - hintRows
+    const topLine = Math.max(0, totalLines - offset - budget)
+    const firstContentRow = mouseSelection.screenTop + 1 + hintRows
+    const messageAt = (column: number, row: number): string | undefined => {
+      if (column < 1 || column > width) return undefined
+      const contentRow = row - firstContentRow
+      if (contentRow < 0 || contentRow >= budget) return undefined
+      return messageIdAtLine(blocks, topLine + contentRow)
+    }
+
+    for (const event of events) {
+      if (event.button === "wheel-up" || event.button === "wheel-down") {
+        if (event.kind === "press") {
+          mouseSelection.onNudge(event.button === "wheel-up" ? -1 : 1)
+        }
+        continue
+      }
+      if (event.button !== "left") continue
+
+      if (event.kind === "press") {
+        const messageId = messageAt(event.column, event.row)
+        pointer.current.dragging = messageId !== undefined
+        pointer.current.lastMessageId = messageId ?? null
+        if (messageId) mouseSelection.onPress(messageId)
+      } else if (event.kind === "move") {
+        if (!pointer.current.dragging) continue
+        const messageId = messageAt(event.column, event.row)
+        if (!messageId || messageId === pointer.current.lastMessageId) continue
+        pointer.current.lastMessageId = messageId
+        mouseSelection.onDrag(messageId)
+      } else {
+        if (!pointer.current.dragging) continue
+        pointer.current.dragging = false
+        pointer.current.lastMessageId = null
+        mouseSelection.onRelease()
+      }
+    }
+  })
+
   // Bring the highlighted message into view as Select Mode moves through the
   // transcript, without hard-coding transcript geometry anywhere else.
   useEffect(() => {
@@ -462,7 +533,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
             {selection.markedCount > 0 && (
               <Text color={COLORS.success}> · {selection.markedCount} selected</Text>
             )}
-            <Text color={COLORS.dimText}> · Space select · Enter copy · Esc cancel</Text>
+            <Text color={COLORS.dimText}> · Drag or Space select · Enter copy · Esc cancel</Text>
           </Text>
         </Box>
       )}

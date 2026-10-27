@@ -2860,11 +2860,11 @@ describe("App mouse wheel scrolling", () => {
   it("enables mouse tracking on mount and disables it on unmount", async () => {
     const { stdout, unmount } = setupWheel(createStubProvider([]))
     try {
-      await until(() => stdout.frames.some((f) => f.includes("\u001B[?1000h")))
+      await until(() => stdout.frames.some((f) => f.includes("\u001B[?1002h")))
     } finally {
       unmount()
     }
-    expect(stdout.frames.some((f) => f.includes("\u001B[?1000l"))).toBe(true)
+    expect(stdout.frames.some((f) => f.includes("\u001B[?1002l"))).toBe(true)
   })
 
   it("scrolls history with wheel-up and returns with wheel-down without leaking junk into the input", async () => {
@@ -3540,10 +3540,12 @@ describe("Chat input mouse-byte immunity", () => {
       }
       expect(scrolledUp).toBe(true)
 
-      stdin.write("\u001B[<0;10;5M")
+      // Click the Usage Panel, not the transcript: a click on a message now
+      // deliberately opens Select Mode, which owns the keyboard.
+      stdin.write("\u001B[<0;95;5M")
       await new Promise((r) => setTimeout(r, 50))
       const frameAfterClick = frameText()
-      expect(frameAfterClick).not.toContain("<0;10;5M")
+      expect(frameAfterClick).not.toContain("<0;95;5M")
 
       for (const char of "typed after click") {
         stdin.write(char)

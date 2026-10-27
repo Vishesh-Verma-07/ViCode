@@ -12,7 +12,7 @@ import { detectMention, filterMentionFiles, listMentionableFiles } from "../core
 import { Picker } from "./picker"
 import { routeLabel } from "./route-label"
 import { WelcomeScreen } from "./welcome"
-import { ChatPanel, CHAT_CHROME_LINES } from "./chat-panel"
+import { ChatPanel, CHAT_CHROME_LINES, SELECTION_FOOTER_LINES } from "./chat-panel"
 import { UsagePanel } from "./usage-panel"
 import { StatusBar } from "./status-bar"
 import { ApprovalPrompt, approvalOptions } from "./approval-prompt"
@@ -78,6 +78,8 @@ export interface TabHostProps extends TabHostDeps {
   view: View
   width: number
   height: number
+  /** The host's first screen row, 1-based; the Tab Bar and any notice sit above it. */
+  screenTop?: number
   onEnterChat: () => void
   onEnterHome: () => void
   /** Called when this conversation's badge-relevant state changes. */
@@ -126,6 +128,7 @@ export function TabHost({
   view,
   width,
   height,
+  screenTop = 1,
   onEnterChat,
   onEnterHome,
   onSummaryChange,
@@ -158,6 +161,9 @@ export function TabHost({
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectionIndex, setSelectionIndex] = useState(0)
   const [markedMessageIds, setMarkedMessageIds] = useState<Set<string>>(() => new Set())
+  // The message a drag started on. Kept outside render state because it only
+  // matters while the pointer is down, and a move should not re-render for it.
+  const selectionAnchorId = useRef<string | null>(null)
 
   /**
    * Puts a yes/no on screen and resolves to the answer. Its own state rather
@@ -340,6 +346,7 @@ export function TabHost({
     0,
   )
   const clearSelection = useCallback(() => {
+    selectionAnchorId.current = null
     setSelectionMode(false)
     setSelectionIndex(0)
     setMarkedMessageIds(new Set())
@@ -435,6 +442,63 @@ export function TabHost({
       setSelectionIndex((index) => clampSelectionIndex(index + delta, copyableMessages.length))
     },
     [copyableMessages.length],
+  )
+
+  /**
+   * A press starts a possible drag: the pressed message becomes the highlight,
+   * any earlier marks are dropped, and it becomes the anchor of a range. A press
+   * on a tool result or a Feedback Line names nothing and does nothing.
+   */
+  const pressMessage = useCallback(
+    (messageId: string) => {
+      if ((!inputSurfaceReady && !selectionMode) || copyableMessages.length === 0) return
+      const index = copyableMessages.findIndex((message) => message.id === messageId)
+      if (index < 0) return
+      selectionAnchorId.current = messageId
+      setSelectionIndex(index)
+      setMarkedMessageIds(new Set())
+      setSelectionMode(true)
+    },
+    [inputSurfaceReady, selectionMode, copyableMessages],
+  )
+
+  /**
+   * Dragging marks every copyable message between the anchor and the pointer.
+   * It trusts the anchor rather than this render's `selectionMode`, because a
+   * terminal may deliver the press and its first motion in one chunk, before
+   * the press's state update has rendered.
+   */
+  const dragSelectionTo = useCallback(
+    (messageId: string) => {
+      const anchorId = selectionAnchorId.current
+      if (!anchorId) return
+      const target = copyableMessages.findIndex((message) => message.id === messageId)
+      if (target < 0) return
+      const anchor = copyableMessages.findIndex((message) => message.id === anchorId)
+      const edge = anchor < 0 ? target : anchor
+      const from = Math.min(edge, target)
+      const to = Math.max(edge, target)
+      setSelectionMode(true)
+      setSelectionIndex(target)
+      setMarkedMessageIds(
+        from === to
+          ? new Set()
+          : new Set(copyableMessages.slice(from, to + 1).map((message) => message.id)),
+      )
+    },
+    [copyableMessages],
+  )
+
+  const releaseSelectionDrag = useCallback(() => {
+    selectionAnchorId.current = null
+  }, [])
+
+  const nudgeSelection = useCallback(
+    (delta: -1 | 1) => {
+      if (!selectionMode) return
+      moveSelection(delta)
+    },
+    [selectionMode, moveSelection],
   )
 
   const toggleMarkedMessage = useCallback(() => {
@@ -710,7 +774,17 @@ export function TabHost({
       <Box flexDirection="row" flexGrow={1}>
         <ChatPanel
           width={chatWidth}
-          viewportHeight={Math.max(5, height - CHAT_CHROME_LINES)}
+          viewportHeight={Math.max(
+            5,
+            height - CHAT_CHROME_LINES - (selectionMode ? SELECTION_FOOTER_LINES : 0),
+          )}
+          mouseSelection={{
+            screenTop,
+            onPress: pressMessage,
+            onDrag: dragSelectionTo,
+            onRelease: releaseSelectionDrag,
+            onNudge: nudgeSelection,
+          }}
           scrollDisabled={
             drafting.pickerRequest !== null ||
             confirmation !== null ||

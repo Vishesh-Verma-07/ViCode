@@ -219,6 +219,9 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     (tab) => tab.id !== activeId && summaries[tab.id]?.needsApproval,
   )
   const feedbackHeight = backgroundApproval ? 1 : 0
+  // Pointer reports carry screen cells, so the panels need to know the one row
+  // the Tab Bar takes and any notice above them. Row 1 is the window's first.
+  const panelTop = (showingBar ? TAB_BAR_HEIGHT : 0) + feedbackHeight + 1
   const summaryUsage = Object.values(tabUsage).reduce<TokenUsage>(
     (total, usage) => ({
       inputTokens: total.inputTokens + usage.inputTokens,
@@ -289,6 +292,7 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
           view={view}
           width={columns}
           height={panelHeight - feedbackHeight}
+          screenTop={panelTop}
           onEnterChat={enterChat}
           onEnterHome={enterHome}
           onTitleChange={(title) => setTitle(tab.id, title)}

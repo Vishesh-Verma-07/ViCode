@@ -43,7 +43,7 @@ vicode
 - **File Mentions** — type `@` to autocomplete a project file; accepting one attaches its content to your message so the model reads it without spending a tool call. Sensitive Paths are never offered, and a mention of one (or a path outside the Project Root) asks for approval like any other read
 - **Cursor-aware Welcome Screen** — edit your first message with the same editing primitives before you send it
 - **Terminal-friendly navigation** — mouse-wheel scrolling, PageUp/PageDown, End to jump to the bottom, and a `↑ N lines — End to return` hint when you're scrolled up
-- **Select and copy messages** — `Ctrl+S` opens Select Mode, where `↑`/`↓` walks the transcript, `Space` marks one or more messages, and `Enter` copies them to the system clipboard; `Esc` leaves without copying. When no native clipboard tool exists, ViCode falls back to the terminal's OSC 52 clipboard sequence
+- **Select and copy messages** — `Ctrl+S` opens Select Mode, where `↑`/`↓` walks the transcript, `Space` marks one or more messages, and `Enter` copies them to the system clipboard; `Esc` leaves without copying. Click a message to start there, or drag across messages to mark the range. When no native clipboard tool exists, ViCode falls back to the terminal's OSC 52 clipboard sequence
 
 **Agent**
 
@@ -259,7 +259,9 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `y` / `n` | Confirm or decline a model-switch warning |
 | `Ctrl+C` | Show the session summary; the next keypress exits |
 | `PageUp` / `PageDown` | Scroll chat history by a screen |
-| Mouse wheel | Scroll chat history by three lines |
+| Mouse wheel | Scroll chat history by three lines; move the Select Mode highlight while selecting |
+| Click a message | Enter Select Mode on that message |
+| Drag across messages | Mark every message the drag crosses in Select Mode |
 | `Ctrl+S` | Enter Select Mode to copy messages from the transcript |
 | `↑` / `↓` | Move the Select Mode highlight |
 | `Space` | Mark or unmark the highlighted message in Select Mode |

@@ -1,7 +1,10 @@
 export type WheelDirection = "up" | "down"
 
-export const MOUSE_TRACKING_ENABLE = "\u001B[?1000h\u001B[?1006h"
-export const MOUSE_TRACKING_DISABLE = "\u001B[?1000l\u001B[?1006l"
+// 1002, not 1000: a drag needs to know where the button moved, but only while
+// it is held. Hover tracking (1003) stays off, so moving the pointer without a
+// button still costs nothing.
+export const MOUSE_TRACKING_ENABLE = "\u001B[?1002h\u001B[?1006h"
+export const MOUSE_TRACKING_DISABLE = "\u001B[?1002l\u001B[?1006l"
 
 const WHEEL_SEQUENCE = /^\x1B?\[?<(\d+);\d+;\d+M$/
 
@@ -42,6 +45,57 @@ export function parseMouseClick(input: string): MouseClick | null {
     return { column: Number(match[2]), row: Number(match[3]) }
   }
   return null
+}
+
+export type MouseButton = "left" | "middle" | "right" | "wheel-up" | "wheel-down"
+
+export type MouseEventKind = "press" | "release" | "move"
+
+/** One SGR mouse report, decoded. Coordinates are the terminal's 1-based cells. */
+export interface ParsedMouseEvent {
+  kind: MouseEventKind
+  button: MouseButton
+  column: number
+  row: number
+}
+
+const SGR_MOUSE_EVENT_ANY = /(?:\x1B)?\[?<(\d+);(\d+);(\d+)([Mm])/g
+
+/**
+ * Reads every SGR mouse report out of one input chunk, including motion while
+ * the left button is held. `parseMouseClick` deliberately stops at the first
+ * press because the Tab Bar cares about a single pointer-down; a drag needs the
+ * whole sequence.
+ */
+export function parseMouseEvents(input: string): ParsedMouseEvent[] {
+  SGR_MOUSE_EVENT_ANY.lastIndex = 0
+  const events: ParsedMouseEvent[] = []
+  for (let match = SGR_MOUSE_EVENT_ANY.exec(input); match; match = SGR_MOUSE_EVENT_ANY.exec(input)) {
+    const code = Number(match[1])
+    const column = Number(match[2])
+    const row = Number(match[3])
+    const released = match[4] === "m"
+
+    // Bit 6 selects the wheel; the low two bits pick the direction.
+    if ((code & 64) !== 0) {
+      const wheel = code & 3
+      if (released || (wheel !== 0 && wheel !== 1)) continue
+      events.push({ kind: "press", button: wheel === 0 ? "wheel-up" : "wheel-down", column, row })
+      continue
+    }
+
+    // Low two bits: 0 left, 1 middle, 2 right, 3 no button.
+    const button = code & 3
+    if (button === 3) continue
+    const kind: MouseEventKind = released ? "release" : (code & 32) !== 0 ? "move" : "press"
+    events.push({
+      kind,
+      button: button === 0 ? "left" : button === 1 ? "middle" : "right",
+      column,
+      row,
+    })
+  }
+  return events
 }
 
 const X10_PREFIX = "[M"
