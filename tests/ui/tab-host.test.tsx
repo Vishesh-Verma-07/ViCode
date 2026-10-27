@@ -2,7 +2,7 @@ import React from "react"
 import { describe, it, expect } from "bun:test"
 import { render } from "ink-testing-library"
 import { Box, Text } from "ink"
-import { TabHost, type TabSummary } from "@/ui/tab-host"
+import { TabHost, type TabSummary, AUTO_COPY_PAUSE_MS } from "@/ui/tab-host"
 import type { Provider } from "@/core/provider"
 import { createSession } from "@/core/session"
 import type { Message } from "@/core/types"
@@ -250,10 +250,12 @@ describe("TabHost Select Mode", () => {
   function setup(
     copyText: (text: string) => Promise<ClipboardResult>,
     session: ReturnType<typeof createSession> = seedSession(),
+    height = 30,
   ) {
     const instance = render(
       <TabHost
         {...baseProps()}
+        height={height}
         active
         initialSession={session}
         copyText={copyText}
@@ -502,6 +504,81 @@ describe("TabHost Select Mode", () => {
 
       await until(() => copied.length > 0)
       expect(copied[0]).toBe("first answer\n\nsecond question")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("auto-copies a clicked message after it rests and shows what was copied", async () => {
+    const copied: string[] = []
+    const { instance, press, click, rowOf } = setup(
+      async (text) => {
+        copied.push(text)
+        return { kind: "copied", via: "command", command: "stub" }
+      },
+      seedSession(),
+      20,
+    )
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await click(rowOf("first answer"))
+      await until(() => frameText(instance).includes("Selecting messages..."))
+
+      await until(() => copied.length > 0)
+      expect(copied[0]).toBe("first answer")
+      await until(() => frameText(instance).includes("Copied message to clipboard"))
+      expect(frameText(instance)).toContain("first answer")
+      expect(frameText(instance)).toContain("Press any key to dismiss")
+      expect(frameText(instance)).not.toContain("Selecting messages...")
+
+      await press("x")
+      await until(() => !frameText(instance).includes("Press any key to dismiss"))
+      expect(frameText(instance)).toContain("Type your message...")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("auto-copies a dragged range after it rests", async () => {
+    const copied: string[] = []
+    const { instance, drag, rowOf } = setup(
+      async (text) => {
+        copied.push(text)
+        return { kind: "copied", via: "command", command: "stub" }
+      },
+      seedSession(),
+      20,
+    )
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await drag(rowOf("first answer"), rowOf("second question"))
+      await until(() => frameText(instance).includes("2 selected"))
+
+      await until(() => copied.length > 0)
+      expect(copied[0]).toBe("first answer\n\nsecond question")
+      await until(() => frameText(instance).includes("Copied 2 messages to clipboard"))
+      expect(frameText(instance)).toContain("Press any key to dismiss")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("gives the mouse selection another pause when a key adjusts it", async () => {
+    let copies = 0
+    const { instance, press, click, rowOf } = setup(async () => {
+      copies++
+      return { kind: "copied", via: "command", command: "stub" }
+    })
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await click(rowOf("first answer"))
+      await until(() => frameText(instance).includes("Selecting messages..."))
+
+      await press(UP)
+      await new Promise((resolve) => setTimeout(resolve, AUTO_COPY_PAUSE_MS + 250))
+
+      expect(copies).toBe(0)
+      expect(frameText(instance)).toContain("Select message 1/4")
     } finally {
       instance.unmount()
     }

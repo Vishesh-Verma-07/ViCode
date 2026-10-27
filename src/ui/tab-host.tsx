@@ -24,6 +24,7 @@ import { useChatDrafting } from "./use-chat-drafting"
 import { useAgentSession } from "./use-agent-session"
 import { firstUserMessage, tabTitle } from "./tab-set"
 import { copyToClipboard, type ClipboardResult } from "../core/clipboard"
+import { CopyPopup } from "./copy-popup"
 import {
   clampSelectionIndex,
   selectableMessages,
@@ -32,6 +33,16 @@ import {
 
 /** Puts text on the clipboard; injected so Select Mode can be tested without one. */
 export type ClipboardWriter = (text: string) => Promise<ClipboardResult>
+
+/** How long a mouse selection must rest before it becomes a clipboard write. */
+export const AUTO_COPY_PAUSE_MS = 700
+/** How long the copied-text receipt stays on screen. */
+export const COPY_POPUP_MS = 2400
+
+interface CopyReceipt {
+  text: string
+  count: number
+}
 
 interface KeyEntryRequest {
   resolve: (ok: boolean) => void
@@ -164,6 +175,14 @@ export function TabHost({
   // The message a drag started on. Kept outside render state because it only
   // matters while the pointer is down, and a move should not re-render for it.
   const selectionAnchorId = useRef<string | null>(null)
+  // A press that named no copyable message must not let its release schedule a
+  // copy of whatever happened to be selected before it.
+  const selectionGestureArmed = useRef(false)
+  // Counts mouse gestures. The auto-copy effect waits for this to stop moving;
+  // 0 means the last move was a key, not the pointer.
+  const [mouseGesture, setMouseGesture] = useState(0)
+  const [copyReceipt, setCopyReceipt] = useState<CopyReceipt | null>(null)
+  const copyReceiptTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   /**
    * Puts a yes/no on screen and resolves to the answer. Its own state rather
@@ -345,8 +364,34 @@ export function TabHost({
     (count, message) => count + (markedMessageIds.has(message.id) ? 1 : 0),
     0,
   )
+  const dismissCopyReceipt = useCallback(() => {
+    if (copyReceiptTimer.current) {
+      clearTimeout(copyReceiptTimer.current)
+      copyReceiptTimer.current = null
+    }
+    setCopyReceipt(null)
+  }, [])
+
+  const showCopyReceipt = useCallback((receipt: CopyReceipt) => {
+    if (copyReceiptTimer.current) clearTimeout(copyReceiptTimer.current)
+    setCopyReceipt(receipt)
+    copyReceiptTimer.current = setTimeout(() => {
+      copyReceiptTimer.current = null
+      setCopyReceipt(null)
+    }, COPY_POPUP_MS)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (copyReceiptTimer.current) clearTimeout(copyReceiptTimer.current)
+    },
+    [],
+  )
+
   const clearSelection = useCallback(() => {
     selectionAnchorId.current = null
+    selectionGestureArmed.current = false
+    setMouseGesture(0)
     setSelectionMode(false)
     setSelectionIndex(0)
     setMarkedMessageIds(new Set())
@@ -432,6 +477,7 @@ export function TabHost({
 
   const startSelection = useCallback(() => {
     if (!inputSurfaceReady || copyableMessages.length === 0) return
+    setMouseGesture(0)
     setSelectionIndex(copyableMessages.length - 1)
     setMarkedMessageIds(new Set())
     setSelectionMode(true)
@@ -451,10 +497,13 @@ export function TabHost({
    */
   const pressMessage = useCallback(
     (messageId: string) => {
+      selectionGestureArmed.current = false
       if ((!inputSurfaceReady && !selectionMode) || copyableMessages.length === 0) return
       const index = copyableMessages.findIndex((message) => message.id === messageId)
       if (index < 0) return
       selectionAnchorId.current = messageId
+      selectionGestureArmed.current = true
+      setMouseGesture(0)
       setSelectionIndex(index)
       setMarkedMessageIds(new Set())
       setSelectionMode(true)
@@ -478,6 +527,7 @@ export function TabHost({
       const edge = anchor < 0 ? target : anchor
       const from = Math.min(edge, target)
       const to = Math.max(edge, target)
+      setMouseGesture((gesture) => gesture + 1)
       setSelectionMode(true)
       setSelectionIndex(target)
       setMarkedMessageIds(
@@ -490,12 +540,21 @@ export function TabHost({
   )
 
   const releaseSelectionDrag = useCallback(() => {
+    const armed = selectionGestureArmed.current
+    selectionGestureArmed.current = false
     selectionAnchorId.current = null
+    if (!armed) return
+    // Release is the end of the gesture, so the pause starts here even for a
+    // click that never moved.
+    setMouseGesture((gesture) => gesture + 1)
   }, [])
 
   const nudgeSelection = useCallback(
     (delta: -1 | 1) => {
       if (!selectionMode) return
+      // A wheel notch means the user is still choosing, not resting on an
+      // answer, so it cancels a pending auto-copy.
+      setMouseGesture(0)
       moveSelection(delta)
     },
     [selectionMode, moveSelection],
@@ -511,23 +570,58 @@ export function TabHost({
     })
   }, [activeSelection])
 
+  /**
+   * Writes one already-computed selection. The receipt is reserved for a mouse
+   * copy: a keyboard copy already ends with the transcript's own feedback line
+   * and should not put a modal in front of the next keystroke.
+   */
+  const writeSelection = useCallback(
+    async (payload: { text: string; count: number }, withReceipt: boolean) => {
+      if (payload.count === 0) return
+      const write = copyText ?? copyToClipboard
+      const result = await write(payload.text)
+      if (result.kind === "failed") {
+        session.notify(`Could not copy: ${result.reason}`, "error")
+        return
+      }
+      session.notify(
+        payload.count === 1
+          ? "Copied message to clipboard."
+          : `Copied ${payload.count} messages to clipboard.`,
+      )
+      if (withReceipt) showCopyReceipt({ text: payload.text, count: payload.count })
+      clearSelection()
+    },
+    [copyText, session, showCopyReceipt, clearSelection],
+  )
+
   const copySelection = useCallback(async () => {
     if (!activeSelection) return
     const payload = selectionPayload(copyableMessages, markedMessageIds, activeSelection.id)
-    if (payload.count === 0) return
-    const write = copyText ?? copyToClipboard
-    const result = await write(payload.text)
-    if (result.kind === "failed") {
-      session.notify(`Could not copy: ${result.reason}`, "error")
-      return
-    }
-    session.notify(
-      payload.count === 1
-        ? "Copied message to clipboard."
-        : `Copied ${payload.count} messages to clipboard.`,
-    )
-    clearSelection()
-  }, [activeSelection, copyableMessages, markedMessageIds, copyText, session, clearSelection])
+    await writeSelection(payload, false)
+  }, [activeSelection, copyableMessages, markedMessageIds, writeSelection])
+
+  /**
+   * The mouse path needs no Enter: a selection that has stopped moving for a
+   * moment is a decision. The effect is keyed on the gesture counter, so every
+   * drag or release restarts the pause and any key cancels it.
+   */
+  const autoCopySelection = useCallback(async () => {
+    if (!selectionMode || !activeSelection) return
+    const payload = selectionPayload(copyableMessages, markedMessageIds, activeSelection.id)
+    await writeSelection(payload, true)
+  }, [selectionMode, activeSelection, copyableMessages, markedMessageIds, writeSelection])
+
+  const autoCopySelectionRef = useRef(autoCopySelection)
+  autoCopySelectionRef.current = autoCopySelection
+
+  useEffect(() => {
+    if (mouseGesture === 0 || !selectionMode) return
+    const timer = setTimeout(() => {
+      void autoCopySelectionRef.current()
+    }, AUTO_COPY_PAUSE_MS)
+    return () => clearTimeout(timer)
+  }, [mouseGesture, selectionMode])
 
   const suggestedCommands = firstWord.startsWith("/") ? filterCommands(allCommands, firstWord) : []
   const suggestionVisible =
@@ -589,9 +683,20 @@ export function TabHost({
         return
       }
 
+      // The receipt is modal for one keystroke: it covers the transcript, so a
+      // key aimed at the popup must not land in the draft behind it.
+      if (copyReceipt) {
+        dismissCopyReceipt()
+        return
+      }
+
       // Select Mode owns every key until it closes, so a stray letter cannot
       // become a draft and a stray Enter cannot send one.
       if (selectionMode) {
+        // A keyboard adjustment means the user is still choosing; it cancels
+        // the pending copy rather than letting that copy fire against the range
+        // as it was.
+        setMouseGesture(0)
         if (key.escape) {
           clearSelection()
           return
@@ -789,7 +894,8 @@ export function TabHost({
             drafting.pickerRequest !== null ||
             confirmation !== null ||
             session.pendingApproval !== null ||
-            session.showExitSummary
+            session.showExitSummary ||
+            copyReceipt !== null
           }
           runningTools={session.toolCalls.filter((tc) => !tc.result).map((tc) => ({ id: tc.id, name: tc.name }))}
           messages={session.messages}
@@ -800,7 +906,13 @@ export function TabHost({
           inputKey={drafting.inputKey}
           inputValue={drafting.inputValue}
           initialCursor={drafting.inputCursor}
-          inputDisabled={drafting.pickerRequest !== null || keyEntry !== null || confirmation !== null || selectionMode}
+          inputDisabled={
+            drafting.pickerRequest !== null ||
+            keyEntry !== null ||
+            confirmation !== null ||
+            selectionMode ||
+            copyReceipt !== null
+          }
           onInputChange={drafting.handleInputChange}
           scrollOffset={scrollOffset}
           onScrollOffsetChange={setScrollOffset}
@@ -832,6 +944,11 @@ export function TabHost({
         />
       </Box>
       <StatusBar usage={session.usage} route={route} status={session.turnStatus} />
+      {copyReceipt && (
+        <CenteredOverlay width={width} height={height}>
+          <CopyPopup width={width} text={copyReceipt.text} count={copyReceipt.count} />
+        </CenteredOverlay>
+      )}
       {overlays}
       {session.pendingApproval && (
         <ApprovalPrompt

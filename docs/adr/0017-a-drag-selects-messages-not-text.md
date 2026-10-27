@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Extends the keyboard-first rule in [ADR-0016](0016-a-tab-is-a-seat-not-a-session.md); it does not overturn it.
+Accepted. Extends the keyboard-first rule in [ADR-0016](0016-a-tab-is-a-seat-not-a-session.md); it does not overturn it. Release behavior is amended by [ADR-0018](0018-a-resting-mouse-selection-copies-itself.md), which copies a mouse selection once it rests instead of leaving every drag for `Enter`.
 
 ## Context
 
