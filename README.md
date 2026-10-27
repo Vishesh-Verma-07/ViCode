@@ -43,6 +43,7 @@ vicode
 - **File Mentions** — type `@` to autocomplete a project file; accepting one attaches its content to your message so the model reads it without spending a tool call. Sensitive Paths are never offered, and a mention of one (or a path outside the Project Root) asks for approval like any other read
 - **Cursor-aware Welcome Screen** — edit your first message with the same editing primitives before you send it
 - **Terminal-friendly navigation** — mouse-wheel scrolling, PageUp/PageDown, End to jump to the bottom, and a `↑ N lines — End to return` hint when you're scrolled up
+- **Select and copy messages** — `Ctrl+S` opens Select Mode, where `↑`/`↓` walks the transcript, `Space` marks one or more messages, and `Enter` copies them to the system clipboard; `Esc` leaves without copying. When no native clipboard tool exists, ViCode falls back to the terminal's OSC 52 clipboard sequence
 
 **Agent**
 
@@ -259,6 +260,11 @@ Only the **first word** of an input is treated as a command attempt, so `/help m
 | `Ctrl+C` | Show the session summary; the next keypress exits |
 | `PageUp` / `PageDown` | Scroll chat history by a screen |
 | Mouse wheel | Scroll chat history by three lines |
+| `Ctrl+S` | Enter Select Mode to copy messages from the transcript |
+| `↑` / `↓` | Move the Select Mode highlight |
+| `Space` | Mark or unmark the highlighted message in Select Mode |
+| `Enter` / `Ctrl+C` | Copy the marked messages (or the highlight) and leave Select Mode |
+| `Esc` | Leave Select Mode without copying |
 
 Picky surfaces (model, skill, and session pickers) take `↑`/`↓` to move, `Enter` to select, `Esc` to cancel, and plain typing to filter. A picker may carry a muted hint line under its items; the session picker uses it to point at `/rename`.
 

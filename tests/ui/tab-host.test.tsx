@@ -4,6 +4,9 @@ import { render } from "ink-testing-library"
 import { Box } from "ink"
 import { TabHost, type TabSummary } from "@/ui/tab-host"
 import type { Provider } from "@/core/provider"
+import { createSession } from "@/core/session"
+import type { Message } from "@/core/types"
+import type { ClipboardResult } from "@/core/clipboard"
 
 function createStubProvider(): Provider {
   return {
@@ -192,6 +195,177 @@ describe("TabHost", () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
 
       expect(reports).toBe(settled)
+    } finally {
+      instance.unmount()
+    }
+  })
+})
+
+describe("TabHost Select Mode", () => {
+  const CTRL_S = "\u0013"
+  const UP = "\u001B[A"
+  const ENTER = "\r"
+  const ESCAPE = "\u001B"
+
+  function seedSession(): ReturnType<typeof createSession> {
+    const messages: Message[] = [
+      {
+        id: "u1",
+        role: "user",
+        content: [{ type: "text", text: "first question" }],
+        timestamp: 1,
+      },
+      {
+        id: "a1",
+        role: "assistant",
+        content: [{ type: "text", text: "first answer" }],
+        timestamp: 2,
+      },
+      {
+        id: "u2",
+        role: "user",
+        content: [{ type: "text", text: "second question" }],
+        timestamp: 3,
+      },
+      {
+        id: "a2",
+        role: "assistant",
+        content: [{ type: "text", text: "second answer" }],
+        timestamp: 4,
+      },
+    ]
+    return createSession({ model: "openrouter/stub-model", messages })
+  }
+
+  function setup(copyText: (text: string) => Promise<ClipboardResult>) {
+    const instance = render(
+      <TabHost
+        {...baseProps()}
+        active
+        initialSession={seedSession()}
+        copyText={copyText}
+      />,
+    )
+    async function press(key: string): Promise<void> {
+      instance.stdin.write(key)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    return { instance, press }
+  }
+
+  it("enters Select Mode on Ctrl+S at the newest message", async () => {
+    const { instance, press } = setup(async () => ({ kind: "failed", reason: "not used" }))
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await press(CTRL_S)
+
+      await until(() => frameText(instance).includes("Selecting messages..."))
+      expect(frameText(instance)).toContain("Select message 4/4")
+      expect(frameText(instance)).toContain("Space select")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("moves the highlight with the arrow keys", async () => {
+    const copied: string[] = []
+    const { instance, press } = setup(async (text) => {
+      copied.push(text)
+      return { kind: "copied", via: "command", command: "stub" }
+    })
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await press(CTRL_S)
+      await press(UP)
+      await press(UP)
+
+      await until(() => frameText(instance).includes("Select message 2/4"))
+      await press(ENTER)
+
+      await until(() => copied.length > 0)
+      expect(copied[0]).toBe("first answer")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("copies the marked messages in transcript order", async () => {
+    const copied: string[] = []
+    const { instance, press } = setup(async (text) => {
+      copied.push(text)
+      return { kind: "copied", via: "command", command: "stub" }
+    })
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await press(CTRL_S)
+      await press(" ")
+      await press(UP)
+      await press(" ")
+
+      await until(() => frameText(instance).includes("2 selected"))
+      await press(ENTER)
+
+      await until(() => copied.length > 0)
+      expect(copied[0]).toBe("second question\n\nsecond answer")
+      await until(() => frameText(instance).includes("Copied 2 messages to clipboard."))
+      expect(frameText(instance)).not.toContain("Selecting messages...")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("also copies on Ctrl+C while Select Mode owns the keyboard", async () => {
+    const copied: string[] = []
+    const { instance, press } = setup(async (text) => {
+      copied.push(text)
+      return { kind: "copied", via: "command", command: "stub" }
+    })
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await press(CTRL_S)
+      await press(UP)
+      await press("\u0003")
+
+      await until(() => copied.length > 0)
+      expect(copied[0]).toBe("second question")
+      await until(() => frameText(instance).includes("Copied message to clipboard."))
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("stays open and reports a failed copy", async () => {
+    const { instance, press } = setup(async () => ({
+      kind: "failed",
+      reason: "clipboard is offline",
+    }))
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await press(CTRL_S)
+      await press(ENTER)
+
+      await until(() => frameText(instance).includes("Could not copy: clipboard is offline"))
+      expect(frameText(instance)).toContain("Selecting messages...")
+    } finally {
+      instance.unmount()
+    }
+  })
+
+  it("leaves Select Mode on Escape without copying", async () => {
+    let copies = 0
+    const { instance, press } = setup(async () => {
+      copies++
+      return { kind: "copied", via: "command", command: "stub" }
+    })
+    try {
+      await until(() => frameText(instance).includes("Type your message..."))
+      await press(CTRL_S)
+      await until(() => frameText(instance).includes("Selecting messages..."))
+      await press(ESCAPE)
+
+      await until(() => frameText(instance).includes("Type your message..."))
+      expect(frameText(instance)).not.toContain("Selecting messages...")
+      expect(copies).toBe(0)
     } finally {
       instance.unmount()
     }

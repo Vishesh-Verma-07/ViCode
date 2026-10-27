@@ -129,6 +129,8 @@ export interface AgentSession {
   activeMode: ModeId
   activeModeDefinition: ModeDefinition
   cycleMode: () => void
+  /** Records a short status line in the transcript, the way a command reports. */
+  notify: (text: string, tone?: FeedbackTone) => void
   handleSend: (input: string) => Promise<void>
   startNewSession: () => void
   performExit: () => Promise<void>
@@ -810,6 +812,7 @@ export function useAgentSession({
     activeMode,
     activeModeDefinition,
     cycleMode,
+    notify: (text: string, tone: FeedbackTone = "info") => appendFeedback(text, tone),
     handleSend,
     startNewSession,
     performExit,

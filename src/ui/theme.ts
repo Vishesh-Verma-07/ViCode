@@ -18,6 +18,8 @@ export const COLORS = {
   statusBarShade: "#202020",
   inlineChipShade: "#2a2a2a",
   inputShade: "#2b2b2b",
+  selectionShade: "#1d3b53",
+  selectionMarkedShade: "#152a3b",
 } as const
 
 export const ICONS = {

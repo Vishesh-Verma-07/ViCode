@@ -120,6 +120,10 @@ _Avoid_: new session, clear chat, new tab (the Tab is the consequence, not the a
 The in-memory, Tab-scoped list of every Input the user submits (Messages and Commands alike), recalled into the Input Box draft by Up/Down arrows. A new Tab starts with an empty list, and closing a Tab discards its own. Recalling is drafting, not replaying: a recalled Input is a fresh message on submit, not a re-run of the old turn.
 _Avoid_: message history (implies the transcript), command history, global history
 
+**Select Mode**:
+The Tab-scoped keyboard state opened with `Ctrl+S`, in which `↑`/`↓` move a highlight through the transcript's copyable messages, `Space` marks or unmarks one, and `Enter` (or `Ctrl+C`) copies the marked messages — or the highlight when none are marked — to the system clipboard before leaving. `Esc` leaves without copying. It selects whole messages, not arbitrary text: a Tool Result and a Compaction summary are machinery and are never offered, and an Assistant reply contributes only its prose and fenced code, never its Tool Calls. The clipboard is reached through a native command where one exists and the terminal's OSC 52 sequence otherwise.
+_Avoid_: text selection, copy mode, clipboard history
+
 **Compaction**:
 Replacing the older part of the conversation history with a model-generated summary once the window grows too large, so the agent keeps working instead of hitting the context limit. Distinct from Truncation, which silently drops or trims messages that exceed the budget.
 _Avoid_: summarization, context pruning, compacting the window

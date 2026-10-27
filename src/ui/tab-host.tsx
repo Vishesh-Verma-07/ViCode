@@ -23,6 +23,15 @@ import { CenteredOverlay } from "./centered-overlay"
 import { useChatDrafting } from "./use-chat-drafting"
 import { useAgentSession } from "./use-agent-session"
 import { firstUserMessage, tabTitle } from "./tab-set"
+import { copyToClipboard, type ClipboardResult } from "../core/clipboard"
+import {
+  clampSelectionIndex,
+  selectableMessages,
+  selectionPayload,
+} from "./message-selection"
+
+/** Puts text on the clipboard; injected so Select Mode can be tested without one. */
+export type ClipboardWriter = (text: string) => Promise<ClipboardResult>
 
 interface KeyEntryRequest {
   resolve: (ok: boolean) => void
@@ -59,6 +68,8 @@ export interface TabHostDeps {
   keyFor: (provider: ProviderId) => string | undefined
   onSaveApiKey?: (provider: ProviderId, apiKey: string) => void
   onRemoveApiKey?: (provider: ProviderId) => void
+  /** Overrides the system clipboard in tests of Select Mode. */
+  copyText?: ClipboardWriter
 }
 
 export interface TabHostProps extends TabHostDeps {
@@ -110,6 +121,7 @@ export function TabHost({
   keyFor,
   onSaveApiKey,
   onRemoveApiKey,
+  copyText,
   active,
   view,
   width,
@@ -140,6 +152,12 @@ export function TabHost({
 
   const [keyEntry, setKeyEntry] = useState<KeyEntryRequest | null>(null)
   const [confirmation, setConfirmation] = useState<PendingConfirmation | null>(null)
+  // Select Mode is conversation state for the same reason scroll is: a hidden
+  // host must remember nothing about it, and a switch must not leave the next
+  // conversation with a highlight the user cannot see.
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectionIndex, setSelectionIndex] = useState(0)
+  const [markedMessageIds, setMarkedMessageIds] = useState<Set<string>>(() => new Set())
 
   /**
    * Puts a yes/no on screen and resolves to the answer. Its own state rather
@@ -265,7 +283,8 @@ export function TabHost({
     keyEntry !== null ||
     confirmation !== null ||
     session.pendingApproval !== null ||
-    session.showExitSummary
+    session.showExitSummary ||
+    selectionMode
   useEffect(() => {
     onSummaryChangeRef.current?.({ streaming, needsApproval, errored, blocking })
   }, [streaming, needsApproval, errored, blocking])
@@ -313,6 +332,19 @@ export function TabHost({
   // reply that shrinks below the offset and then grows again keeps the place.
   const [scrollOffset, setScrollOffset] = useState(0)
 
+  const copyableMessages = useMemo(() => selectableMessages(session.messages), [session.messages])
+  const activeSelectionIndex = clampSelectionIndex(selectionIndex, copyableMessages.length)
+  const activeSelection = copyableMessages[activeSelectionIndex]
+  const markedSelectionCount = copyableMessages.reduce(
+    (count, message) => count + (markedMessageIds.has(message.id) ? 1 : 0),
+    0,
+  )
+  const clearSelection = useCallback(() => {
+    setSelectionMode(false)
+    setSelectionIndex(0)
+    setMarkedMessageIds(new Set())
+  }, [])
+
   // A different conversation starts at the bottom. Carrying the old offset
   // over would open a short, fresh transcript somewhere in its middle. A first
   // save is not a switch: a Tab that is scrolled up while its very first reply
@@ -328,8 +360,16 @@ export function TabHost({
       conversationId !== undefined &&
       previous.id !== conversationId
     const cleared = !previous.empty && conversationEmpty
-    if (switched || cleared) setScrollOffset(0)
-  }, [conversationId, conversationEmpty])
+    if (switched || cleared) {
+      setScrollOffset(0)
+      clearSelection()
+    }
+  }, [conversationId, conversationEmpty, clearSelection])
+
+  // A cleared transcript leaves nothing to select.
+  useEffect(() => {
+    if (selectionMode && copyableMessages.length === 0) clearSelection()
+  }, [selectionMode, copyableMessages.length, clearSelection])
 
   // The highlighted Approval Prompt choice. It resets for every new question,
   // so Enter always answers the question on screen rather than a stale index.
@@ -376,11 +416,54 @@ export function TabHost({
   const inputSurfaceReady =
     view === "chat" &&
     !session.isStreaming &&
+    !selectionMode &&
     !drafting.pickerRequest &&
     !keyEntry &&
     !confirmation &&
     !session.pendingApproval &&
     !session.showExitSummary
+
+  const startSelection = useCallback(() => {
+    if (!inputSurfaceReady || copyableMessages.length === 0) return
+    setSelectionIndex(copyableMessages.length - 1)
+    setMarkedMessageIds(new Set())
+    setSelectionMode(true)
+  }, [inputSurfaceReady, copyableMessages.length])
+
+  const moveSelection = useCallback(
+    (delta: -1 | 1) => {
+      setSelectionIndex((index) => clampSelectionIndex(index + delta, copyableMessages.length))
+    },
+    [copyableMessages.length],
+  )
+
+  const toggleMarkedMessage = useCallback(() => {
+    if (!activeSelection) return
+    setMarkedMessageIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(activeSelection.id)) next.delete(activeSelection.id)
+      else next.add(activeSelection.id)
+      return next
+    })
+  }, [activeSelection])
+
+  const copySelection = useCallback(async () => {
+    if (!activeSelection) return
+    const payload = selectionPayload(copyableMessages, markedMessageIds, activeSelection.id)
+    if (payload.count === 0) return
+    const write = copyText ?? copyToClipboard
+    const result = await write(payload.text)
+    if (result.kind === "failed") {
+      session.notify(`Could not copy: ${result.reason}`, "error")
+      return
+    }
+    session.notify(
+      payload.count === 1
+        ? "Copied message to clipboard."
+        : `Copied ${payload.count} messages to clipboard.`,
+    )
+    clearSelection()
+  }, [activeSelection, copyableMessages, markedMessageIds, copyText, session, clearSelection])
 
   const suggestedCommands = firstWord.startsWith("/") ? filterCommands(allCommands, firstWord) : []
   const suggestionVisible =
@@ -439,6 +522,33 @@ export function TabHost({
 
       if (session.showExitSummary) {
         exit()
+        return
+      }
+
+      // Select Mode owns every key until it closes, so a stray letter cannot
+      // become a draft and a stray Enter cannot send one.
+      if (selectionMode) {
+        if (key.escape) {
+          clearSelection()
+          return
+        }
+        if (key.upArrow || key.downArrow) {
+          moveSelection(key.upArrow ? -1 : 1)
+          return
+        }
+        if (input === " ") {
+          toggleMarkedMessage()
+          return
+        }
+        if (key.return || (key.ctrl && input === "c")) {
+          void copySelection()
+          return
+        }
+        return
+      }
+
+      if (key.ctrl && input === "s" && inputSurfaceReady && copyableMessages.length > 0) {
+        startSelection()
         return
       }
 
@@ -616,10 +726,21 @@ export function TabHost({
           inputKey={drafting.inputKey}
           inputValue={drafting.inputValue}
           initialCursor={drafting.inputCursor}
-          inputDisabled={drafting.pickerRequest !== null || keyEntry !== null || confirmation !== null}
+          inputDisabled={drafting.pickerRequest !== null || keyEntry !== null || confirmation !== null || selectionMode}
           onInputChange={drafting.handleInputChange}
           scrollOffset={scrollOffset}
           onScrollOffsetChange={setScrollOffset}
+          selection={
+            selectionMode && activeSelection
+              ? {
+                  activeId: activeSelection.id,
+                  markedIds: markedMessageIds,
+                  position: activeSelectionIndex + 1,
+                  total: copyableMessages.length,
+                  markedCount: markedSelectionCount,
+                }
+              : undefined
+          }
           suggestion={suggestionVisible ? { items: suggestedCommands, highlightIndex: clampedSuggestionHighlight, hint: suggestionHint } : undefined}
           fileSuggestion={fileSuggestionVisible ? { items: mentionFiles, highlightIndex: clampedFileHighlight } : undefined}
           route={route}

@@ -1,4 +1,4 @@
-import { type Dispatch, type ReactNode, type SetStateAction } from "react"
+import { type Dispatch, type ReactNode, type SetStateAction, useEffect } from "react"
 import { Box, Text, useInput } from "ink"
 import { parseWheelEvent } from "./mouse"
 import { COLORS, ICONS } from "./theme"
@@ -39,6 +39,18 @@ interface ChatPanelProps {
   route?: RouteLabel
   mode?: ModeDefinition
   onTab?: () => void
+  /** Set while Select Mode is picking messages to put on the clipboard. */
+  selection?: MessageSelectionView
+}
+
+/** What ChatPanel needs to highlight the messages Select Mode is choosing between. */
+export interface MessageSelectionView {
+  activeId: string
+  markedIds: ReadonlySet<string>
+  /** 1-based position of the highlighted message. */
+  position: number
+  total: number
+  markedCount: number
 }
 
 export const CHAT_CHROME_LINES = 6
@@ -77,7 +89,7 @@ function commandFromArgs(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, initialCursor, inputDisabled, onInputChange, scrollOffset, onScrollOffsetChange, suggestion, fileSuggestion, route, mode, onTab }: ChatPanelProps) {
+export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools, messages, currentText, isStreaming, onSend, feedbackEntries, inputKey, inputValue, initialCursor, inputDisabled, onInputChange, scrollOffset, onScrollOffsetChange, suggestion, fileSuggestion, route, mode, onTab, selection }: ChatPanelProps) {
   useInput((_input, key) => {
     if (scrollDisabled) return
     const wheel = parseWheelEvent(_input)
@@ -97,16 +109,24 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
   const usableWidth = Math.max(10, width - 6)
   const estimate = (text: string) => estimateLines(text, usableWidth)
 
-  type Block = { key: string; lines: number; node: ReactNode; text?: string }
+  type Block = { key: string; lines: number; node: ReactNode; text?: string; messageId?: string }
   const blocks: Block[] = []
 
-  const pushBlock = (key: string, node: ReactNode, lines: number, text?: string) => {
+  const shadeFor = (messageId: string | undefined) => {
+    if (!messageId || !selection) return undefined
+    if (messageId === selection.activeId) return COLORS.selectionShade
+    if (selection.markedIds.has(messageId)) return COLORS.selectionMarkedShade
+    return undefined
+  }
+
+  const pushBlock = (key: string, node: ReactNode, lines: number, text?: string, messageId?: string) => {
     blocks.push({
       key,
       lines: lines + 1,
       text,
+      messageId,
       node: (
-        <Box key={key} flexDirection="column" marginBottom={1}>
+        <Box key={key} flexDirection="column" marginBottom={1} backgroundColor={shadeFor(messageId)}>
           {node}
         </Box>
       ),
@@ -118,7 +138,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
   const addCodeAwareBlocks = (
     keyBase: string,
     text: string,
-    opts?: { prefix?: string; color?: "blue" | "green" },
+    opts?: { prefix?: string; color?: "blue" | "green"; messageId?: string },
   ) => {
     const segments = tokenizeCodeText(text)
     let nodeIdx = 0
@@ -168,6 +188,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           node,
           estimate(usePrefix ? `${opts?.prefix ?? ""}${estimateText}` : estimateText),
           usePrefix ? `${opts?.prefix ?? ""}${plain}` : plain,
+          opts?.messageId,
         )
       }
       firstTextDone = true
@@ -183,6 +204,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           <CodeBlock key={`${keyBase}:code${nodeIdx}`} code={seg.text} language={seg.language} />,
           estimate(seg.text) + (seg.language ? 1 : 0) + 4,
           seg.text,
+          opts?.messageId,
         )
       } else {
         mixed.push(seg)
@@ -214,12 +236,13 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
             </Text>,
             1,
             header,
+            msg.id,
           )
-          addCodeAwareBlocks(`${msg.id}:summary:body`, part.summary)
+          addCodeAwareBlocks(`${msg.id}:summary:body`, part.summary, { messageId: msg.id })
         }
         continue
       }
-      addCodeAwareBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent })
+      addCodeAwareBlocks(msg.id, textContentOf(msg), { prefix: "You: ", color: COLORS.accent, messageId: msg.id })
       for (const c of msg.content) {
         if (c.type !== "file-attachment") continue
         const lines = c.content.split("\n").length
@@ -232,12 +255,13 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           </Text>,
           1,
           label,
+          msg.id,
         )
       }
     } else if (msg.role === "assistant") {
       const text = textContentOf(msg)
       if (text) {
-        addCodeAwareBlocks(msg.id, text, { prefix: "vicode: ", color: COLORS.success })
+        addCodeAwareBlocks(msg.id, text, { prefix: "vicode: ", color: COLORS.success, messageId: msg.id })
       }
       for (const c of msg.content) {
         if (c.type !== "tool-call") continue
@@ -248,6 +272,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           </Text>,
           1,
           `${ICONS.tool} ${c.toolName}`,
+          msg.id,
         )
       }
     } else if (msg.role === "tool") {
@@ -260,6 +285,8 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
             `${msg.id}:result:${c.toolCallId}`,
             <DiffView key={`${msg.id}:result:${c.toolCallId}`} diff={diff} />,
             textLines + 5,
+            undefined,
+            msg.id,
           )
         } else {
           const summary = summarizeResult(message)
@@ -277,6 +304,7 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
             command
               ? `${ICONS.tool} ${c.toolName}\n$ ${command}\n${summary.text}`
               : `${ICONS.tool} ${c.toolName}\n${summary.text}`,
+            msg.id,
           )
         }
       }
@@ -309,11 +337,52 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
   const offset = Math.min(scrollOffset, maxScroll)
   const hintLines = offset > 0 ? 1 : 0
 
+  const blockStarts: number[] = []
+  let runningLines = 0
+  for (const block of blocks) {
+    blockStarts.push(runningLines)
+    runningLines += block.lines
+  }
+
+  // Bring the highlighted message into view as Select Mode moves through the
+  // transcript, without hard-coding transcript geometry anywhere else.
+  useEffect(() => {
+    if (!selection) return
+    const first = blocks.findIndex((block) => block.messageId === selection.activeId)
+    if (first < 0) return
+    const start = blockStarts[first] ?? 0
+    let end = start
+    for (let i = first; i < blocks.length && blocks[i]?.messageId === selection.activeId; i++) {
+      end += blocks[i]!.lines
+    }
+
+    const budget = Math.max(1, viewportHeight - hintLines)
+    const visibleTop = totalLines - offset - budget
+    const visibleBottom = totalLines - offset
+    const setOffset = (next: number) => {
+      const clamped = Math.max(0, Math.min(maxScroll, next))
+      if (clamped !== scrollOffset) onScrollOffsetChange(clamped)
+    }
+
+    // A message taller than the viewport cannot show both edges; keep its top
+    // visible rather than oscillating between the two corrections.
+    if (end - start > budget) {
+      if (start < visibleTop || start >= visibleBottom) setOffset(totalLines - start - budget)
+      return
+    }
+    if (start < visibleTop) setOffset(totalLines - start - budget)
+    else if (end > visibleBottom) setOffset(totalLines - end)
+  }, [selection?.activeId, scrollOffset, viewportHeight, totalLines])
+
   const sliceBlockText = (block: Block, count: number, mode: "head" | "tail"): ReactNode => {
     if (block.text === undefined) return block.node
     const linesArr = block.text.split("\n")
     const sliced = mode === "head" ? linesArr.slice(0, count) : linesArr.slice(-count)
-    return <Text key={`${block.key}:slice`}>{sliced.join("\n")}</Text>
+    return (
+      <Box key={`${block.key}:slice`} backgroundColor={shadeFor(block.messageId)}>
+        <Text>{sliced.join("\n")}</Text>
+      </Box>
+    )
   }
 
   let skip = offset
@@ -386,11 +455,24 @@ export function ChatPanel({ width, viewportHeight, scrollDisabled, runningTools,
           <FileSuggestion {...fileSuggestion} />
         </Box>
       )}
+      {selection && (
+        <Box paddingBottom={1} paddingX={2}>
+          <Text color={COLORS.muted} wrap="truncate-end">
+            <Text color={COLORS.primary}>{ICONS.dot}</Text> Select message {selection.position}/{selection.total}
+            {selection.markedCount > 0 && (
+              <Text color={COLORS.success}> · {selection.markedCount} selected</Text>
+            )}
+            <Text color={COLORS.dimText}> · Space select · Enter copy · Esc cancel</Text>
+          </Text>
+        </Box>
+      )}
       <ModeInputBox mode={mode} marginTop={1}>
         <ChatInput
           value={inputValue}
           initialCursor={initialCursor}
-          placeholder={isStreaming ? "Responding..." : "Type your message..."}
+          placeholder={
+            selection ? "Selecting messages..." : isStreaming ? "Responding..." : "Type your message..."
+          }
           isDisabled={inputDisabled}
           onChange={onInputChange ?? (() => {})}
           onTab={onTab}
