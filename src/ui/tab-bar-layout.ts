@@ -10,6 +10,7 @@ const PLUS_WIDTH = 1 // the bare "+"
 export interface TabBarTab {
   title: string
   active: boolean
+  status?: "streaming" | "approval" | "error"
 }
 
 /** One Tab in the Bar, with the columns it occupies there. */
@@ -35,7 +36,7 @@ export function layoutTabBar(tabs: readonly TabBarTab[], width: number): TabBarS
   const available = Math.max(1, Math.floor(width))
   if (tabs.length === 0) return []
 
-  const widths = tabs.map((tab) => naturalSlotWidth(tab.title))
+  const widths = tabs.map((tab) => naturalSlotWidth(tab.title) + (tab.status ? 2 : 0))
   const total = widths.reduce((sum, value) => sum + value, 0) + PLUS_WIDTH
   if (total <= available) {
     return widths.map((tabWidth, index) => ({ index, width: tabWidth }))
@@ -62,4 +63,49 @@ export function layoutTabBar(tabs: readonly TabBarTab[], width: number): TabBarS
     index: startIndex + offset,
     width: floorWidth,
   }))
+}
+
+/** What a click on the Bar landed on. */
+export type TabBarHit =
+  | {
+      kind: "tab"
+      /** Position in the Tab set, not in the visible window. */
+      index: number
+      /** True when the click landed on the active Tab's `×`. */
+      close: boolean
+    }
+  | { kind: "plus" }
+
+/**
+ * Maps a 0-based column on the Bar back to the Tab (or the `+`) it belongs to,
+ * using the same {@link layoutTabBar} slots the Bar is drawn from. The close
+ * cell is the `×` on the active Tab — the only place a close is offered — and a
+ * click anywhere else inside a Tab focuses it.
+ */
+export function hitTestTabBar(
+  tabs: readonly TabBarTab[],
+  width: number,
+  column: number,
+): TabBarHit | null {
+  if (column < 0) return null
+  let start = 0
+  for (const slot of layoutTabBar(tabs, width)) {
+    const tab = tabs[slot.index]
+    if (!tab) continue
+    if (column < start + slot.width) {
+      const markerWidth = tab.status ? 2 : 0
+      const titleWidth = Math.max(1, slot.width - TAB_CHROME_WIDTH - markerWidth)
+      // truncateTabTitle cuts to exactly titleWidth once the title overflows.
+      const shownTitle = Math.min(tab.title.length, titleWidth)
+      // marker, leading pad, title, then the space of " ×".
+      const closeColumn = start + markerWidth + 1 + shownTitle + 1
+      return {
+        kind: "tab",
+        index: slot.index,
+        close: tab.active && column === closeColumn,
+      }
+    }
+    start += slot.width
+  }
+  return column === start ? { kind: "plus" } : null
 }

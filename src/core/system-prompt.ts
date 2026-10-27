@@ -90,7 +90,7 @@ function permissionsSection(held: Set<string>): string {
       ? " — reads pause for approval too, not just writes and edits."
       : "."
     bullets.push(`${joinWith(gerunds, "or")} Sensitive files (like .env files, private keys, and credential stores) pauses for explicit user approval${readClause}`)
-    bullets.push(`${joinWith(gerunds, "or")} files outside the Project Root pauses for explicit user approval; the operation runs once approved, and the approval is remembered for the Session.`)
+    bullets.push(`${joinWith(gerunds, "or")} files outside the Project Root pauses for explicit user approval; the operation runs once approved, and the approval is remembered for this Tab.`)
   }
 
   if (held.has("bash")) bullets.push(BASH_ALLOWLIST_BULLET)

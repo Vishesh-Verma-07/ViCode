@@ -238,7 +238,7 @@ A seat for a conversation in the window, not a conversation in its own right. It
 _Avoid_: session (a Tab holds one, it is not one), window, pane
 
 **Tab Bar**:
-The single-row strip along the top edge of the window, above both the Chat Panel and the Usage Panel, holding the Tabs and the New Tab control. Absent on the Welcome Screen, which is the pre-Tab place. It is chrome, not a Surface: no background shade of its own beyond the App Background.
+The single-row strip along the top edge of the window, above both the Chat Panel and the Usage Panel, holding the Tabs and the New Tab control. A click focuses a Tab, the active Tab's `×` closes it, and `+` opens one — the same actions as `Ctrl+←`/`Ctrl+→`, `Ctrl+1`–`9`, `Ctrl+X` and `Ctrl+T`. Absent on the Welcome Screen, which is the pre-Tab place. It is chrome, not a Surface: no background shade of its own beyond the App Background.
 _Avoid_: session bar, tab strip, tab row
 
 **Code Block**:

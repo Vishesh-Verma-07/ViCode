@@ -71,6 +71,31 @@ describe("Tab Bar", () => {
     }
   })
 
+  it("marks streaming, approval, and error states without moving the close control", () => {
+    const instance = render(
+      <TabBar
+        width={80}
+        tabs={[
+          { id: "tab-1", title: "streaming", active: false, status: "streaming" },
+          { id: "tab-2", title: "approval", active: true, status: "approval" },
+          { id: "tab-3", title: "error", active: false, status: "error" },
+        ]}
+      />,
+    )
+    try {
+      const line = frameText(instance.lastFrame)
+      expect(line).toContain("●")
+      expect(line).toContain("streaming")
+      expect(line).toContain("⚠")
+      expect(line).toContain("approval ×")
+      expect(line).toContain("✗")
+      expect(line).toContain("error")
+      expect(line).toContain("+")
+    } finally {
+      instance.unmount()
+    }
+  })
+
   it("keeps × when the active title is cut to fit", () => {
     const instance = render(
       <TabBar width={20} tabs={[{ id: "tab-1", title: "a title far too long", active: true }]} />,

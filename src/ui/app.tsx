@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Box, useStdout, useWindowSize } from "ink"
-import { MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE } from "./mouse"
+import { Box, useInput, useStdout, useWindowSize } from "ink"
+import { MOUSE_TRACKING_ENABLE, MOUSE_TRACKING_DISABLE, parseMouseClick } from "./mouse"
 import { COLORS } from "./theme"
 import { TabHost, type TabHostDeps } from "./tab-host"
-import { TAB_BAR_HEIGHT, TabBar } from "./tab-bar"
+import { TAB_BAR_HEIGHT, TabBar, type TabBarItem } from "./tab-bar"
+import { hitTestTabBar } from "./tab-bar-layout"
+import { FeedbackLine } from "./feedback-line"
 import {
   NEW_CHAT_TITLE,
   closeTab,
   createTabSet,
   firstUserMessage,
+  focusTab,
   jumpToTab,
   nextTab,
   openTab,
@@ -17,7 +20,9 @@ import {
   tabTitle,
   type TabSet,
 } from "./tab-set"
+import type { TabSummary } from "./tab-host"
 import type { View } from "./view"
+import type { TokenUsage } from "../core/provider"
 
 export { STREAMING_COMMAND_NOTICE } from "./use-agent-session"
 export type { FeedbackTone, FeedbackEntry } from "./feedback-line"
@@ -28,6 +33,13 @@ export { extractDiff } from "./format"
 interface AppProps extends TabHostDeps {
   initialView?: View
 }
+
+/**
+ * The Bar is the first row of the frame. The window is as tall as the terminal,
+ * so its frame starts at the terminal's top row and the absolute row a click
+ * reports is the row on the Bar.
+ */
+const TAB_BAR_ROW = 1
 
 /**
  * The window. It owns the view (home or chat), the Tab set and the
@@ -51,6 +63,13 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
   const [tabs, setTabs] = useState<TabSet>(() =>
     view === "chat" ? openTab(createTabSet(), { title: initialTitle }) : createTabSet(),
   )
+  const [summaries, setSummaries] = useState<Record<string, TabSummary>>({})
+  const sessionTabsRef = useRef(new Map<string, string>())
+  const [tabUsage, setTabUsage] = useState<Record<string, TokenUsage>>({})
+  // A click on the Bar's × cannot close a Tab directly: a running Turn asks
+  // first, and that question belongs to the Tab's own host. The window counts
+  // requests per Tab; each host answers the ones it has not seen yet.
+  const [closeRequests, setCloseRequests] = useState<Record<string, number>>({})
   // The pre-Tab host the window starts with while the Welcome Screen is up is
   // not a Tab yet: the first message, or a new-Tab key, turns it into the first
   // one, so the Tab Bar never names a Tab that does not exist. Its id carries a
@@ -112,6 +131,44 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     if (id === preTabHostId) preTabTitle.current = title
     setTabs((previous) => setTabTitle(previous, id, title))
   }, [preTabHostId])
+  const setSummary = useCallback((id: string, summary: TabSummary) => {
+    setSummaries((previous) => {
+      const current = previous[id]
+      if (
+        current?.streaming === summary.streaming &&
+        current.needsApproval === summary.needsApproval &&
+        current.errored === summary.errored &&
+        current.blocking === summary.blocking
+      ) {
+        return previous
+      }
+      return { ...previous, [id]: summary }
+    })
+  }, [])
+  const setSessionId = useCallback((tabId: string, sessionId: string | null) => {
+    for (const [knownSessionId, knownTabId] of sessionTabsRef.current) {
+      if (knownTabId === tabId) sessionTabsRef.current.delete(knownSessionId)
+    }
+    if (sessionId) sessionTabsRef.current.set(sessionId, tabId)
+  }, [])
+  const setUsage = useCallback((id: string, usage: TokenUsage) => {
+    setTabUsage((previous) => ({ ...previous, [id]: usage }))
+  }, [])
+  const focusSession = useCallback((sessionId: string) => {
+    const tabId = sessionTabsRef.current.get(sessionId)
+    if (!tabId) return false
+    setTabs((previous) => focusTab(previous, tabId))
+    setView("chat")
+    return true
+  }, [])
+
+  /**
+   * Asks the Tab's own host to close it, so a running Turn is stopped only
+   * after the question that host owns. Used by a click on the Bar's `×`.
+   */
+  const requestCloseTab = useCallback((id: string) => {
+    setCloseRequests((previous) => ({ ...previous, [id]: (previous[id] ?? 0) + 1 }))
+  }, [])
 
   /**
    * Closes a Tab and, when it was the last one, returns to the Welcome Screen.
@@ -124,6 +181,25 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
     if (closed === tabsRef.current) return
     tabsRef.current = closed
     setTabs(closed)
+    setSummaries((previous) => {
+      if (!(id in previous)) return previous
+      const next = { ...previous }
+      delete next[id]
+      return next
+    })
+    setTabUsage((previous) => {
+      if (!(id in previous)) return previous
+      const next = { ...previous }
+      delete next[id]
+      return next
+    })
+    setCloseRequests((previous) => {
+      if (!(id in previous)) return previous
+      const next = { ...previous }
+      delete next[id]
+      return next
+    })
+    setSessionId(id, null)
     if (closed.tabs.length > 0) return
     initialHostId.current = null
     preTabTitle.current = NEW_CHAT_TITLE
@@ -139,17 +215,69 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
   // from the panels when it is there.
   const showingBar = view === "chat" && tabs.tabs.length > 0
   const panelHeight = rows - (showingBar ? TAB_BAR_HEIGHT : 0)
+  const backgroundApproval = tabs.tabs.find(
+    (tab) => tab.id !== activeId && summaries[tab.id]?.needsApproval,
+  )
+  const feedbackHeight = backgroundApproval ? 1 : 0
+  const summaryUsage = Object.values(tabUsage).reduce<TokenUsage>(
+    (total, usage) => ({
+      inputTokens: total.inputTokens + usage.inputTokens,
+      outputTokens: total.outputTokens + usage.outputTokens,
+      totalTokens: total.totalTokens + usage.totalTokens,
+      cost:
+        total.cost === null || usage.cost === null
+          ? null
+          : total.cost + usage.cost,
+    }),
+    { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 },
+  )
+
+  // The Bar and its mouse targets are laid out from the same data, so a click
+  // can name the Tab the user actually saw. `+` is the last cell after the
+  // visible slots.
+  const barTabs: TabBarItem[] = tabs.tabs.map((tab) => ({
+    id: tab.id,
+    title: tab.title,
+    active: tab.id === activeId,
+    status: summaries[tab.id]?.needsApproval
+      ? "approval"
+      : summaries[tab.id]?.errored
+        ? "error"
+        : summaries[tab.id]?.streaming
+          ? "streaming"
+          : undefined,
+  }))
+  // A host that is waiting on an answer owns the keyboard; it owns the Bar too,
+  // so a click cannot hide the question it is waiting on.
+  const barBlocked = summaries[activeId]?.blocking === true
+
+  useInput((input) => {
+    if (!showingBar || barBlocked) return
+    const click = parseMouseClick(input)
+    if (!click || click.row !== TAB_BAR_ROW) return
+    const hit = hitTestTabBar(barTabs, columns, click.column - 1)
+    if (!hit) return
+    if (hit.kind === "plus") {
+      openNewTab()
+      return
+    }
+    const target = tabs.tabs[hit.index]
+    if (!target) return
+    if (hit.close) {
+      // The host answers this one, so a running Turn still gets its question.
+      requestCloseTab(target.id)
+      return
+    }
+    setTabs((previous) => focusTab(previous, target.id))
+  })
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={COLORS.appBackground}>
-      {showingBar && (
-        <TabBar
-          width={columns}
-          tabs={tabs.tabs.map((tab) => ({
-            id: tab.id,
-            title: tab.title,
-            active: tab.id === activeId,
-          }))}
+      {showingBar && <TabBar width={columns} tabs={barTabs} />}
+      {backgroundApproval && (
+        <FeedbackLine
+          text={`Tab "${backgroundApproval.title}" is waiting for approval`}
+          tone="warning"
         />
       )}
       {hosts.map((tab) => (
@@ -160,15 +288,21 @@ export function App({ initialView, initialSession, ...hostProps }: AppProps) {
           active={tab.id === activeId}
           view={view}
           width={columns}
-          height={panelHeight}
+          height={panelHeight - feedbackHeight}
           onEnterChat={enterChat}
           onEnterHome={enterHome}
           onTitleChange={(title) => setTitle(tab.id, title)}
+          onSummaryChange={(summary) => setSummary(tab.id, summary)}
+          onSessionChange={(sessionId) => setSessionId(tab.id, sessionId)}
+          onUsageChange={(usage) => setUsage(tab.id, usage)}
+          summaryUsage={summaryUsage}
+          focusSession={focusSession}
           onOpenTab={openNewTab}
           onPrevTab={goToPreviousTab}
           onNextTab={goToNextTab}
           onJumpTab={jumpTab}
           onCloseTab={() => closeTabById(tab.id)}
+          closeRequest={closeRequests[tab.id] ?? 0}
         />
       ))}
     </Box>

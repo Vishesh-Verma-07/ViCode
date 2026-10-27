@@ -14,14 +14,19 @@ describe("formatCommandList", () => {
     expect(text).toContain("/new - Start a fresh session")
   })
 
-  it("returns one line per command", () => {
+  it("includes the Tab shortcuts after the command list", () => {
     const commands: Command[] = [
       { name: "a", description: "A", execute: async () => "" },
       { name: "b", description: "B", execute: async () => "" },
       { name: "c", description: "C", execute: async () => "" },
     ]
-    const lines = formatCommandList(commands).split("\n")
-    expect(lines).toHaveLength(3)
+    const text = formatCommandList(commands)
+    expect(text).toContain("Tab shortcuts:")
+    expect(text).toContain("Ctrl+T - Open a new Tab")
+    expect(text).toContain("Ctrl+← / Ctrl+→ - Move between Tabs")
+    expect(text).toContain("Ctrl+1 ... Ctrl+9 - Focus a Tab by number")
+    expect(text).toContain("Ctrl+X - Close the active Tab")
+    expect(text).toContain("Tab - Cycle the Mode")
   })
 })
 

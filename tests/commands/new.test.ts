@@ -116,6 +116,27 @@ describe("createNewCommand", () => {
     expect(output).toContain("Started a new session")
   })
 
+  it("opens a new Tab without clearing the active session when Tab support is available", async () => {
+    const { context, freshStarts } = createContext({
+      dir: tempDir,
+      activeSession: makeSession(),
+    })
+    let opened = 0
+    context.tabs = {
+      openNew: () => {
+        opened++
+      },
+      focusSession: () => false,
+    }
+
+    const output = await createNewCommand().execute([], context)
+
+    expect(opened).toBe(1)
+    expect(freshStarts).toHaveLength(0)
+    expect(output).toBe("Opened a new Tab.")
+    expect(loadSession("sess_current", tempDir)).not.toBeNull()
+  })
+
   it("throws a helpful error when the sessions capability is missing", async () => {
     await expect(createNewCommand().execute([], { projectPath: "/tmp/project" })).rejects.toThrow(/\/new/)
   })

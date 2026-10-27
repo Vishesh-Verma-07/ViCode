@@ -5423,7 +5423,23 @@ describe("App Tabs", () => {
       await pressKey("\r")
     }
 
-    return { ...instance, frameText, lines, tabBar, inputValue, typeText, pressKey, typeAndSubmit }
+    /** Clicks a 1-based cell on the Tab Bar, the way a terminal reports it. */
+    async function clickBar(column: number, row = 1) {
+      instance.stdin.write(`\u001B[<0;${column};${row}M`)
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+
+    return {
+      ...instance,
+      frameText,
+      lines,
+      tabBar,
+      inputValue,
+      typeText,
+      pressKey,
+      typeAndSubmit,
+      clickBar,
+    }
   }
 
   const CTRL_T = "\u0014"
@@ -5452,8 +5468,151 @@ describe("App Tabs", () => {
     }
   }, 30000)
 
-  it("keeps each Tab's draft, transcript and Mode to itself", async () => {
-    const { frameText, inputValue, pressKey, typeText, unmount } = setup()
+  it("focuses a Tab when its slot on the Bar is clicked", async () => {
+    const { frameText, inputValue, typeText, pressKey, clickBar, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+
+      await typeText("first draft")
+      await pressKey(CTRL_T)
+      await typeText("second draft")
+      await until(() => inputValue() === "second draft")
+
+      // Column 2 is inside the first Tab: a click focuses without closing.
+      await clickBar(2)
+      await until(() => inputValue() === "first draft")
+      expect(inputValue()).toBe("first draft")
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("opens a new Tab when + is clicked", async () => {
+    const { frameText, tabBar, clickBar, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      expect((tabBar().match(/New chat/g) ?? []).length).toBe(1)
+
+      const plus = tabBar().indexOf("+")
+      expect(plus).toBeGreaterThanOrEqual(0)
+      await clickBar(plus + 1)
+
+      await until(() => (tabBar().match(/New chat/g) ?? []).length === 2)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("closes the active Tab when its × is clicked", async () => {
+    const { frameText, tabBar, inputValue, typeText, pressKey, clickBar, unmount } = setup()
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeText("one")
+      await pressKey(CTRL_T)
+      await typeText("two")
+      await until(() => inputValue() === "two")
+
+      const cross = tabBar().indexOf("×")
+      expect(cross).toBeGreaterThanOrEqual(0)
+      await clickBar(cross + 1)
+
+      await until(() => inputValue() === "one")
+      expect((tabBar().match(/New chat/g) ?? []).length).toBe(1)
+    } finally {
+      unmount()
+    }
+  }, 30000)
+
+  it("asks before a click on × closes a Tab whose Turn is running", async () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
+      async listModels() {
+        return []
+      },
+      async *streamChat(_messages, _tools, _systemPrompt) {
+        yield { type: "text-delta" as const, text: "clicked partial" }
+        await gate
+        yield {
+          type: "finish" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+        }
+      },
+    }
+    const { frameText, tabBar, clickBar, pressKey, typeAndSubmit, unmount } = setup({ provider })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await typeAndSubmit("slow click")
+      await until(() => frameText().includes("clicked partial"), 10000)
+
+      const cross = tabBar().indexOf("×")
+      expect(cross).toBeGreaterThanOrEqual(0)
+      await clickBar(cross + 1)
+      await until(() => frameText().includes("still working"))
+      expect(frameText()).toContain("[y] Close")
+
+      await pressKey("n")
+      await until(() => !frameText().includes("still working"))
+      expect(tabBar()).toContain("slow click")
+
+      release()
+      await until(() => frameText().includes("Done in"), 10000)
+    } finally {
+      release()
+      unmount()
+    }
+  }, 30000)
+
+  it("ignores Bar clicks while a confirmation is waiting on an answer", async () => {
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const provider: Provider = {
+      getModelInfo: () => ({ id: "stub-model", name: "stub-model", contextLength: null }),
+      async listModels() {
+        return []
+      },
+      async *streamChat() {
+        yield { type: "text-delta" as const, text: "guarded partial" }
+        await gate
+        yield {
+          type: "finish" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cost: 0 },
+        }
+      },
+    }
+    const { frameText, tabBar, clickBar, pressKey, typeAndSubmit, unmount } = setup({ provider })
+    try {
+      await until(() => frameText().includes("Type your message"))
+      await pressKey(CTRL_T)
+      await typeAndSubmit("guarded request")
+      await until(() => frameText().includes("guarded partial"), 10000)
+
+      const cross = tabBar().indexOf("×")
+      await clickBar(cross + 1)
+      await until(() => frameText().includes("still working"))
+
+      // The question owns the window: a click on the other Tab must not hide it.
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      await clickBar(2)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(frameText()).toContain("still working")
+
+      await pressKey("n")
+      await until(() => !frameText().includes("still working"))
+      release()
+      await until(() => frameText().includes("Done in"), 10000)
+    } finally {
+      release()
+      unmount()
+    }
+  }, 30000)
+
+  it("keeps each Tab's draft, transcript and Mode to itself", async () => {    const { frameText, inputValue, pressKey, typeText, unmount } = setup()
     try {
       await until(() => frameText().includes("Type your message"))
 

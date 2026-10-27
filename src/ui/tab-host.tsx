@@ -4,6 +4,7 @@ import type { View } from "./view"
 import type { Command, ToolContext, ToolDefinition } from "../core/types"
 import type { Session } from "../core/session"
 import type { Provider } from "../core/provider"
+import type { TokenUsage } from "../core/provider"
 import type { ProviderId } from "../core/providers"
 import { CommandRegistry } from "../core/command-registry"
 import { filterCommands, findUsageHint, moveHighlight } from "./command-suggestion"
@@ -37,6 +38,11 @@ export interface TabSummary {
   streaming: boolean
   needsApproval: boolean
   errored: boolean
+  /**
+   * A Surface is waiting on an answer — a picker, a key prompt, a yes/no, an
+   * approval, the exit summary — so the window must not route clicks away.
+   */
+  blocking: boolean
 }
 
 /** The conversation-scoped dependencies every host needs, shared with the App. */
@@ -65,15 +71,24 @@ export interface TabHostProps extends TabHostDeps {
   onEnterHome: () => void
   /** Called when this conversation's badge-relevant state changes. */
   onSummaryChange?: (summary: TabSummary) => void
+  onSessionChange?: (sessionId: string | null) => void
+  onUsageChange?: (usage: TokenUsage) => void
+  summaryUsage?: TokenUsage
   /** Called with the title the Tab Bar should show for this conversation. */
   onTitleChange?: (title: string) => void
   /** Tab keybindings. The window owns the set; the active host owns the keys. */
   onOpenTab?: () => void
+  focusSession?: (sessionId: string) => boolean
   onPrevTab?: () => void
   onNextTab?: () => void
   onJumpTab?: (position: number) => void
   /** Closes this conversation's Tab. The window removes it from the set. */
   onCloseTab?: () => void
+  /**
+   * A click on the Bar's `×`. Each new count asks this Tab to close through the
+   * same path as Ctrl+X, so a running Turn still gets its confirmation.
+   */
+  closeRequest?: number
 }
 
 /**
@@ -102,12 +117,17 @@ export function TabHost({
   onEnterChat,
   onEnterHome,
   onSummaryChange,
+  onSessionChange,
+  onUsageChange,
+  summaryUsage,
   onTitleChange,
   onOpenTab,
+  focusSession,
   onPrevTab,
   onNextTab,
   onJumpTab,
   onCloseTab,
+  closeRequest,
 }: TabHostProps) {
   const { exit } = useApp()
   const commandRegistry = useMemo(() => {
@@ -186,6 +206,8 @@ export function TabHost({
     view,
     enterChat: onEnterChat,
     enterHome: onEnterHome,
+    openNewTab: onOpenTab,
+    focusSession,
     keyFor,
     ensureKeyFor: (target) =>
       keyFor(target) ? Promise.resolve(true) : promptForKey(target, true),
@@ -214,6 +236,18 @@ export function TabHost({
     onCloseTab()
   }, [session, confirmAction, onCloseTab])
 
+  // A click on the Bar's × is a request, not a command: it takes the same path
+  // as Ctrl+X, including the question a running Turn raises. The count is
+  // compared rather than a flag so declining one request does not swallow the
+  // next. `requestCloseTab` changes identity with props, which is why the
+  // comparison, not the effect, decides whether there is anything to answer.
+  const answeredCloseRequest = useRef(0)
+  useEffect(() => {
+    if (!closeRequest || closeRequest === answeredCloseRequest.current) return
+    answeredCloseRequest.current = closeRequest
+    void requestCloseTab()
+  }, [closeRequest, requestCloseTab])
+
   // The report goes up through a ref so a caller that passes a fresh callback
   // each render cannot make the effect fire again and again; only a change in
   // the conversation's state is news to the window.
@@ -225,9 +259,32 @@ export function TabHost({
   const streaming = session.isStreaming
   const needsApproval = session.pendingApproval !== null
   const errored = session.turnStatus.kind === "error"
+  // A Surface that owns the keyboard also owns the Tab Bar's click targets.
+  const blocking =
+    drafting.pickerRequest !== null ||
+    keyEntry !== null ||
+    confirmation !== null ||
+    session.pendingApproval !== null ||
+    session.showExitSummary
   useEffect(() => {
-    onSummaryChangeRef.current?.({ streaming, needsApproval, errored })
-  }, [streaming, needsApproval, errored])
+    onSummaryChangeRef.current?.({ streaming, needsApproval, errored, blocking })
+  }, [streaming, needsApproval, errored, blocking])
+
+  const onSessionChangeRef = useRef(onSessionChange)
+  useEffect(() => {
+    onSessionChangeRef.current = onSessionChange
+  }, [onSessionChange])
+  useEffect(() => {
+    onSessionChangeRef.current?.(session.session?.id ?? null)
+  }, [session.session?.id])
+
+  const onUsageChangeRef = useRef(onUsageChange)
+  useEffect(() => {
+    onUsageChangeRef.current = onUsageChange
+  }, [onUsageChange])
+  useEffect(() => {
+    onUsageChangeRef.current?.(session.usage)
+  }, [session.usage])
 
   // Same ref pattern for the title: renaming a Session or sending a first
   // message must retitle the Tab Bar, and only those changes should. The title
@@ -511,7 +568,7 @@ export function TabHost({
       <>
         <WelcomeScreen
           provider={session.providerState}
-          onNewChat={session.startNewSession}
+          onNewChat={onOpenTab ?? session.startNewSession}
           onResumeSession={onEnterChat}
           hasResumableSession={!!initialSession}
           onTab={session.cycleMode}
@@ -589,7 +646,7 @@ export function TabHost({
         />
       )}
       {session.showExitSummary && (
-        <ExitSummary usage={session.usage} route={route} />
+        <ExitSummary usage={summaryUsage ?? session.usage} route={route} />
       )}
     </>
   )
