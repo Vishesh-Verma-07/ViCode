@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react"
-import { Box, Text, useInput } from "ink"
+import { Box, Text, useInput, usePaste } from "ink"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { deletePreviousWord } from "./word-delete"
 import { COLORS, ICONS } from "./theme"
@@ -66,6 +66,12 @@ export function KeyEntryScreen({
     }
     onCancel?.()
   }
+
+  usePaste((text) => {
+    if (!text) return
+    setWarning("")
+    commit(valueRef.current + text)
+  })
 
   useInput((input, key) => {
     if (key.return) {

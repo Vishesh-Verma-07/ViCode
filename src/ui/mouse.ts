@@ -101,7 +101,7 @@ export function parseMouseEvents(input: string): ParsedMouseEvent[] {
 const X10_PREFIX = "[M"
 const X10_PAYLOAD_BYTES = 2
 const MOUSE_SGR_INPUT = /^\[?<\d+;\d+;\d+[Mm]$/
-const CONTROL_CHARACTERS = /[\x00-\x1f\x7f]/
+const CONTROL_CHARACTERS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/
 
 export interface MouseInputFilterState {
   readonly payloadRemaining: number

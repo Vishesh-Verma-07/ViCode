@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react"
-import { Box, Text, useInput } from "ink"
+import { Box, Text, useInput, usePaste } from "ink"
 import { COLORS, ICONS, ASCII_BANNER } from "./theme"
 import type { Provider } from "../core/provider"
 import { formatCost, formatTokens } from "../core/cost-calculator"
@@ -58,6 +58,11 @@ export function WelcomeScreen({ provider, onNewChat, onResumeSession, hasResumab
       ? [{ label: "Resume Session", description: "Continue where you left off" }]
       : []),
   ]
+
+  usePaste((text) => {
+    if (!text) return
+    apply(insertAt(valueRef.current, cursorRef.current, text))
+  })
 
   useInput((input, key) => {
     if (key.tab) {

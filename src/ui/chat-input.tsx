@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useInput } from "ink"
+import { useInput, usePaste } from "ink"
 import { filterMouseInput, MOUSE_INPUT_FILTER_INITIAL, type MouseInputFilterState } from "./mouse"
 import { CursorText } from "./cursor-text"
 import {
@@ -41,6 +41,12 @@ export function ChatInput({ value, initialCursor, placeholder, isDisabled, onCha
     setCursor(next.cursor)
     onChange(next.text, next.cursor)
   }
+
+  usePaste((text) => {
+    if (isDisabled) return
+    if (!text) return
+    commit(insertAt(valueRef.current, cursorRef.current, text))
+  })
 
   useInput((input, key) => {
     if (isDisabled) return
